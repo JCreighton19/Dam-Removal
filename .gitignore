@@ -1,0 +1,24 @@
+# Raw datasets
+data/raw/
+
+# Processed data: ignore everything except the HUC4 list
+data/processed/*
+!data/processed/huc4_list.txt
+
+# Slurm and application logs
+data/slurm/logs/
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Secrets and credentials
+.env
+.env.*
+
+# OS files
+.DS_Store
