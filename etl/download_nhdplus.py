@@ -1,8 +1,11 @@
 import requests
 from pathlib import Path
 
-huc4_file = Path("../data/processed/huc4_list.txt")
-output_dir = Path("../data/raw/nhdplus")
+# Project root: the parent of the etl directory
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+huc4_file = PROJECT_ROOT / "data" / "processed" / "huc4_list.txt"
+output_dir = PROJECT_ROOT / "data" / "raw" / "nhdplus"
 output_dir.mkdir(parents=True, exist_ok=True)
 
 huc4s = [
