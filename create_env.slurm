@@ -1,4 +1,3 @@
-
 #!/bin/bash
 #SBATCH --job-name=dam_env
 #SBATCH --output=data/slurm/logs/env_%j.out
