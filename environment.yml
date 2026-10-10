@@ -1,0 +1,24 @@
+name: dam-removal
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - statsmodels
+  - matplotlib
+  - seaborn
+  - jupyterlab
+  - ipykernel
+  - geopandas
+  - shapely
+  - pyproj
+  - fiona
+  - sqlalchemy
+  - psycopg
+  - requests
+  - tqdm
+  - pyyaml
