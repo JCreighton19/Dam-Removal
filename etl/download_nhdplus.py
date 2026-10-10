@@ -87,8 +87,6 @@ def download(key):
     temp_file = output_file.with_suffix(output_file.suffix + ".part")
     url = BASE_URL + key
 
-    print(f"Downloading {filename}...")
-
     try:
         with requests.get(url, stream=True, timeout=(30, 120)) as response:
             response.raise_for_status()
@@ -100,7 +98,6 @@ def download(key):
                         f.write(chunk)
 
         temp_file.replace(output_file)
-        print(f"Downloaded: {filename}")
 
     except Exception:
         temp_file.unlink(missing_ok=True)
