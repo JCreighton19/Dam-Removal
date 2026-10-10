@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=wqp-stations
-#SBATCH --output=logs/wqp_stations_%j.out
-#SBATCH --error=logs/wqp_stations_%j.err
+#SBATCH --output=data/slurm/logs/wqp_stations_%j.out
+#SBATCH --error=data/slurm/logs/wqp_stations_%j.err
 #SBATCH --time=01:00:00
 #SBATCH --mem=4G
 #SBATCH --cpus-per-task=1
