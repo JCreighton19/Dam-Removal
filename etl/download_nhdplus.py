@@ -107,58 +107,68 @@ def download(key):
         raise
 
 
-# Discover the actual published files instead of assuming every HUC
-# has a downloadable package.
-available = list_s3_files()
+def main():
+    # Discover available packages
+    print("Listing available NHDPlus HR files...")
+    available = list_s3_files()
 
-# Index available packages by HUC code and resolution.
-hu4_packages = {}
-hu8_packages = {}
+    # Index available packages by HUC code and resolution
+    print("Finding matching HUC codes...")
+    hu4_packages = {}
+    hu8_packages = {}
 
-for filename, key in available.items():
-    match = re.fullmatch(
-        r"NHDPLUS_H_(\d{4}|\d{8})_HU(4|8)_GDB\.zip",
-        filename,
-        flags=re.IGNORECASE,
-    )
-    if not match:
-        continue
+    for filename, key in available.items():
+        match = re.fullmatch(
+            r"NHDPLUS_H_(\d{4}|\d{8})_HU(4|8)_GDB\.zip",
+            filename,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            continue
 
-    code, resolution = match.groups()
+        code, resolution = match.groups()
 
-    if resolution == "4" and len(code) == 4:
-        hu4_packages[code] = key
-    elif resolution == "8" and len(code) == 8:
-        hu8_packages[code] = key
+        if resolution == "4" and len(code) == 4:
+            hu4_packages[code] = key
+        elif resolution == "8" and len(code) == 8:
+            hu8_packages[code] = key
+
+    # Prefer HU4 packages; fall back to matching HU8 packages
+    selected = []
+    missing = []
+
+    for huc4 in sorted(huc4s):
+        if huc4 in hu4_packages:
+            selected.append(hu4_packages[huc4])
+            continue
+
+        matching_huc8s = sorted(
+            huc8 for huc8 in huc8s
+            if huc8.startswith(huc4) and huc8 in hu8_packages
+        )
+
+        if matching_huc8s:
+            selected.extend(hu8_packages[huc8] for huc8 in matching_huc8s)
+        else:
+            missing.append(huc4)
+
+    # Review package coverage before downloading
+    selected = list(dict.fromkeys(selected))  # Remove duplicate packages
+
+    print(f"Requested HUC4s: {len(huc4s)}")
+    print(f"Packages selected: {len(selected)}")
+    print(f"Missing HUC4s: {missing}")
+
+    key_count = len(selected)
+
+    for i, key in enumerate(selected, start=1):
+        if i == 1 or i % 10 == 0 or i == key_count:
+            print(f"Progress: {i}/{key_count} packages ({i / key_count:.1%})")
+
+        download(key)
+
+    print("NHDPlus HR downloads complete.")
 
 
-# Prefer one HU4 package per requested HUC4. If unavailable, fall back
-# to matching HU8 packages associated with our dam sites.
-selected = []
-missing = []
-
-for huc4 in sorted(huc4s):
-    if huc4 in hu4_packages:
-        selected.append(hu4_packages[huc4])
-        continue
-
-    matching_huc8s = sorted(
-        huc8 for huc8 in huc8s
-        if huc8.startswith(huc4) and huc8 in hu8_packages
-    )
-
-    if matching_huc8s:
-        selected.extend(hu8_packages[huc8] for huc8 in matching_huc8s)
-    else:
-        missing.append(huc4)
-
-# Review coverage before downloading. A HUC4 may require multiple HU8
-# packages, so the selected package count can exceed the HUC4 count.
-print(f"Requested HUC4s: {len(huc4s)}")
-print(f"Packages selected: {len(selected)}")
-print(f"Missing HUC4s: {missing}")
-
-for key in selected:
-    download(key)
-
-print("NHDPlus HR downloads complete.")
+if __name__ == "__main__":
+    main()
