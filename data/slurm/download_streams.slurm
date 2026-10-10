@@ -22,6 +22,6 @@ echo "Python: $(which python)"
 echo "Start time: $(date)"
 echo "========================================"
 
-python etl/download_nhdplus.py
+python -u etl/download_nhdplus.py
 
 echo "NHDPlus download job finished: $(date)"
