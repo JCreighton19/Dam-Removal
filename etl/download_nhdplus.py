@@ -18,7 +18,7 @@ for huc4 in huc4s:
     url = (
         f"https://prd-tnm.s3.amazonaws.com/"
         f"StagedProducts/Hydrography/NHDPlusHR/"
-        f"Data/HU4/GDB/NHDPLUS_H_{huc4}_HU4_GDB.zip"
+        f"VPU/HU4/GDB/NHDPLUS_H_{huc4}_HU4_GDB.zip"
     )
 
     output_file = output_dir / f"NHDPLUS_H_{huc4}_HU4_GDB.zip"
