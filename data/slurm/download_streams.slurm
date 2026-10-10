@@ -6,23 +6,22 @@
 #SBATCH --mem=8G
 #SBATCH --cpus-per-task=2
 
-echo "========================================"
-echo "NHDPlus download job started"
-echo "Job ID: $SLURM_JOB_ID"
-echo "Start time: $(date)"
-echo "========================================"
-
-module load python
+set -e
 
 cd /courses/DS5500.202710/teams/team4
 
-echo "Working directory: $(pwd)"
-echo "Running Python downloader..."
+module load anaconda3/2024.06
+
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate dam-removal
+
+echo "========================================"
+echo "NHDPlus download job started"
+echo "Job ID: $SLURM_JOB_ID"
+echo "Python: $(which python)"
+echo "Start time: $(date)"
+echo "========================================"
 
 python etl/download_nhdplus.py
 
-echo "========================================"
-echo "NHDPlus download job finished"
-echo "End time: $(date)"
-echo "Exit code: $?"
-echo "========================================"
+echo "NHDPlus download job finished: $(date)"
