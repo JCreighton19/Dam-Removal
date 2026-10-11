@@ -22,6 +22,6 @@ echo "Python: $(which python)"
 echo "Start time: $(date)"
 echo "========================================"
 
-python -u etl/snap_features.py
+python -u etl/build_stream_network.py
 
 echo "Build Network job finished: $(date)"
