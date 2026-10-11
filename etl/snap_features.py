@@ -327,7 +327,7 @@ def main():
     dams_snapped = snap_to_streams(
         dams,
         streams,
-        "Dam Name",
+        "Dam_Name",
     )
 
     print("\nStation snap distances (meters):")
