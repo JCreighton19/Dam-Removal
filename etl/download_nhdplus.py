@@ -1,6 +1,5 @@
 from pathlib import Path
 from urllib.parse import quote
-import argparse
 import csv
 import re
 import sys
@@ -16,21 +15,17 @@ import requests
 # --------------------------------------------------
 
 ROOT = Path("/courses/DS5500.202710/teams/team4")
-HUC4_FILE = ROOT / "data/processed/huc4_list.txt"
-HUC8_FILE = ROOT / "data/processed/huc8_list.txt"
+STATION_FILE = (
+    ROOT / "data/raw/wqp/results/pilot_station_selection.csv"
+)
 OUTPUT_DIR = ROOT / "data/raw/nhdplus"
 MANIFEST_FILE = OUTPUT_DIR / "download_manifest.csv"
 BUCKET_URL = "https://prd-tnm.s3.amazonaws.com/"
 PREFIX = "StagedProducts/Hydrography/NHDPlusHR/VPU/Current/GDB/"
 TIMEOUT = (30, 180)
-CHUNK_SIZE = 1024 * 1024  # 1 MB
-
+CHUNK_SIZE = 1024 * 1024
 NS = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
 
-HU4_PATTERN = re.compile(
-    r"^NHDPLUS_H_(\d{4})_HU4(?:_(\d{8}))?_GDB\.zip$",
-    re.IGNORECASE,
-)
 HU8_PATTERN = re.compile(
     r"^NHDPLUS_H_(\d{8})_HU8(?:_(\d{8}))?_GDB\.zip$",
     re.IGNORECASE,
@@ -38,7 +33,6 @@ HU8_PATTERN = re.compile(
 
 MANIFEST_FIELDS = [
     "huc_code",
-    "huc_level",
     "filename",
     "url",
     "size_bytes",
@@ -48,41 +42,69 @@ MANIFEST_FIELDS = [
 
 
 # --------------------------------------------------
-# Read pilot watershed codes
+# Read HUC8 codes from the pilot station CSV
 # --------------------------------------------------
 
-def read_codes(path, expected_length):
+def read_pilot_huc8s(path):
     if not path.exists():
-        raise FileNotFoundError(f"Missing input file: {path}")
+        raise FileNotFoundError(f"Station CSV not found: {path}")
 
-    codes = set()
+    huc8_codes = set()
+    station_count = 0
 
-    for line in path.read_text().splitlines():
-        line = line.strip()
+    with path.open("r", newline="", encoding="utf-8-sig") as file:
+        reader = csv.DictReader(file)
 
-        if not line or line.startswith("#"):
-            continue
+        if not reader.fieldnames or "source_huc8" not in reader.fieldnames:
+            raise ValueError(
+                f"CSV must contain a 'source_huc8' column. "
+                f"Columns found: {reader.fieldnames}"
+            )
 
-        # Allows one code per line, including a simple CSV/header.
-        matches = re.findall(r"\d+", line)
-        for code in matches:
-            if len(code) == expected_length:
-                codes.add(code)
+        for row in reader:
+            station_count += 1
+            value = (row.get("source_huc8") or "").strip()
 
-    if not codes:
-        raise ValueError(
-            f"No {expected_length}-digit codes found in {path}"
-        )
+            if not value:
+                continue
 
-    return sorted(codes)
+            # Handle values represented as floats, e.g. 3010201.0.
+            if value.endswith(".0"):
+                value = value[:-2]
+
+            # Remove formatting characters, then restore leading zeros
+            # if the source CSV stored the code as a number.
+            code = re.sub(r"\D", "", value)
+
+            if 1 <= len(code) <= 8:
+                code = code.zfill(8)
+
+            if len(code) == 8:
+                huc8_codes.add(code)
+            else:
+                print(
+                    f"WARNING: Ignoring invalid HUC8 value: {value!r}",
+                    flush=True,
+                )
+
+    if not huc8_codes:
+        raise ValueError("No valid HUC8 codes found in the pilot CSV.")
+
+    print(f"Pilot station rows: {station_count:,}", flush=True)
+    print(f"Unique pilot HUC8 watersheds: {len(huc8_codes):,}", flush=True)
+
+    for code in sorted(huc8_codes):
+        print(f"  {code}", flush=True)
+
+    return sorted(huc8_codes)
 
 
 # --------------------------------------------------
-# List available current NHDPlus HR vector ZIPs
+# List available NHDPlus HR vector packages
 # --------------------------------------------------
 
 def list_s3_files(session):
-    print("Listing available NHDPlus HR packages...", flush=True)
+    print("\nListing available NHDPlus HR packages...", flush=True)
 
     params = {
         "list-type": "2",
@@ -106,19 +128,14 @@ def list_s3_files(session):
             size = item.findtext(
                 "s3:Size", namespaces=NS, default="0"
             )
-
             filename = key.rsplit("/", 1)[-1]
 
-            # Keep only the expected HU4/HU8 vector ZIP naming patterns.
-            if not (HU4_PATTERN.fullmatch(filename)
-                    or HU8_PATTERN.fullmatch(filename)):
-                continue
-
-            files.append({
-                "filename": filename,
-                "url": BUCKET_URL + quote(key, safe="/"),
-                "size_bytes": int(size),
-            })
+            if HU8_PATTERN.fullmatch(filename):
+                files.append({
+                    "filename": filename,
+                    "url": BUCKET_URL + quote(key, safe="/"),
+                    "size_bytes": int(size),
+                })
 
         token = root.findtext(
             "s3:NextContinuationToken",
@@ -131,101 +148,52 @@ def list_s3_files(session):
 
         params["continuation-token"] = token
 
-    print(f"Found {len(files):,} candidate vector packages.", flush=True)
+    print(f"Found {len(files):,} HU8 packages.", flush=True)
     return files
 
 
 # --------------------------------------------------
-# Choose the latest listed package for each HUC
+# Match packages to pilot HUC8s
 # --------------------------------------------------
 
-def latest_packages(files, pattern):
-    packages = {}
+def select_packages(huc8_codes, files):
+    available = {}
 
     for item in files:
-        match = pattern.fullmatch(item["filename"])
+        match = HU8_PATTERN.fullmatch(item["filename"])
         if not match:
             continue
 
         code = match.group(1)
         date = match.group(2) or "00000000"
-        existing = packages.get(code)
 
-        if existing is None or date > existing["_date"]:
-            packages[code] = {**item, "_date": date}
+        if code not in available or date > available[code]["_date"]:
+            available[code] = {**item, "_date": date}
 
-    return packages
-
-
-# --------------------------------------------------
-# Build a download plan
-# --------------------------------------------------
-
-def build_plan(huc4_codes, huc8_codes, files):
-    hu4_packages = latest_packages(files, HU4_PATTERN)
-    hu8_packages = latest_packages(files, HU8_PATTERN)
-    plan = []
+    selected = []
     missing = []
 
-    for huc4 in huc4_codes:
-        if huc4 in hu4_packages:
-            package = hu4_packages[huc4]
-            plan.append({
-                **package,
-                "huc_code": huc4,
-                "huc_level": "HU4",
+    for code in huc8_codes:
+        if code in available:
+            selected.append({
+                **available[code],
+                "huc_code": code,
             })
-            continue
-
-        # No HU4 package: fall back only to pilot HU8 packages.
-        fallback_codes = [
-            code for code in huc8_codes
-            if code.startswith(huc4)
-        ]
-
-        found_fallback = False
-
-        for huc8 in fallback_codes:
-            if huc8 in hu8_packages:
-                plan.append({
-                    **hu8_packages[huc8],
-                    "huc_code": huc8,
-                    "huc_level": "HU8",
-                })
-                found_fallback = True
-            else:
-                missing.append({
-                    "huc_code": huc8,
-                    "huc_level": "HU8",
-                    "filename": "",
-                    "url": "",
-                    "size_bytes": 0,
-                    "status": "missing",
-                    "message": "No matching HU8 ZIP found in current listing",
-                })
-
-        if not found_fallback:
+        else:
             missing.append({
-                "huc_code": huc4,
-                "huc_level": "HU4",
+                "huc_code": code,
                 "filename": "",
                 "url": "",
                 "size_bytes": 0,
                 "status": "missing",
-                "message": (
-                    "No HU4 package and no matching pilot HU8 package"
-                ),
+                "message": "No matching HU8 package in current listing",
             })
 
-    # Avoid duplicate package downloads.
-    unique = {item["filename"]: item for item in plan}
-    plan = sorted(unique.values(), key=lambda x: x["filename"])
-
-    return plan, missing
+    return selected, missing
 
 
 # --------------------------------------------------
-# Download and validate one ZIP
+# Download and validate a package
 # --------------------------------------------------
 
 def download_package(session, item):
@@ -233,14 +201,13 @@ def download_package(session, item):
     partial = OUTPUT_DIR / (item["filename"] + ".part")
 
     if destination.exists() and zipfile.is_zipfile(destination):
-        print(f"Already valid; skipping: {item['filename']}", flush=True)
+        print(f"Already valid; skipping {item['filename']}", flush=True)
         return {
             **item,
             "status": "skipped_existing",
             "message": "Existing ZIP passed validation",
         }
 
-    # Remove an invalid or incomplete prior download.
     if destination.exists():
         destination.unlink()
 
@@ -248,8 +215,8 @@ def download_package(session, item):
         partial.unlink()
 
     print(
-        f"Downloading {item['filename']} "
-        f"({item['size_bytes'] / 1e9:.2f} GB)...",
+        f"\nDownloading {item['filename']} "
+        f"({item['size_bytes'] / 1e9:.2f} GB)",
         flush=True,
     )
 
@@ -271,17 +238,15 @@ def download_package(session, item):
                         output.write(chunk)
 
         if not zipfile.is_zipfile(partial):
-            raise ValueError(
-                "Downloaded file is not a valid ZIP archive"
-            )
+            raise ValueError("Downloaded file is not a valid ZIP archive")
 
         actual_size = partial.stat().st_size
         partial.replace(destination)
-        elapsed = time.time() - start
 
         print(
-            f"Completed: {item['filename']} "
-            f"({actual_size / 1e9:.2f} GB, {elapsed:.0f}s)",
+            f"Completed {item['filename']} "
+            f"({actual_size / 1e9:.2f} GB, "
+            f"{time.time() - start:.0f}s)",
             flush=True,
         )
 
@@ -297,7 +262,7 @@ def download_package(session, item):
             partial.unlink()
 
         print(
-            f"FAILED: {item['filename']}: {exc}",
+            f"FAILED {item['filename']}: {exc}",
             file=sys.stderr,
             flush=True,
         )
@@ -310,7 +275,7 @@ def download_package(session, item):
 
 
 # --------------------------------------------------
-# Write manifest after each result
+# Write manifest
 # --------------------------------------------------
 
 def write_manifest(rows):
@@ -330,81 +295,67 @@ def write_manifest(rows):
 # --------------------------------------------------
 
 def main():
+    import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--plan-only",
         action="store_true",
-        help="List planned downloads without downloading files",
+        help="Show planned downloads without downloading",
     )
     args = parser.parse_args()
-
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    huc4_codes = read_codes(HUC4_FILE, 4)
-    huc8_codes = read_codes(HUC8_FILE, 8)
-
-    print(f"Pilot HUC4 codes: {len(huc4_codes)}", flush=True)
-    print(f"Pilot HUC8 codes: {len(huc8_codes)}", flush=True)
+    huc8_codes = read_pilot_huc8s(STATION_FILE)
 
     with requests.Session() as session:
         files = list_s3_files(session)
-        plan, missing = build_plan(
-            huc4_codes,
-            huc8_codes,
-            files,
-        )
+        selected, missing = select_packages(huc8_codes, files)
 
-        print(f"\nPackages selected: {len(plan)}", flush=True)
+        print("\nDownload plan", flush=True)
+        print(f"HU8 packages available: {len(selected)}", flush=True)
+        print(f"HU8 packages missing:   {len(missing)}", flush=True)
 
-        for item in plan:
+        total_bytes = sum(item["size_bytes"] for item in selected)
+        print(f"Total listed download size: {total_bytes / 1e9:.2f} GB",
+              flush=True)
+
+        for item in selected:
             print(
-                f"  {item['huc_level']} {item['huc_code']}: "
-                f"{item['filename']} "
+                f"  {item['huc_code']}: {item['filename']} "
                 f"({item['size_bytes'] / 1e9:.2f} GB)",
                 flush=True,
             )
 
-        total_gb = sum(x["size_bytes"] for x in plan) / 1e9
-        print(f"Total listed size: {total_gb:.2f} GB", flush=True)
+        rows = list(missing)
 
         if args.plan_only:
-            rows = [
-                {
-                    **item,
-                    "status": "planned",
-                    "message": "Plan-only; not downloaded",
-                }
-                for item in plan
-            ] + missing
+            rows.extend({
+                **item,
+                "status": "planned",
+                "message": "Plan-only; not downloaded",
+            } for item in selected)
+
             write_manifest(rows)
-            print("Plan-only run finished.", flush=True)
+            print(f"\nPlan written to {MANIFEST_FILE}", flush=True)
             return
 
-        rows = list(missing)
         write_manifest(rows)
 
-        for item in plan:
+        for item in selected:
             result = download_package(session, item)
             rows.append(result)
             write_manifest(rows)
 
     print("\nDownload summary", flush=True)
 
-    for status in (
-        "downloaded",
-        "skipped_existing",
-        "failed",
-        "missing",
-    ):
-        count = sum(row["status"] == status for row in rows)
+    for status in ("downloaded", "skipped_existing", "failed", "missing"):
+        count = sum(row.get("status") == status for row in rows)
         print(f"  {status}: {count}", flush=True)
 
     print(f"Manifest: {MANIFEST_FILE}", flush=True)
 
-    if any(row["status"] == "failed" for row in rows):
-        raise RuntimeError(
-            "One or more downloads failed. Check the manifest and logs."
-        )
+    if any(row.get("status") == "failed" for row in rows):
+        raise RuntimeError("One or more downloads failed; inspect the manifest.")
 
 
 if __name__ == "__main__":
