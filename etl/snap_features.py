@@ -249,7 +249,7 @@ def snap_to_streams(points, streams, id_column):
 
     # Normalize output column names.
     joined = joined.rename(
-        columns={stream_id_col: "COMID"}
+        columns={stream_id_col: "NHDPlusID"}
     )
 
     # Remove the extra join index, but keep the original point.
