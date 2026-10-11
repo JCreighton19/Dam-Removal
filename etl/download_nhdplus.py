@@ -31,6 +31,11 @@ HU8_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+HU4_PATTERN = re.compile(
+    r"^NHDPLUS_H_(\d{4})_HU4_GDB\.zip$",
+    re.IGNORECASE,
+)
+
 MANIFEST_FIELDS = [
     "huc_code",
     "filename",
@@ -103,6 +108,7 @@ def read_pilot_huc8s(path):
 # List available NHDPlus HR vector packages
 # --------------------------------------------------
 
+
 def list_s3_files(session):
     print("\nListing available NHDPlus HR packages...", flush=True)
 
@@ -130,7 +136,10 @@ def list_s3_files(session):
             )
             filename = key.rsplit("/", 1)[-1]
 
-            if HU8_PATTERN.fullmatch(filename):
+            if (
+                HU8_PATTERN.fullmatch(filename)
+                or HU4_PATTERN.fullmatch(filename)
+            ):
                 files.append({
                     "filename": filename,
                     "url": BUCKET_URL + quote(key, safe="/"),
@@ -148,7 +157,18 @@ def list_s3_files(session):
 
         params["continuation-token"] = token
 
-    print(f"Found {len(files):,} HU8 packages.", flush=True)
+    hu8_count = sum(
+        HU8_PATTERN.fullmatch(item["filename"]) is not None
+        for item in files
+    )
+    hu4_count = sum(
+        HU4_PATTERN.fullmatch(item["filename"]) is not None
+        for item in files
+    )
+
+    print(f"Found {hu8_count:,} HU8 packages.", flush=True)
+    print(f"Found {hu4_count:,} HU4 packages.", flush=True)
+
     return files
 
 
@@ -156,38 +176,90 @@ def list_s3_files(session):
 # Match packages to pilot HUC8s
 # --------------------------------------------------
 
+
 def select_packages(huc8_codes, files):
-    available = {}
+    available_hu8 = {}
+    available_hu4 = {}
 
     for item in files:
-        match = HU8_PATTERN.fullmatch(item["filename"])
-        if not match:
-            continue
+        filename = item["filename"]
 
-        code = match.group(1)
-        date = match.group(2) or "00000000"
+        match_hu8 = HU8_PATTERN.fullmatch(filename)
+        if match_hu8:
+            code = match_hu8.group(1)
+            date = match_hu8.group(2) or "00000000"
 
-        if code not in available or date > available[code]["_date"]:
-            available[code] = {**item, "_date": date}
+            if (
+                code not in available_hu8
+                or date > available_hu8[code]["_date"]
+            ):
+                available_hu8[code] = {**item, "_date": date}
+
+        match_hu4 = HU4_PATTERN.fullmatch(filename)
+        if match_hu4:
+            code = match_hu4.group(1)
+
+            if code not in available_hu4:
+                available_hu4[code] = item
 
     selected = []
     missing = []
 
-    for code in huc8_codes:
-        if code in available:
-            selected.append({
-                **available[code],
-                "huc_code": code,
-            })
+    # Group requested HUC8s by their HUC4 prefix.
+    huc4_groups = {}
+    for huc8 in huc8_codes:
+        huc4_groups.setdefault(huc8[:4], []).append(huc8)
+
+    for huc4, requested_huc8s in sorted(huc4_groups.items()):
+        missing_huc8s = [
+            huc8 for huc8 in requested_huc8s
+            if huc8 not in available_hu8
+        ]
+
+        # If any requested HUC8 is missing, prefer one HU4 package
+        # for this entire HUC4, rather than mixing overlapping files.
+        if missing_huc8s:
+            if huc4 in available_hu4:
+                item = available_hu4[huc4]
+
+                selected.append({
+                    **item,
+                    "huc_code": huc4,
+                })
+
+                print(
+                    f"Fallback to HU4 {huc4}: covers requested "
+                    f"HUC8(s) {', '.join(requested_huc8s)}",
+                    flush=True,
+                )
+            else:
+                for huc8 in missing_huc8s:
+                    missing.append({
+                        "huc_code": huc8,
+                        "filename": "",
+                        "url": "",
+                        "size_bytes": 0,
+                        "status": "missing",
+                        "message": (
+                            f"No HU8 package or HU4 fallback "
+                            f"for HUC4 {huc4}"
+                        ),
+                    })
+
+                # Download any requested HU8s that are available.
+                for huc8 in requested_huc8s:
+                    if huc8 in available_hu8:
+                        selected.append({
+                            **available_hu8[huc8],
+                            "huc_code": huc8,
+                        })
         else:
-            missing.append({
-                "huc_code": code,
-                "filename": "",
-                "url": "",
-                "size_bytes": 0,
-                "status": "missing",
-                "message": "No matching HU8 package in current listing",
-            })
+            # All requested HU8 packages for this HUC4 are available.
+            for huc8 in requested_huc8s:
+                selected.append({
+                    **available_hu8[huc8],
+                    "huc_code": huc8,
+                })
 
     return selected, missing
 
@@ -312,8 +384,8 @@ def main():
         selected, missing = select_packages(huc8_codes, files)
 
         print("\nDownload plan", flush=True)
-        print(f"HU8 packages available: {len(selected)}", flush=True)
-        print(f"HU8 packages missing:   {len(missing)}", flush=True)
+        print(f"Packages selected: {len(selected)}", flush=True)
+        print(f"HUC8s still missing: {len(missing)}", flush=True)
 
         total_bytes = sum(item["size_bytes"] for item in selected)
         print(f"Total listed download size: {total_bytes / 1e9:.2f} GB",
