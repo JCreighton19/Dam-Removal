@@ -181,7 +181,7 @@ def snap_to_streams(points, streams, id_column):
     projected CRS with meter units.
     """
     points = points.to_crs(streams.crs).copy()
-    stream_id_col = find_column(streams.columns, "COMID")
+    stream_id_col = find_column(streams.columns, "NHDPlusID")
 
     if stream_id_col is None:
         raise ValueError(
