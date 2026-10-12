@@ -55,7 +55,7 @@ def calculate_network_distance(
         return np.nan, None
 
     # Both locations lie on the same reach.
-    if relationship == "same_reach":
+    if dam_reach == station_reach:
         distance = abs(dam_fraction - station_fraction) * dam_length
         return distance, "same_reach_fraction"
 
@@ -250,7 +250,12 @@ def main():
 
             if dam_reach is not None and station_reach is not None:
                 if dam_reach == station_reach and dam_reach in G:
-                    relationship = "same_reach"
+                    if station_fraction < dam_fraction:
+                        relationship = "upstream"
+                    elif station_fraction > dam_fraction:
+                        relationship = "downstream"
+                    else:
+                        relationship = "same_reach"
                 elif station_reach in upstream:
                     relationship = "upstream"
                 elif station_reach in downstream:
