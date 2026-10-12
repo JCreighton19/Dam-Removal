@@ -263,6 +263,28 @@ def snap_to_streams(points, streams, id_column):
     return joined
 
 
+def print_duplicate_snaps(gdf, id_column, label):
+    """
+    Used to identify cases in which points are equidistant to multiple streams
+    """
+    counts = gdf.groupby(id_column, dropna=False).size()
+    duplicate_ids = counts[counts > 1].index
+
+    duplicates = gdf[gdf[id_column].isin(duplicate_ids)].copy()
+
+    print(f"\n{label}: equidistant/multiple-match candidates")
+    print(f"Features with multiple matches: {len(duplicate_ids):,}")
+    print(f"Additional rows from multiple matches: {len(duplicates) - len(duplicate_ids):,}")
+
+    if not duplicates.empty:
+        print(
+            duplicates[
+                [id_column, "NHDPlusID", "snap_distance_m",
+                 "original_x", "original_y", "snapped_x", "snapped_y"]
+            ].sort_values(id_column).to_string(index=False)
+        )
+
+
 # --------------------------------------------------
 # Main
 # --------------------------------------------------
@@ -330,6 +352,18 @@ def main():
         "Dam_Name",
     )
 
+    print_duplicate_snaps(
+        stations_snapped,
+        "MonitoringLocationIdentifier",
+        "Stations",
+    )
+
+    print_duplicate_snaps(
+        dams_snapped,
+        "Dam_Name",
+        "Dam removals",
+    )
+
     print("\nStation snap distances (meters):")
     print(stations_snapped["snap_distance_m"].describe())
     print("\nDam snap distances (meters):")
@@ -365,11 +399,13 @@ def main():
     # Export all four layers in WGS84.
     stations_original = stations_snapped.to_crs("EPSG:4326")
     dams_original = dams_snapped.to_crs("EPSG:4326")
-
     stations_on_streams = stations_on_streams.to_crs("EPSG:4326")
     dams_on_streams = dams_on_streams.to_crs("EPSG:4326")
 
     # Write the original layers first.
+    if OUTPUT_FILE.exists(): # overwrite if already exists
+        OUTPUT_FILE.unlink()
+
     stations_original.to_file(
         OUTPUT_FILE,
         layer="stations_original",
