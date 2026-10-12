@@ -335,39 +335,71 @@ def main():
     print("\nDam snap distances (meters):")
     print(dams_snapped["snap_distance_m"].describe())
 
-    # Write snapped points and original locations to GeoPackage.
+    # --------------------------------------------------
+    # Export original and snapped point geometries
+    # --------------------------------------------------
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Export in WGS84 so the layers are easy to inspect on a map.
-    stations_out = stations_snapped.to_crs("EPSG:4326")
-    dams_out = dams_snapped.to_crs("EPSG:4326")
+    # Build separate GeoDataFrames using the snapped points
+    # as their active geometry, retaining all original attributes.
 
-    # Keep only tabular snap coordinates in the output.
-    # The active geometry remains the original point location.
-    stations_out = stations_out.drop(
-        columns=["snapped_geometry"],
-        errors="ignore",
-    )
-    dams_out = dams_out.drop(
-        columns=["snapped_geometry"],
-        errors="ignore",
+    stations_on_streams = gpd.GeoDataFrame(
+        stations_snapped.drop(
+            columns=["geometry", "snapped_geometry"],
+            errors="ignore",
+        ),
+        geometry=stations_snapped["snapped_geometry"],
+        crs=stations_snapped.crs,
     )
 
-    stations_out.to_file(
+    dams_on_streams = gpd.GeoDataFrame(
+        dams_snapped.drop(
+            columns=["geometry", "snapped_geometry"],
+            errors="ignore",
+        ),
+        geometry=dams_snapped["snapped_geometry"],
+        crs=dams_snapped.crs,
+    )
+
+    # Export all four layers in WGS84.
+    stations_original = stations_snapped.to_crs("EPSG:4326")
+    dams_original = dams_snapped.to_crs("EPSG:4326")
+
+    stations_on_streams = stations_on_streams.to_crs("EPSG:4326")
+    dams_on_streams = dams_on_streams.to_crs("EPSG:4326")
+
+    # Write the original layers first.
+    stations_original.to_file(
         OUTPUT_FILE,
-        layer="stations_snapped",
+        layer="stations_original",
         driver="GPKG",
         mode="w",
     )
 
-    dams_out.to_file(
+    dams_original.to_file(
+        OUTPUT_FILE,
+        layer="dams_original",
+        driver="GPKG",
+        mode="a",
+    )
+
+    # Write the snapped layers.
+    stations_on_streams.to_file(
+        OUTPUT_FILE,
+        layer="stations_snapped",
+        driver="GPKG",
+        mode="a",
+    )
+
+    dams_on_streams.to_file(
         OUTPUT_FILE,
         layer="dams_snapped",
         driver="GPKG",
         mode="a",
     )
 
-    print(f"\nSaved snapped features to: {OUTPUT_FILE}")
+    print(f"\nSaved original and snapped features to: {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":
