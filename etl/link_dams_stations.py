@@ -25,6 +25,82 @@ def clean_id(value):
         return None
 
 
+def calculate_network_distance(
+    G,
+    dam_reach,
+    station_reach,
+    dam_fraction,
+    station_fraction,
+    length_by_reach,
+    relationship,
+):
+    """Estimate along-network distance between snapped locations, in km.
+
+    Assumes snap_fraction increases in the direction of flow along each
+    reach geometry. Validate this assumption for the NHDPlus data.
+    """
+    if relationship not in {"same_reach", "upstream", "downstream"}:
+        return np.nan, None
+
+    if pd.isna(dam_fraction) or pd.isna(station_fraction):
+        return np.nan, None
+
+    dam_fraction = float(dam_fraction)
+    station_fraction = float(station_fraction)
+
+    dam_length = length_by_reach.get(dam_reach, np.nan)
+    station_length = length_by_reach.get(station_reach, np.nan)
+
+    if pd.isna(dam_length) or pd.isna(station_length):
+        return np.nan, None
+
+    # Both locations lie on the same reach.
+    if relationship == "same_reach":
+        distance = abs(dam_fraction - station_fraction) * dam_length
+        return distance, "same_reach_fraction"
+
+    # Find a directed path between the two reaches.
+    if relationship == "upstream":
+        source, target = station_reach, dam_reach
+    else:
+        source, target = dam_reach, station_reach
+
+    try:
+        path = nx.shortest_path(
+            G,
+            source=source,
+            target=target,
+            weight="weight",
+        )
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        return np.nan, None
+
+    if len(path) < 2:
+        return np.nan, None
+
+    intermediate_length = sum(
+        float(length_by_reach.get(reach, 0) or 0)
+        for reach in path[1:-1]
+    )
+
+    if relationship == "upstream":
+        # Travel downstream from the station to the dam.
+        distance = (
+            (1 - station_fraction) * station_length
+            + intermediate_length
+            + dam_fraction * dam_length
+        )
+    else:
+        # Travel downstream from the dam to the station.
+        distance = (
+            (1 - dam_fraction) * dam_length
+            + intermediate_length
+            + station_fraction * station_length
+        )
+
+    return distance, "network_path_fractional_endpoints"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--huc8", default="19020401")
@@ -136,11 +212,10 @@ def main():
         )
     )
 
-    # Edge weight represents the length of the destination reach.
-    # This produces an approximate reach-level distance, not an exact
-    # point-to-point distance along the river.
+    # Weight each edge by the length of the reach being exited.
+    # This is used to select the shortest route through the network.
     for u, v in G.edges:
-        G[u][v]["weight"] = float(length_by_reach.get(v, 0) or 0)
+        G[u][v]["weight"] = float(length_by_reach.get(u, 0) or 0)
 
     print(f"Stream reaches: {len(stream_ids):,}")
     print(f"Directed connections: {G.number_of_edges():,}")
@@ -153,6 +228,9 @@ def main():
 
     for dam in dams.itertuples(index=False):
         dam_id = getattr(dam, "dam_id")
+        dam_name = getattr(dam, "Dam_Name", None)
+        year_removed = getattr(dam, "Year_Removed", None)
+        river = getattr(dam, "River", None)
         dam_reach = getattr(dam, "reach_id")
         dam_fraction = getattr(dam, "snap_fraction")
         dam_snap_distance = getattr(dam, "snap_distance_m")
@@ -170,50 +248,36 @@ def main():
             station_snap_distance = getattr(station, "snap_distance_m")
 
             relationship = "unconnected"
-            distance_km = np.nan
-            distance_method = None
 
             if dam_reach is not None and station_reach is not None:
                 if dam_reach == station_reach and dam_reach in G:
                     relationship = "same_reach"
-
-                    length = float(length_by_reach.get(dam_reach, np.nan))
-                    if pd.notna(dam_fraction) and pd.notna(station_fraction):
-                        # Valid for distance along the same reach, regardless
-                        # of whether the line geometry follows flow direction.
-                        distance_km = (
-                            abs(float(dam_fraction) - float(station_fraction))
-                            * length
-                        )
-                        distance_method = "same_reach_fraction"
-
                 elif station_reach in upstream:
                     relationship = "upstream"
-                    try:
-                        distance_km = nx.shortest_path_length(
-                            G, station_reach, dam_reach, weight="weight"
-                        )
-                        distance_method = "reach_level_approximation"
-                    except (nx.NetworkXNoPath, nx.NodeNotFound):
-                        pass
-
                 elif station_reach in downstream:
                     relationship = "downstream"
-                    try:
-                        distance_km = nx.shortest_path_length(
-                            G, dam_reach, station_reach, weight="weight"
-                        )
-                        distance_method = "reach_level_approximation"
-                    except (nx.NetworkXNoPath, nx.NodeNotFound):
-                        pass
+
+            distance_km, distance_method = calculate_network_distance(
+                G=G,
+                dam_reach=dam_reach,
+                station_reach=station_reach,
+                dam_fraction=dam_fraction,
+                station_fraction=station_fraction,
+                length_by_reach=length_by_reach,
+                relationship=relationship,
+            )
 
             rows.append({
                 "huc8": huc8,
                 "dam_id": dam_id,
+                "dam_name": dam_name,
                 "station_id": station_id,
                 "dam_reach_id": dam_reach,
+                "year_removed": year_removed,
+                "river": river,
                 "station_reach_id": station_reach,
                 "relationship": relationship,
+                "distance_to_dam_km": distance_km,
                 "network_distance_km": distance_km,
                 "distance_method": distance_method,
                 "dam_snap_distance_m": dam_snap_distance,
