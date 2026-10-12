@@ -138,11 +138,10 @@ def main():
             )
 
     # Use stable source identifiers when available; otherwise assign row IDs.
-    dam_id_col = find_column(
-        dams,
-        ["dam_id", "DamID", "DAM_ID", "OBJECTID", "id", "ID"],
-        "dam identifier",
-    )
+    dam_id_col = "AR_ID"
+    if dam_id_col not in dams.columns:
+        raise ValueError("Dam layer is missing the unique identifier AR_ID.")
+
     station_id_col = find_column(
         stations,
         [
