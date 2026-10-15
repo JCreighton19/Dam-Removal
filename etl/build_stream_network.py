@@ -16,23 +16,22 @@ import networkx as nx
 
 from etl.common.config import default_case_study, load_config
 from etl.common.network import build_reach_graph
+from etl.common.nhdplus import find_huc8_geodatabase, is_hu4_fallback
 
 STREAM_LAYER = "NHDFlowline"
 FLOW_LAYER = "NHDPlusFlow"
 
 
 def process_huc8(root, huc8):
-    streams_path = (
-        root
-        / "data"
-        / "processed"
-        / "nhdplus_extracted"
-        / f"NHDPLUS_H_{huc8}_HU8_GDB"
-        / f"NHDPLUS_H_{huc8}_HU8_GDB.gdb"
-    )
+    nhd_dir = root / "data" / "processed" / "nhdplus_extracted"
+    streams_path = find_huc8_geodatabase(nhd_dir, huc8)
 
     # Load stream reaches and their connectivity relationships.
     print(f"\n=== HUC8: {huc8} ===")
+
+    if is_hu4_fallback(streams_path, huc8):
+        print(f"Using HU4 fallback package: {streams_path.name}")
+
     print("Loading NHDPlus HR data...")
 
     streams = gpd.read_file(streams_path, layer=STREAM_LAYER)

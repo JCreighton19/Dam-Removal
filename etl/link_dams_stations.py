@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from etl.common.config import default_case_study, load_config
+from etl.common.nhdplus import find_huc8_geodatabase, is_hu4_fallback
 from etl.common.network import build_reach_graph
 
 
@@ -109,11 +110,12 @@ def calculate_network_distance(
 
 
 def process_huc8(root, huc8):
-    gdb_path = (
-        root / "data" / "processed" / "nhdplus_extracted"
-        / f"NHDPLUS_H_{huc8}_HU8_GDB"
-        / f"NHDPLUS_H_{huc8}_HU8_GDB.gdb"
-    )
+    nhd_dir = root / "data" / "processed" / "nhdplus_extracted"
+    gdb_path = find_huc8_geodatabase(nhd_dir, huc8)
+
+    if is_hu4_fallback(gdb_path, huc8):
+        print(f"Using HU4 fallback package for HUC8 {huc8}: {gdb_path.name}")
+
     snapped_path = (
         root / "data" / "processed"
         / f"snapped_features_{huc8}.gpkg"
@@ -121,8 +123,6 @@ def process_huc8(root, huc8):
     output_dir = root / "data" / "processed"
     output_path = output_dir / f"dam_station_links_{huc8}.csv"
 
-    if not gdb_path.exists():
-        raise FileNotFoundError(f"NHDPlus geodatabase not found: {gdb_path}")
     if not snapped_path.exists():
         raise FileNotFoundError(f"Snapped features not found: {snapped_path}")
 

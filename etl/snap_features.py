@@ -11,6 +11,7 @@ from shapely.ops import nearest_points
 from etl.common.config import default_case_study, load_config
 from etl.common.dams import load_dams
 from etl.common.io import require_file
+from etl.common.nhdplus import find_huc8_geodatabase, is_hu4_fallback
 from etl.common.wbd import clip_to_watersheds, load_huc8_watershed
 
 # --------------------------------------------------
@@ -213,19 +214,13 @@ def process_huc8(cfg, huc8, all_stations, all_dams):
     print(f"Stations inside watershed: {len(stations):,}")
     print(f"Dam removals inside watershed: {len(dams):,}")
 
-    # Load the already-extracted HUC8 geodatabase.
+    # Load the already-extracted HUC8 geodatabase (an HU8 package, or an
+    # HU4 fallback covering this HUC8's parent HUC4).
     nhd_dir = cfg.project_root / "data" / "processed" / "nhdplus_extracted"
-    gdb_paths = list(nhd_dir.rglob("*.gdb"))
+    gdb_path = find_huc8_geodatabase(nhd_dir, huc8)
 
-    gdb_path = next(
-        (path for path in gdb_paths if huc8 in path.name),
-        None,
-    )
-
-    if gdb_path is None:
-        raise FileNotFoundError(
-            f"No extracted HUC8 geodatabase found under {nhd_dir}"
-        )
+    if is_hu4_fallback(gdb_path, huc8):
+        print(f"Using HU4 fallback package for HUC8 {huc8}: {gdb_path.name}")
 
     streams = gpd.read_file(
         gdb_path,
