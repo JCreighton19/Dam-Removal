@@ -2,9 +2,9 @@
 (config loading, file validation, atomic writes, manifests) against
 synthetic fixtures -- not just their pure logic functions.
 
-These build a throwaway project root under a temp directory with a
-minimal WBD GeoPackage, dam CSV, station CSVs, and (for the eligibility
-report) link/results CSVs, then run each script's real `main()`.
+These build a throwaway project root under a temp directory with station
+CSVs and (for the eligibility report) link/results CSVs, then run each
+script's real `main()`.
 
 Run directly: `python tests/test_stage1_integration.py`
 (Slower than the other test_*.py files since it does real file I/O.)
@@ -16,9 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import geopandas as gpd
 import pandas as pd
-from shapely.geometry import box
 
 from etl.common.config import PROJECT_ROOT_ENV_VAR
 
@@ -32,8 +30,6 @@ huc8s: ["{huc8}"]
 dam_source: data/raw/dams/dams.csv
 wbd_source: data/raw/wbd/wbd.gpkg
 station_types: ["Stream", "River/Stream"]
-candidate_distance_km: 5
-candidate_distance_sensitivity_km: [1, 5, 50]
 wq_window:
   years_before: 3
   years_after: 3
@@ -41,32 +37,18 @@ wq_characteristics: ["Turbidity", "pH"]
 """
     )
 
-    wbd_dir = root / "data" / "raw" / "wbd"
-    wbd_dir.mkdir(parents=True)
-    watershed = gpd.GeoDataFrame(
-        {"huc8": [huc8]},
-        geometry=[box(-71.3, 41.8, -70.7, 42.7)],
-        crs="EPSG:4326",
-    )
-    watershed.to_file(wbd_dir / "wbd.gpkg", layer="WBDHU8", driver="GPKG")
-
-    dams_dir = root / "data" / "raw" / "dams"
-    dams_dir.mkdir(parents=True)
-    pd.DataFrame({
-        "AR_ID": [1, 2],
-        "Dam_Name": ["Dam One", "Dam Two"],
-        "Latitude": [42.0, 42.5],
-        "Longitude": [-71.0, -71.0],
-        "Year_Removed": [2017, 2015],
-    }).to_csv(dams_dir / "dams.csv", index=False)
+    # select_candidate_stations.py no longer reads dam_source/wbd_source --
+    # only load_config() requires the keys to be present in the YAML, not
+    # the files themselves to exist. snap_features.py (not covered by
+    # these integration tests) is what actually reads those paths.
 
     stations_dir = root / "data" / "raw" / "wqp" / "stations"
     stations_dir.mkdir(parents=True)
     pd.DataFrame({
         "MonitoringLocationIdentifier": ["S1", "S2", "S3"],
-        "MonitoringLocationName": ["Near Dam One", "Near Dam Two", "Far from both"],
+        "MonitoringLocationName": ["Station One", "Station Two", "Station Three"],
         "MonitoringLocationTypeName": ["Stream", "River/Stream", "Stream"],
-        "LatitudeMeasure": [42.01, 42.49, 90.0],  # S3 has an invalid latitude
+        "LatitudeMeasure": [42.01, 42.49, 999.0],  # S3 has an invalid latitude
         "LongitudeMeasure": [-71.0, -71.0, -71.0],
     }).to_csv(stations_dir / f"{huc8}.csv", index=False)
 
@@ -88,36 +70,38 @@ def test_select_candidate_stations_end_to_end(monkeypatch):
         mod.main()
 
         output_path = root / "data" / "raw" / "wqp" / "results" / "pilot_station_selection.csv"
-        sensitivity_path = output_path.with_name("pilot_station_selection_sensitivity.csv")
         manifest_path = output_path.with_name("pilot_station_selection_manifest.csv")
 
         assert output_path.exists()
-        assert sensitivity_path.exists()
         assert manifest_path.exists()
+        # No distance-sensitivity file should be produced anymore.
+        assert not output_path.with_name("pilot_station_selection_sensitivity.csv").exists()
 
-        candidates = pd.read_csv(output_path)
-        # S3 has an invalid latitude and must be dropped before distance
-        # computation; S1/S2 are each ~1.1 km from a dam, within 5 km.
-        assert set(candidates["MonitoringLocationIdentifier"]) == {"S1", "S2"}
-        assert "nearest_dam_id" in candidates.columns
-        assert "distance_to_nearest_dam_km" in candidates.columns
+        stations = pd.read_csv(output_path)
+        # S3 has an invalid latitude and is dropped; S1/S2 both survive
+        # regardless of how far they are from any dam -- there is no
+        # distance filter anymore.
+        assert set(stations["MonitoringLocationIdentifier"]) == {"S1", "S2"}
+        assert "nearest_dam_id" not in stations.columns
+        assert "distance_to_nearest_dam_km" not in stations.columns
 
         manifest = pd.read_csv(manifest_path)
         assert manifest.loc[0, "status"] == "ok"
-        assert manifest.loc[0, "candidate_station_count"] == 2
+        assert manifest.loc[0, "station_count"] == 2
 
 
-def test_select_candidate_stations_does_not_overwrite_on_missing_dam_file(monkeypatch):
+def test_select_candidate_stations_does_not_overwrite_on_failure(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         root = _build_project(Path(tmp))
 
-        # Seed an existing "good" candidate file, then break the dam source
-        # so the run fails -- the existing file must survive untouched.
+        # Seed an existing "good" output file, then break the only input
+        # this script reads (the raw station file) so the run fails --
+        # the existing file must survive untouched.
         output_path = root / "data" / "raw" / "wqp" / "results" / "pilot_station_selection.csv"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text("MonitoringLocationIdentifier\nPRE_EXISTING\n")
 
-        (root / "data" / "raw" / "dams" / "dams.csv").unlink()
+        (root / "data" / "raw" / "wqp" / "stations" / "19020401.csv").unlink()
 
         monkeypatch.setenv(PROJECT_ROOT_ENV_VAR, str(root))
         monkeypatch.setattr(
@@ -130,11 +114,11 @@ def test_select_candidate_stations_does_not_overwrite_on_missing_dam_file(monkey
 
         try:
             mod.main()
-            raise AssertionError("Expected the missing dam file to raise.")
+            raise AssertionError("Expected the missing station file to raise.")
         except FileNotFoundError:
             pass
 
-        # The pre-existing candidate file must be untouched.
+        # The pre-existing output file must be untouched.
         assert output_path.read_text() == "MonitoringLocationIdentifier\nPRE_EXISTING\n"
 
         manifest_path = output_path.with_name("pilot_station_selection_manifest.csv")

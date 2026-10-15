@@ -19,17 +19,6 @@ station_types:
   - "Stream"
   - "River/Stream"
 
-# Candidate station selection (etl/select_candidate_stations.py).
-#
-# candidate_distance_km is a provisional discovery parameter, not a
-# scientifically validated cutoff -- it exists to keep the NHDPlus
-# download/snap/link steps scoped to a manageable, dam-relevant set of
-# stations. candidate_distance_sensitivity_km controls which additional
-# thresholds get reported alongside it, so the choice of 5 km can be
-# sanity-checked rather than taken on faith.
-candidate_distance_km: 5
-candidate_distance_sensitivity_km: [1, 2, 5, 10, 25, 50]
-
 # Water-quality analysis window (etl/report_pilot_eligibility.py and,
 # later, the full analysis-window builder). See that script's module
 # docstring for the exact definition of "pre"/"post"/removal year.

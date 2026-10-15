@@ -1,128 +1,134 @@
 """Lightweight validation checks for select_candidate_stations.py.
 
+This script only scopes/merges/type-filters raw downloaded WQP stations --
+it does not filter by distance to a dam. Relevance to a dam removal is
+determined entirely downstream, by network connectivity in
+snap_features.py / link_dams_stations.py.
+
 Run directly: `python tests/test_candidate_selection.py`
 """
 
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import geopandas as gpd
 import pandas as pd
 
-from etl.select_candidate_stations import (
-    build_sensitivity_report,
-    compute_nearest_dam,
-    validate_candidates,
-)
+from etl.select_candidate_stations import load_scope_stations, validate_stations
 
 
-def _dams():
-    # ~55.5 km apart (0.5 degrees of latitude).
-    return gpd.GeoDataFrame(
-        {"AR_ID": ["A1", "B1"]},
-        geometry=gpd.points_from_xy([-71.0, -71.0], [42.0, 42.5]),
-        crs="EPSG:4326",
-    )
+def _write_station_file(station_dir, huc8, rows):
+    pd.DataFrame(rows).to_csv(station_dir / f"{huc8}.csv", index=False)
 
 
-def _stations():
-    return gpd.GeoDataFrame(
-        {
+def test_load_scope_stations_merges_multiple_huc8_files():
+    with tempfile.TemporaryDirectory() as tmp:
+        station_dir = Path(tmp)
+        _write_station_file(station_dir, "11111111", {
+            "MonitoringLocationIdentifier": ["S1"],
+            "MonitoringLocationTypeName": ["Stream"],
+            "LatitudeMeasure": [42.0],
+            "LongitudeMeasure": [-71.0],
+        })
+        _write_station_file(station_dir, "22222222", {
+            "MonitoringLocationIdentifier": ["S2"],
+            "MonitoringLocationTypeName": ["River/Stream"],
+            "LatitudeMeasure": [43.0],
+            "LongitudeMeasure": [-72.0],
+        })
+
+        stations = load_scope_stations(
+            station_dir, ["11111111", "22222222"], ["Stream", "River/Stream"]
+        )
+
+        assert set(stations["MonitoringLocationIdentifier"]) == {"S1", "S2"}
+        assert set(stations["source_huc8"]) == {"11111111", "22222222"}
+
+
+def test_load_scope_stations_filters_by_type_and_drops_invalid_coords():
+    with tempfile.TemporaryDirectory() as tmp:
+        station_dir = Path(tmp)
+        _write_station_file(station_dir, "11111111", {
             "MonitoringLocationIdentifier": ["S1", "S2", "S3"],
-            "source_huc8": ["11111111", "11111111", "11111111"],
-        },
-        geometry=gpd.points_from_xy(
-            [-71.0, -71.0, -71.0],
-            [42.01, 42.49, 42.25],
-        ),
-        crs="EPSG:4326",
-    )
+            "MonitoringLocationTypeName": ["Stream", "Lake", "Stream"],
+            "LatitudeMeasure": [42.0, 42.1, 999.0],  # S3 has an invalid latitude
+            "LongitudeMeasure": [-71.0, -71.1, -71.0],
+        })
+
+        stations = load_scope_stations(station_dir, ["11111111"], ["Stream", "River/Stream"])
+
+        # S2 excluded (wrong type), S3 excluded (invalid coordinate).
+        assert set(stations["MonitoringLocationIdentifier"]) == {"S1"}
 
 
-def test_compute_nearest_dam_picks_closest_and_reasonable_distance():
-    joined = compute_nearest_dam(_stations(), _dams())
-    by_id = joined.set_index("MonitoringLocationIdentifier")
+def test_load_scope_stations_drops_duplicate_station_ids():
+    with tempfile.TemporaryDirectory() as tmp:
+        station_dir = Path(tmp)
+        _write_station_file(station_dir, "11111111", {
+            "MonitoringLocationIdentifier": ["S1", "S1"],
+            "MonitoringLocationTypeName": ["Stream", "Stream"],
+            "LatitudeMeasure": [42.0, 42.0],
+            "LongitudeMeasure": [-71.0, -71.0],
+        })
 
-    # S1 sits ~1.1 km from A1, far from B1 -> nearest should be A1.
-    assert by_id.loc["S1", "nearest_dam_id"] == "A1"
-    assert 0.5 < by_id.loc["S1", "distance_to_nearest_dam_km"] < 2.0
+        stations = load_scope_stations(station_dir, ["11111111"], ["Stream"])
 
-    # S2 sits ~1.1 km from B1 -> nearest should be B1.
-    assert by_id.loc["S2", "nearest_dam_id"] == "B1"
-    assert 0.5 < by_id.loc["S2", "distance_to_nearest_dam_km"] < 2.0
-
-    # S3 sits roughly halfway (~27-28 km either way).
-    assert 20.0 < by_id.loc["S3", "distance_to_nearest_dam_km"] < 35.0
-
-    # Required columns for downstream consumers are present.
-    for col in ("MonitoringLocationIdentifier", "source_huc8", "nearest_dam_id", "distance_to_nearest_dam_km"):
-        assert col in joined.columns
+        assert len(stations) == 1
 
 
-def test_sensitivity_report_counts_increase_with_distance():
-    joined = compute_nearest_dam(_stations(), _dams())
-    report = build_sensitivity_report(joined, threshold_km=5, sensitivity_km=[1, 5, 50])
-
-    counts = report.set_index("distance_km")["candidate_station_count"]
-
-    # At 1 km: only stations within 1 km of their nearest dam qualify.
-    assert counts.loc[1] == 0
-    # At 5 km: S1 and S2 (the ~1.1 km ones) qualify; S3 (~25-30 km) does not.
-    assert counts.loc[5] == 2
-    # At 50 km: all three qualify.
-    assert counts.loc[50] == 3
-    # Monotonically non-decreasing as the threshold widens.
-    assert counts.loc[1] <= counts.loc[5] <= counts.loc[50]
-
-    selected_row = report[report["distance_km"] == 5].iloc[0]
-    assert bool(selected_row["is_selected_threshold"]) is True
+def test_load_scope_stations_raises_clear_error_on_missing_huc8_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        station_dir = Path(tmp)
+        try:
+            load_scope_stations(station_dir, ["99999999"], ["Stream"])
+            raise AssertionError("Expected FileNotFoundError for a missing station file.")
+        except FileNotFoundError:
+            pass
 
 
-def test_validate_candidates_rejects_empty_result():
-    empty = pd.DataFrame(columns=[
-        "MonitoringLocationIdentifier", "source_huc8",
-        "nearest_dam_id", "distance_to_nearest_dam_km",
-    ])
+def test_validate_stations_rejects_empty_result():
+    empty = pd.DataFrame(columns=["MonitoringLocationIdentifier", "source_huc8"])
     try:
-        validate_candidates(empty, threshold_km=5)
-        raise AssertionError("Expected ValueError for an empty candidate table.")
+        validate_stations(empty)
+        raise AssertionError("Expected ValueError for an empty station table.")
     except ValueError:
         pass
 
 
-def test_validate_candidates_rejects_missing_columns():
+def test_validate_stations_rejects_missing_columns():
     bad = pd.DataFrame({"MonitoringLocationIdentifier": ["S1"]})
     try:
-        validate_candidates(bad, threshold_km=5)
+        validate_stations(bad)
         raise AssertionError("Expected ValueError for missing columns.")
     except ValueError:
         pass
 
 
-def test_validate_candidates_rejects_negative_distance():
-    bad = pd.DataFrame({
-        "MonitoringLocationIdentifier": ["S1"],
-        "source_huc8": ["11111111"],
-        "nearest_dam_id": ["A1"],
-        "distance_to_nearest_dam_km": [-1.0],
-    })
-    try:
-        validate_candidates(bad, threshold_km=5)
-        raise AssertionError("Expected ValueError for a negative distance.")
-    except ValueError:
-        pass
-
-
-def test_validate_candidates_accepts_well_formed_table():
+def test_validate_stations_accepts_well_formed_table():
     good = pd.DataFrame({
         "MonitoringLocationIdentifier": ["S1"],
         "source_huc8": ["11111111"],
-        "nearest_dam_id": ["A1"],
-        "distance_to_nearest_dam_km": [1.2],
     })
-    validate_candidates(good, threshold_km=5)  # should not raise
+    validate_stations(good)  # should not raise
+
+
+def test_no_distance_or_dam_columns_are_produced():
+    """Locks in the removal of the distance-based filter: the output has
+    no nearest-dam or distance columns, and no dam/WBD inputs are touched."""
+    with tempfile.TemporaryDirectory() as tmp:
+        station_dir = Path(tmp)
+        _write_station_file(station_dir, "11111111", {
+            "MonitoringLocationIdentifier": ["S1"],
+            "MonitoringLocationTypeName": ["Stream"],
+            "LatitudeMeasure": [42.0],
+            "LongitudeMeasure": [-71.0],
+        })
+        stations = load_scope_stations(station_dir, ["11111111"], ["Stream"])
+        assert "nearest_dam_id" not in stations.columns
+        assert "distance_to_nearest_dam_km" not in stations.columns
+        assert "geometry" not in stations.columns
 
 
 if __name__ == "__main__":
