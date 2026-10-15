@@ -19,7 +19,12 @@ BASE_URL = "https://www.waterqualitydata.us/data/Result/search"
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--max-stations", type=int, default=50)
+    parser.add_argument(
+        "--max-stations",
+        type=int,
+        default=None,
+        help="Optional limit for testing; defaults to all selected stations.",
+    )
     parser.add_argument("--batch-size", type=int, default=5)
     args = parser.parse_args()
 
@@ -36,8 +41,11 @@ def main():
         .str.strip()
         .loc[lambda s: s.ne("")]
         .drop_duplicates()
-        .tolist()[:args.max_stations]
+        .tolist()
     )
+
+    if args.max_stations is not None:
+        site_ids = site_ids[:args.max_stations]
 
     print(f"Stations selected: {len(site_ids)}", flush=True)
 
