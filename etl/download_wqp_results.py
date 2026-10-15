@@ -1,53 +1,113 @@
+"""
+Download WQP measurement results for stations confirmed relevant to a
+dam removal by link_dams_stations.py.
+
+Earlier versions of this script downloaded results for the full
+candidate station list from select_candidate_stations.py (every
+surface-water station in the case study's scope), capped by an arbitrary
+--max-stations. That worked when the scope was one small watershed, but
+once the scope spans multiple watersheds the candidate list can run into
+the thousands while the stations actually network-connected to a dam are
+a small fraction of that -- the cap was discarding almost all of the
+relevant stations, essentially at random, instead of using the relevance
+signal link_dams_stations.py already computed.
+
+This now reads every data/processed/dam_station_links_<huc8>.csv for the
+case study's HUC8 scope, keeps only rows classified as "upstream",
+"downstream", or "same_reach" (excluding "unconnected"), and downloads
+results for exactly that station set. It must run AFTER
+link_dams_stations.py, not in parallel with it -- a HUC8 without a link
+table yet (e.g. no NHDPlus coverage) is skipped with a warning rather
+than treated as fatal, so a partially-processed case study still works.
+"""
+
 from pathlib import Path
 from io import StringIO
 import argparse
+import sys
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pandas as pd
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-
-ROOT = Path(__file__).resolve().parents[1]
-INPUT_FILE = ROOT / "data/raw/wqp/results/pilot_station_selection.csv"
-OUTPUT_DIR = ROOT / "data/raw/wqp/results/pilot_download"
-MANIFEST_FILE = OUTPUT_DIR / "download_manifest.csv"
+from etl.common.config import default_case_study, load_config
+from etl.common.links import connected_only, load_links
 
 BASE_URL = "https://www.waterqualitydata.us/data/Result/search"
 
 
+def load_confirmed_stations(cfg):
+    """Station IDs confirmed network-connected to a dam, across every
+    HUC8 this case study has a link table for."""
+    processed_dir = cfg.project_root / "data" / "processed"
+    station_ids = []
+    missing_huc8s = []
+
+    for huc8 in cfg.huc8s:
+        links_path = processed_dir / f"dam_station_links_{huc8}.csv"
+
+        if not links_path.exists():
+            missing_huc8s.append(huc8)
+            continue
+
+        links = load_links(links_path)
+        connected = connected_only(links)
+        station_ids.extend(
+            connected["station_id"].dropna().astype(str).str.strip().tolist()
+        )
+
+    if missing_huc8s:
+        print(
+            f"WARNING: no dam_station_links_*.csv yet for HUC8(s) "
+            f"{missing_huc8s} -- run link_dams_stations.py for them first "
+            "if they should be included here.",
+            flush=True,
+        )
+
+    return sorted({sid for sid in station_ids if sid})
+
+
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--case-study",
+        default=default_case_study(),
+        help="Name of a config file under config/ (without the .yaml extension).",
+    )
     parser.add_argument(
         "--max-stations",
         type=int,
         default=None,
-        help="Optional limit for testing; defaults to all selected stations.",
+        help="Optional cap for testing; defaults to every confirmed "
+        "network-connected station.",
     )
     parser.add_argument("--batch-size", type=int, default=5)
     args = parser.parse_args()
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    cfg = load_config(args.case_study)
 
-    stations = pd.read_csv(
-        INPUT_FILE,
-        dtype={"MonitoringLocationIdentifier": "string"},
-    )
+    output_dir = cfg.project_root / "data" / "raw" / "wqp" / "results" / "pilot_download"
+    manifest_file = output_dir / "download_manifest.csv"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    site_ids = (
-        stations["MonitoringLocationIdentifier"]
-        .dropna()
-        .str.strip()
-        .loc[lambda s: s.ne("")]
-        .drop_duplicates()
-        .tolist()
-    )
+    site_ids = load_confirmed_stations(cfg)
+
+    if not site_ids:
+        raise ValueError(
+            "No network-connected stations found across this case study's "
+            "HUC8s. Run link_dams_stations.py first."
+        )
 
     if args.max_stations is not None:
         site_ids = site_ids[:args.max_stations]
 
-    print(f"Stations selected: {len(site_ids)}", flush=True)
+    print(f"Confirmed network-connected stations: {len(site_ids)}", flush=True)
 
     session = requests.Session()
 
@@ -66,7 +126,7 @@ def main():
         batch_num = start // args.batch_size + 1
         batch = site_ids[start:start + args.batch_size]
 
-        output_file = OUTPUT_DIR / f"results_batch_{batch_num:03d}.csv"
+        output_file = output_dir / f"results_batch_{batch_num:03d}.csv"
 
         if output_file.exists() and output_file.stat().st_size > 0:
             print(f"Skipping existing {output_file.name}", flush=True)
@@ -171,18 +231,18 @@ def main():
                 "error": str(exc),
             })
 
-        pd.DataFrame(manifest).to_csv(MANIFEST_FILE, index=False)
+        pd.DataFrame(manifest).to_csv(manifest_file, index=False)
 
         time.sleep(1)
 
-    pd.DataFrame(manifest).to_csv(MANIFEST_FILE, index=False)
+    pd.DataFrame(manifest).to_csv(manifest_file, index=False)
 
     print("\nDownload summary:", flush=True)
     print(
         pd.DataFrame(manifest)["status"].value_counts().to_string(),
         flush=True,
     )
-    print(f"Manifest: {MANIFEST_FILE}", flush=True)
+    print(f"Manifest: {manifest_file}", flush=True)
 
 
 if __name__ == "__main__":

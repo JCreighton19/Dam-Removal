@@ -91,10 +91,9 @@ import pandas as pd
 
 from etl.common.config import default_case_study, load_config
 from etl.common.io import require_columns
+from etl.common.links import CONNECTED_RELATIONSHIPS
+from etl.common.links import load_links
 
-CONNECTED_RELATIONSHIPS = ("upstream", "downstream", "same_reach")
-
-LINKS_REQUIRED_COLUMNS = {"dam_id", "dam_name", "station_id", "year_removed", "relationship"}
 RESULTS_REQUIRED_COLUMNS = {"MonitoringLocationIdentifier", "CharacteristicName", "ActivityStartDate"}
 
 MANIFEST_FIELDS = [
@@ -322,12 +321,6 @@ def build_characteristic_report(counts):
 # --------------------------------------------------------------------------
 # I/O
 # --------------------------------------------------------------------------
-
-def load_links(path):
-    df = pd.read_csv(path, dtype={"station_id": "string", "dam_id": "string"})
-    require_columns(df, LINKS_REQUIRED_COLUMNS, f"Dam-station link table ({path})")
-    return df
-
 
 def load_results(results_dir):
     batch_files = sorted(Path(results_dir).glob("results_batch_*.csv"))
