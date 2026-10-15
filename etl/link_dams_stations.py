@@ -1,9 +1,16 @@
 from pathlib import Path
 import argparse
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import geopandas as gpd
 import networkx as nx
 import numpy as np
 import pandas as pd
+
+from etl.common.config import load_config
+from etl.common.network import build_reach_graph
 
 
 def find_column(df, candidates, description):
@@ -103,9 +110,16 @@ def calculate_network_distance(
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--case-study",
+        default="pilot_19020401",
+        help="Name of a config file under config/ (without the .yaml extension). "
+        "Used only to resolve the project root in this script.",
+    )
     parser.add_argument("--huc8", default="19020401")
     args = parser.parse_args()
-    root = Path(__file__).resolve().parents[1]
+    cfg = load_config(args.case_study)
+    root = cfg.project_root
     huc8 = args.huc8
 
     gdb_path = (
@@ -174,51 +188,13 @@ def main():
 
     streams = gpd.read_file(gdb_path, layer="NHDFlowline")
     flow = gpd.read_file(gdb_path, layer="NHDPlusFlow")
-    streams["NHDPlusID"] = pd.to_numeric(
-        streams["NHDPlusID"], errors="coerce"
-    )
-
-    streams = streams.dropna(subset=["NHDPlusID"]).copy()
-    streams["NHDPlusID"] = streams["NHDPlusID"].astype("int64")
-    streams = streams.drop_duplicates("NHDPlusID")
-    length_by_reach = streams.set_index("NHDPlusID")["LengthKM"].to_dict()
-    stream_ids = set(length_by_reach)
-
-    flow["FromNHDPID"] = pd.to_numeric(
-        flow["FromNHDPID"], errors="coerce"
-    )
-    flow["ToNHDPID"] = pd.to_numeric(
-        flow["ToNHDPID"], errors="coerce"
-    )
-
-    valid = (
-        flow["FromNHDPID"].notna()
-        & flow["ToNHDPID"].notna()
-        & flow["FromNHDPID"].ne(0)
-        & flow["ToNHDPID"].ne(0)
-        & flow["FromNHDPID"].isin(stream_ids)
-        & flow["ToNHDPID"].isin(stream_ids)
-    )
-    valid_flow = flow.loc[valid].copy()
 
     # Assumption to validate: FromNHDPID -> ToNHDPID is downstream.
-    G = nx.DiGraph()
-    G.add_nodes_from(stream_ids)
-    G.add_edges_from(
-        zip(
-            valid_flow["FromNHDPID"].astype("int64"),
-            valid_flow["ToNHDPID"].astype("int64"),
-        )
-    )
+    G, length_by_reach, stats = build_reach_graph(streams, flow)
 
-    # Weight each edge by the length of the reach being exited.
-    # This is used to select the shortest route through the network.
-    for u, v in G.edges:
-        G[u][v]["weight"] = float(length_by_reach.get(u, 0) or 0)
-
-    print(f"Stream reaches: {len(stream_ids):,}")
+    print(f"Stream reaches: {stats['stream_count']:,}")
     print(f"Directed connections: {G.number_of_edges():,}")
-    print(f"Flow rows excluded: {(~valid).sum():,}")
+    print(f"Flow rows excluded: {stats['flow_rows_excluded']:,}")
 
     # Cache ancestor/descendant sets so each dam's graph traversal is
     # performed once, rather than once for every station.

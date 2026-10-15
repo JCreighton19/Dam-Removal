@@ -1,120 +1,50 @@
 from pathlib import Path
+import argparse
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import geopandas as gpd
 import pandas as pd
 from shapely.ops import nearest_points
 
+from etl.common.config import load_config
+from etl.common.dams import load_dams
+from etl.common.io import require_file
+from etl.common.wbd import clip_to_watersheds, load_huc8_watershed
 
 # --------------------------------------------------
 # Configuration
 # --------------------------------------------------
 
-ROOT = Path(__file__).resolve().parents[1]
-HUC8 = "19020401"
 STREAM_LAYER = "NHDFlowline"
-WQP_DIR = ROOT / "data" / "raw" / "wqp"
-STATION_DIR = WQP_DIR / "stations"
-OUTPUT_DIR = ROOT / "data" / "processed"
-OUTPUT_FILE = OUTPUT_DIR / f"snapped_features_{HUC8}.gpkg"
-DAM_FILE_NAME = "ARDamRemovalList_Figshare_Mar2026.csv"
-WBD_FILE_NAME = "WBD_National_GPKG.gpkg"
-SURFACE_WATER_TYPES = ["Stream", "River/Stream"]
+
 
 # --------------------------------------------------
-# Helpers
+# Loading candidate stations
 # --------------------------------------------------
 
-def find_file(filename, search_root):
-    matches = list(search_root.rglob(filename))
-
-    if not matches:
-        raise FileNotFoundError(
-            f"Could not find {filename} under {search_root}"
-        )
-
-    return matches[0]
-
-
-def find_column(columns, expected):
-    """Find a column name without case sensitivity."""
-    return next(
-        (col for col in columns if col.lower() == expected.lower()),
-        None,
+def load_candidate_stations(candidate_path):
+    """Load the pass-1 candidate stations produced by
+    select_candidate_stations.py. Snapping only operates on this
+    dam-relevant candidate set, not on every WQP station ever downloaded.
+    """
+    require_file(
+        candidate_path,
+        "Candidate station file (run select_candidate_stations.py first)",
     )
 
-
-def load_watershed():
-    wbd_path = find_file(WBD_FILE_NAME, ROOT)
-    layers = gpd.list_layers(wbd_path)
-
-    layer_name = next(
-        (
-            name for name in layers["name"]
-            if "hu8" in name.lower()
-        ),
-        None,
-    )
-
-    if layer_name is None:
-        raise ValueError("Could not find a HU8 layer in the WBD file.")
-
-    wbd = gpd.read_file(wbd_path, layer=layer_name)
-    huc_col = find_column(wbd.columns, "HUC8")
-
-    if huc_col is None:
-        raise ValueError(
-            f"No HUC8 column found. Available columns: {wbd.columns.tolist()}"
-        )
-
-    watershed = wbd[
-        wbd[huc_col].astype(str).str.zfill(8) == HUC8
-    ].copy()
-
-    if watershed.empty:
-        raise ValueError(f"HUC8 {HUC8} was not found.")
-
-    return watershed.to_crs("EPSG:4326")
-
-
-def load_stations():
-    files = sorted(STATION_DIR.glob("*.csv"))
-
-    if not files:
-        raise FileNotFoundError(
-            f"No station CSVs found in {STATION_DIR}"
-        )
-
-    frames = []
-
-    for file in files:
-        df = pd.read_csv(file, low_memory=False)
-        df["source_huc8"] = file.stem
-        frames.append(df)
-
-    stations = pd.concat(frames, ignore_index=True)
-
-    stations = stations[
-        stations["MonitoringLocationTypeName"].isin(
-            SURFACE_WATER_TYPES
-        )
-    ].copy()
+    stations = pd.read_csv(candidate_path, low_memory=False)
 
     for col in ["LatitudeMeasure", "LongitudeMeasure"]:
-        stations[col] = pd.to_numeric(
-            stations[col], errors="coerce"
-        )
+        stations[col] = pd.to_numeric(stations[col], errors="coerce")
 
-    stations = stations.dropna(
-        subset=["LatitudeMeasure", "LongitudeMeasure"]
-    )
-
+    stations = stations.dropna(subset=["LatitudeMeasure", "LongitudeMeasure"])
     stations = stations[
         stations["LatitudeMeasure"].between(-90, 90)
         & stations["LongitudeMeasure"].between(-180, 180)
     ].copy()
-
-    stations = stations.drop_duplicates(
-        subset="MonitoringLocationIdentifier"
-    )
+    stations = stations.drop_duplicates(subset="MonitoringLocationIdentifier")
 
     return gpd.GeoDataFrame(
         stations,
@@ -126,45 +56,12 @@ def load_stations():
     )
 
 
-def load_dams():
-    dam_path = find_file(DAM_FILE_NAME, ROOT)
-    dams = pd.read_csv(dam_path, low_memory=False)
-    lat_col = find_column(dams.columns, "Latitude")
-    lon_col = find_column(dams.columns, "Longitude")
-
-    if lat_col is None or lon_col is None:
-        raise ValueError(
-            "Could not find dam coordinate columns. "
-            f"Available columns: {dams.columns.tolist()}"
-        )
-
-    dams[lat_col] = pd.to_numeric(dams[lat_col], errors="coerce")
-    dams[lon_col] = pd.to_numeric(dams[lon_col], errors="coerce")
-    dams = dams.dropna(subset=[lat_col, lon_col]).copy()
-
-    dams = dams[
-        dams[lat_col].between(-90, 90)
-        & dams[lon_col].between(-180, 180)
-    ].copy()
-
-    return gpd.GeoDataFrame(
-        dams,
-        geometry=gpd.points_from_xy(
-            dams[lon_col],
-            dams[lat_col],
-        ),
-        crs="EPSG:4326",
+def find_column(columns, expected):
+    """Find a column name without case sensitivity."""
+    return next(
+        (col for col in columns if col.lower() == expected.lower()),
+        None,
     )
-
-
-def keep_inside_watershed(points, watershed):
-    """Keep points geographically inside the pilot watershed."""
-    return gpd.sjoin(
-        points,
-        watershed[["geometry"]],
-        how="inner",
-        predicate="within",
-    ).drop(columns="index_right", errors="ignore")
 
 
 # --------------------------------------------------
@@ -290,11 +187,34 @@ def print_duplicate_snaps(gdf, id_column, label):
 # --------------------------------------------------
 
 def main():
-    print(f"Processing pilot HUC8: {HUC8}")
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--case-study",
+        default="pilot_19020401",
+        help="Name of a config file under config/ (without the .yaml extension).",
+    )
+    parser.add_argument(
+        "--huc8",
+        default=None,
+        help="Defaults to the first HUC8 listed in the case-study config.",
+    )
+    args = parser.parse_args()
 
-    watershed = load_watershed()
-    stations = load_stations()
-    dams = load_dams()
+    cfg = load_config(args.case_study)
+    huc8 = args.huc8 or cfg.huc8s[0]
+
+    output_dir = cfg.project_root / "data" / "processed"
+    output_file = output_dir / f"snapped_features_{huc8}.gpkg"
+    candidate_path = (
+        cfg.project_root / "data" / "raw" / "wqp" / "results"
+        / "pilot_station_selection.csv"
+    )
+
+    print(f"Processing HUC8: {huc8}")
+
+    watershed = load_huc8_watershed(cfg.path("wbd_source"), huc8)
+    stations = load_candidate_stations(candidate_path)
+    dams = load_dams(cfg.path("dam_source"))
 
     # Choose a suitable local projected CRS in meters.
     metric_crs = watershed.estimate_utm_crs()
@@ -307,18 +227,18 @@ def main():
     print(f"Metric CRS: {metric_crs}")
 
     # Restrict points to the watershed before snapping.
-    stations = keep_inside_watershed(stations, watershed)
-    dams = keep_inside_watershed(dams, watershed)
+    stations = clip_to_watersheds(stations, watershed)
+    dams = clip_to_watersheds(dams, watershed)
 
     print(f"Stations inside watershed: {len(stations):,}")
     print(f"Dam removals inside watershed: {len(dams):,}")
 
     # Load the already-extracted HUC8 geodatabase.
-    nhd_dir = ROOT / "data" / "processed" / "nhdplus_extracted"
+    nhd_dir = cfg.project_root / "data" / "processed" / "nhdplus_extracted"
     gdb_paths = list(nhd_dir.rglob("*.gdb"))
 
     gdb_path = next(
-        (path for path in gdb_paths if HUC8 in path.name),
+        (path for path in gdb_paths if huc8 in path.name),
         None,
     )
 
@@ -373,7 +293,7 @@ def main():
     # Export original and snapped point geometries
     # --------------------------------------------------
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Build separate GeoDataFrames using the snapped points
     # as their active geometry, retaining all original attributes.
@@ -403,18 +323,18 @@ def main():
     dams_on_streams = dams_on_streams.to_crs("EPSG:4326")
 
     # Write the original layers first.
-    if OUTPUT_FILE.exists(): # overwrite if already exists
-        OUTPUT_FILE.unlink()
+    if output_file.exists(): # overwrite if already exists
+        output_file.unlink()
 
     stations_original.to_file(
-        OUTPUT_FILE,
+        output_file,
         layer="stations_original",
         driver="GPKG",
         mode="w",
     )
 
     dams_original.to_file(
-        OUTPUT_FILE,
+        output_file,
         layer="dams_original",
         driver="GPKG",
         mode="a",
@@ -422,20 +342,20 @@ def main():
 
     # Write the snapped layers.
     stations_on_streams.to_file(
-        OUTPUT_FILE,
+        output_file,
         layer="stations_snapped",
         driver="GPKG",
         mode="a",
     )
 
     dams_on_streams.to_file(
-        OUTPUT_FILE,
+        output_file,
         layer="dams_snapped",
         driver="GPKG",
         mode="a",
     )
 
-    print(f"\nSaved original and snapped features to: {OUTPUT_FILE}")
+    print(f"\nSaved original and snapped features to: {output_file}")
 
 
 if __name__ == "__main__":

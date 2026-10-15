@@ -1,0 +1,51 @@
+# Case-study configuration for the first end-to-end pilot watershed.
+#
+# To run a different case study (a different watershed, or eventually a
+# multi-HUC8 or national scope), copy this file rather than editing scripts
+# directly, and pass --case-study <new_file_stem> on the command line.
+
+case_study: pilot_19020401
+
+# One or more HUC8 watershed codes that define this case study's scope.
+huc8s:
+  - "19020401"
+
+# Paths are relative to the project root unless absolute.
+dam_source: data/raw/dams/ARDamRemovalList_Figshare_Mar2026.csv
+wbd_source: data/raw/wbd/WBD_National_GPKG.gpkg
+
+# WQP MonitoringLocationTypeName values treated as surface-water stations.
+station_types:
+  - "Stream"
+  - "River/Stream"
+
+# Candidate station selection (etl/select_candidate_stations.py).
+#
+# candidate_distance_km is a provisional discovery parameter, not a
+# scientifically validated cutoff -- it exists to keep the NHDPlus
+# download/snap/link steps scoped to a manageable, dam-relevant set of
+# stations. candidate_distance_sensitivity_km controls which additional
+# thresholds get reported alongside it, so the choice of 5 km can be
+# sanity-checked rather than taken on faith.
+candidate_distance_km: 5
+candidate_distance_sensitivity_km: [1, 2, 5, 10, 25, 50]
+
+# Water-quality analysis window (etl/report_pilot_eligibility.py and,
+# later, the full analysis-window builder). See that script's module
+# docstring for the exact definition of "pre"/"post"/removal year.
+wq_window:
+  years_before: 3
+  years_after: 3
+
+# WQP CharacteristicName values of interest, seeded from the exploratory
+# notebooks. Kept as exact source strings deliberately -- e.g. "Oxygen" and
+# "Dissolved oxygen (DO)" are NOT treated as the same characteristic, since
+# they are not known to be comparable. Extend this list as needed; nothing
+# downstream assumes it is exhaustive.
+wq_characteristics:
+  - "Dissolved oxygen (DO)"
+  - "Temperature, water"
+  - "Turbidity"
+  - "pH"
+  - "Nitrate"
+  - "Phosphorus"

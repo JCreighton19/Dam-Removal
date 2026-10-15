@@ -15,6 +15,7 @@ dependencies:
   - jupyterlab
   - ipykernel
   - geopandas
+  - networkx
   - folium
   - shapely
   - pyproj
