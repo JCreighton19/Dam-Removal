@@ -19,8 +19,9 @@ dependencies:
   - shapely
   - pyproj
   - fiona
+  - rasterio
+  - pyogrio
   - sqlalchemy
   - psycopg
-  - requests
   - tqdm
   - pyyaml
