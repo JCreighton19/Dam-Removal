@@ -58,3 +58,35 @@ def clip_to_watersheds(points, watersheds):
         how="inner",
         predicate="within",
     ).drop(columns="index_right", errors="ignore")
+
+
+def resolve_huc8_for_points(points, wbd_path):
+    """Reverse lookup: for each point, find the HUC8 watershed it falls within.
+
+    Returns the input points with a new "resolved_huc8" column (NaN for
+    any point that doesn't fall inside any HUC8 polygon, e.g. outside the
+    US or just offshore).
+    """
+    wbd_path = require_file(wbd_path, "WBD GeoPackage")
+    layer_name = find_hu8_layer(wbd_path)
+    wbd = gpd.read_file(wbd_path, layer=layer_name)
+    huc_col = find_column(wbd.columns, "HUC8")
+
+    if huc_col is None:
+        raise ValueError(
+            f"No HUC8 column found in layer '{layer_name}'. "
+            f"Available columns: {wbd.columns.tolist()}"
+        )
+
+    wbd = wbd.to_crs("EPSG:4326").copy()
+    wbd["resolved_huc8"] = wbd[huc_col].astype(str).str.zfill(8)
+
+    points = points.to_crs("EPSG:4326")
+    joined = gpd.sjoin(
+        points,
+        wbd[["resolved_huc8", "geometry"]],
+        how="left",
+        predicate="within",
+    ).drop(columns="index_right", errors="ignore")
+
+    return joined

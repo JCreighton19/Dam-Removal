@@ -198,6 +198,74 @@ def test_report_pilot_eligibility_end_to_end_ok_run(monkeypatch):
         assert manifest.loc[0, "pairs_eligible_both"] == 0
 
 
+def test_report_pilot_eligibility_loops_over_every_huc8_by_default(monkeypatch):
+    """A case study with multiple HUC8s (e.g. one built from several
+    randomly sampled dams) must process every one of them in a single
+    invocation when --huc8 isn't passed -- continuing past a HUC8 that
+    fails (e.g. one watershed's link table isn't ready yet) rather than
+    aborting the whole run."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "config").mkdir(parents=True)
+        (root / "config" / "pilot_multi.yaml").write_text(
+            """
+case_study: pilot_multi
+huc8s: ["11111111", "22222222"]
+dam_source: data/raw/dams/dams.csv
+wbd_source: data/raw/wbd/wbd.gpkg
+wq_window:
+  years_before: 3
+  years_after: 3
+wq_characteristics: ["Turbidity"]
+"""
+        )
+
+        processed_dir = root / "data" / "processed"
+        processed_dir.mkdir(parents=True)
+        # Only the first HUC8 has a link table; the second is deliberately
+        # missing to exercise the continue-past-a-failure behavior.
+        pd.DataFrame({
+            "dam_id": ["1"],
+            "dam_name": ["Dam One"],
+            "station_id": ["S1"],
+            "year_removed": [2017],
+            "relationship": ["upstream"],
+            "distance_to_dam_km": [1.0],
+        }).to_csv(processed_dir / "dam_station_links_11111111.csv", index=False)
+
+        results_dir = root / "data" / "raw" / "wqp" / "results" / "pilot_download"
+        results_dir.mkdir(parents=True)
+        pd.DataFrame({
+            "MonitoringLocationIdentifier": ["S1"],
+            "CharacteristicName": ["Turbidity"],
+            "ActivityStartDate": ["2015-06-01"],
+        }).to_csv(results_dir / "results_batch_001.csv", index=False)
+
+        monkeypatch.setenv(PROJECT_ROOT_ENV_VAR, str(root))
+        monkeypatch.setattr(
+            sys, "argv", ["report_pilot_eligibility.py", "--case-study", "pilot_multi"]
+        )
+
+        import importlib
+        import etl.report_pilot_eligibility as mod
+        importlib.reload(mod)
+
+        try:
+            mod.main()
+            raise AssertionError("Expected a RuntimeError since one HUC8 failed.")
+        except RuntimeError:
+            pass
+
+        # The HUC8 with a link table succeeded...
+        ok_manifest = pd.read_csv(processed_dir / "pilot_eligibility_manifest_11111111.csv")
+        assert ok_manifest.loc[0, "status"] == "ok"
+
+        # ...and the loop still reached and recorded the other HUC8,
+        # rather than stopping after the first one.
+        missing_manifest = pd.read_csv(processed_dir / "pilot_eligibility_manifest_22222222.csv")
+        assert missing_manifest.loc[0, "status"] == "missing_input"
+
+
 # --- Minimal monkeypatch shim, so this file runs without pytest installed ---
 
 class _FakeMonkeypatch:

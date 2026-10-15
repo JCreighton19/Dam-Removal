@@ -113,6 +113,27 @@ def test_project_root_env_var_overrides_default():
                 os.environ[PROJECT_ROOT_ENV_VAR] = old_value
 
 
+def test_default_case_study_follows_env_var_with_fallback():
+    from etl.common.config import (
+        CASE_STUDY_ENV_VAR,
+        DEFAULT_CASE_STUDY,
+        default_case_study,
+    )
+
+    old_value = os.environ.get(CASE_STUDY_ENV_VAR)
+    try:
+        os.environ.pop(CASE_STUDY_ENV_VAR, None)
+        assert default_case_study() == DEFAULT_CASE_STUDY
+
+        os.environ[CASE_STUDY_ENV_VAR] = "some_other_case_study"
+        assert default_case_study() == "some_other_case_study"
+    finally:
+        if old_value is None:
+            os.environ.pop(CASE_STUDY_ENV_VAR, None)
+        else:
+            os.environ[CASE_STUDY_ENV_VAR] = old_value
+
+
 if __name__ == "__main__":
     tests = [
         obj for name, obj in list(globals().items())

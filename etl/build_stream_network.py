@@ -14,33 +14,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import geopandas as gpd
 import networkx as nx
 
-from etl.common.config import load_config
+from etl.common.config import default_case_study, load_config
 from etl.common.network import build_reach_graph
 
 STREAM_LAYER = "NHDFlowline"
 FLOW_LAYER = "NHDPlusFlow"
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--case-study",
-        default="pilot_19020401",
-        help="Name of a config file under config/ (without the .yaml extension). "
-        "Used only to resolve the project root in this script.",
-    )
-    parser.add_argument(
-        "--huc8",
-        default=None,
-        help="Defaults to the first HUC8 listed in the case-study config.",
-    )
-    args = parser.parse_args()
-
-    cfg = load_config(args.case_study)
-    huc8 = args.huc8 or cfg.huc8s[0]
-
+def process_huc8(root, huc8):
     streams_path = (
-        cfg.project_root
+        root
         / "data"
         / "processed"
         / "nhdplus_extracted"
@@ -49,7 +32,7 @@ def main():
     )
 
     # Load stream reaches and their connectivity relationships.
-    print(f"HUC8: {huc8}")
+    print(f"\n=== HUC8: {huc8} ===")
     print("Loading NHDPlus HR data...")
 
     streams = gpd.read_file(streams_path, layer=STREAM_LAYER)
@@ -77,6 +60,44 @@ def main():
 
     print(f"Reaches with no incoming edge: {len(sources):,}")
     print(f"Reaches with no outgoing edge: {len(outlets):,}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--case-study",
+        default=default_case_study(),
+        help="Name of a config file under config/ (without the .yaml extension). "
+        "Used only to resolve the project root in this script.",
+    )
+    parser.add_argument(
+        "--huc8",
+        default=None,
+        help="Process only this HUC8. Defaults to every HUC8 listed in the "
+        "case-study config, processed one at a time.",
+    )
+    args = parser.parse_args()
+
+    cfg = load_config(args.case_study)
+    huc8_list = [args.huc8] if args.huc8 else cfg.huc8s
+
+    outcomes = []
+
+    for huc8 in huc8_list:
+        try:
+            process_huc8(cfg.project_root, huc8)
+            outcomes.append((huc8, "ok"))
+        except Exception as exc:
+            print(f"FAILED HUC8 {huc8}: {exc}", file=sys.stderr)
+            outcomes.append((huc8, f"failed: {exc}"))
+
+    if len(huc8_list) > 1:
+        print("\n=== Summary ===")
+        for huc8, status in outcomes:
+            print(f"  {huc8}: {status}")
+
+    if any(status != "ok" for _, status in outcomes):
+        raise RuntimeError("One or more HUC8s failed; see log above.")
 
 
 if __name__ == "__main__":

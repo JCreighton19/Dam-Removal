@@ -1,6 +1,10 @@
 from pathlib import Path
+import argparse
 import logging
 import re
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import geopandas as gpd
 import pandas as pd
@@ -8,18 +12,13 @@ import rasterio
 from rasterio.mask import mask
 from rasterio.errors import RasterioIOError
 
+from etl.common.config import default_case_study, load_config
+
 
 # ---------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------
 
-DAM_CSV = Path("data/raw/dams/ARDamRemovalList_Figshare_Mar2026.csv")
-WBD_GPKG = Path("data/raw/wbd/WBD_National_GPKG.gpkg")
-OUTPUT_DIR = Path("data/raw/nlcd")
-RASTER_DIR = OUTPUT_DIR / "rasters"
-
-# Change accordingly
-PILOT_HUC8 = "19020401"
 YEARS_BEFORE = 3
 YEARS_AFTER = 3
 
@@ -43,9 +42,9 @@ logger = logging.getLogger(__name__)
 # Prepare dams and watershed geometries
 # ---------------------------------------------------------------------
 
-def load_dams_and_watersheds():
-    dams = pd.read_csv(DAM_CSV, dtype={"HUC8": str})
-    wbd = gpd.read_file(WBD_GPKG, layer="WBDHU8")
+def load_dams_and_watersheds(dam_csv_path, wbd_path):
+    dams = pd.read_csv(dam_csv_path, dtype={"HUC8": str})
+    wbd = gpd.read_file(wbd_path, layer="WBDHU8")
 
     required_dam_columns = {
         "AR_ID", "HUC8", "Year_Removed", "Latitude", "Longitude"
@@ -142,7 +141,7 @@ def load_dams_and_watersheds():
 # Build the download manifest
 # ---------------------------------------------------------------------
 
-def build_manifest(dams):
+def build_manifest(dams, output_dir):
     requests = set()
 
     for row in dams[
@@ -161,7 +160,7 @@ def build_manifest(dams):
         columns=["AR_ID", "HUC8", "Land_Cover_Year"],
     )
 
-    manifest.to_csv(OUTPUT_DIR / "download_manifest.csv", index=False)
+    manifest.to_csv(output_dir / "download_manifest.csv", index=False)
 
     return manifest
 
@@ -214,8 +213,8 @@ def open_nlcd_raster(year):
 # Clip a remote raster to one watershed
 # ---------------------------------------------------------------------
 
-def download_clip(huc8, year, watershed):
-    out_dir = RASTER_DIR / huc8
+def download_clip(huc8, year, watershed, raster_dir):
+    out_dir = raster_dir / huc8
     out_dir.mkdir(parents=True, exist_ok=True)
 
     output_path = out_dir / f"NLCD_LandCover_{year}_{huc8}.tif"
@@ -299,17 +298,31 @@ def download_clip(huc8, year, watershed):
 # ---------------------------------------------------------------------
 
 def main():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    RASTER_DIR.mkdir(parents=True, exist_ok=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--case-study",
+        default=default_case_study(),
+        help="Name of a config file under config/ (without the .yaml extension).",
+    )
+    args = parser.parse_args()
 
-    dams, watersheds = load_dams_and_watersheds()
-    dams = dams[dams["huc8_resolved"] == PILOT_HUC8].copy()
-    watersheds = watersheds.loc[
-        watersheds.index.astype(str) == PILOT_HUC8
-        ]
+    cfg = load_config(args.case_study)
+    huc8s = set(cfg.huc8s)
 
-    manifest = build_manifest(dams)
+    output_dir = cfg.project_root / "data" / "raw" / "nlcd"
+    raster_dir = output_dir / "rasters"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    raster_dir.mkdir(parents=True, exist_ok=True)
 
+    dams, watersheds = load_dams_and_watersheds(
+        cfg.path("dam_source"), cfg.path("wbd_source")
+    )
+    dams = dams[dams["huc8_resolved"].isin(huc8s)].copy()
+    watersheds = watersheds.loc[watersheds.index.astype(str).isin(huc8s)]
+
+    manifest = build_manifest(dams, output_dir)
+
+    print(f"HUC8 scope: {sorted(huc8s)}")
     print(f"Eligible dams: {dams['AR_ID'].nunique():,}")
     print(f"Unique HUC8 watersheds: {manifest['HUC8'].nunique():,}")
     print(f"Dam/HUC8/year requests: {len(manifest):,}")
@@ -341,7 +354,7 @@ def main():
         geometry = watersheds.loc[[huc8]]
 
         output_path, status, details = download_clip(
-            huc8, year, geometry
+            huc8, year, geometry, raster_dir
         )
 
         results.append({
@@ -354,14 +367,14 @@ def main():
 
     results_df = pd.DataFrame(results)
     results_df.to_csv(
-        OUTPUT_DIR / "download_results.csv", index=False
+        output_dir / "download_results.csv", index=False
     )
 
     print("\nDownload summary:")
     print(results_df["status"].value_counts(dropna=False).to_string())
-    print(f"\nManifest: {OUTPUT_DIR / 'download_manifest.csv'}")
-    print(f"Results:  {OUTPUT_DIR / 'download_results.csv'}")
-    print(f"Rasters:  {RASTER_DIR}")
+    print(f"\nManifest: {output_dir / 'download_manifest.csv'}")
+    print(f"Results:  {output_dir / 'download_results.csv'}")
+    print(f"Rasters:  {raster_dir}")
 
 
 if __name__ == "__main__":

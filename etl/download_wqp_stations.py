@@ -1,17 +1,17 @@
 from pathlib import Path
 import argparse
 import re
+import sys
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import pandas as pd
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-ROOT = Path(__file__).resolve().parents[1]
-
-DEFAULT_HUC_FILE = ROOT / "data/processed/huc8_list.txt"
-OUTPUT_DIR = ROOT / "data/raw/wqp/stations"
-MANIFEST = ROOT / "data/raw/wqp/station_manifest.csv"
+from etl.common.config import default_case_study, load_config
 
 BASE_URL = "https://www.waterqualitydata.us/data/Station/search"
 
@@ -45,8 +45,8 @@ def make_session():
     return session
 
 
-def download_station(session, huc):
-    output_file = OUTPUT_DIR / f"{huc}.csv"
+def download_station(session, huc, output_dir):
+    output_file = output_dir / f"{huc}.csv"
 
     if output_file.exists() and output_file.stat().st_size > 0:
         print(f"Skipping existing file: {huc}", flush=True)
@@ -98,46 +98,61 @@ def download_station(session, huc):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--case-study",
+        default=default_case_study(),
+        help="Name of a config file under config/ (without the .yaml extension). "
+        "By default, downloads stations for exactly this case study's HUC8s.",
+    )
+    parser.add_argument(
         "--huc-file",
         type=Path,
-        default=DEFAULT_HUC_FILE,
+        default=None,
+        help="Override: read HUC8s from this file instead of the case-study "
+        "config (e.g. to pull a broader exploratory sample of watersheds "
+        "unrelated to any specific case study).",
     )
     parser.add_argument(
         "--n-hucs",
         type=int,
-        default=10,
-        help="Number of HUC8s to include in the pilot",
+        default=None,
+        help="Only used with --huc-file: cap the number of HUC8s read from it.",
     )
     args = parser.parse_args()
 
-    if not args.huc_file.exists():
-        raise FileNotFoundError(
-            f"HUC8 list not found: {args.huc_file}\n"
-            "Pass its actual path using --huc-file."
-        )
+    if args.huc_file is not None:
+        if not args.huc_file.exists():
+            raise FileNotFoundError(
+                f"HUC8 list not found: {args.huc_file}\n"
+                "Pass its actual path using --huc-file."
+            )
+        hucs = read_hucs(args.huc_file)
+        if not hucs:
+            raise ValueError("No valid eight-digit HUC codes found")
+        if args.n_hucs is not None:
+            hucs = hucs[:args.n_hucs]
+        project_root = Path(__file__).resolve().parents[1]
+    else:
+        cfg = load_config(args.case_study)
+        hucs = cfg.huc8s
+        project_root = cfg.project_root
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir = project_root / "data" / "raw" / "wqp" / "stations"
+    manifest_path = project_root / "data" / "raw" / "wqp" / "station_manifest.csv"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    hucs = read_hucs(args.huc_file)
-    if not hucs:
-        raise ValueError("No valid eight-digit HUC codes found")
-
-    pilot_hucs = hucs[:args.n_hucs]
-
-    print(f"Total HUC8s in list: {len(hucs)}", flush=True)
-    print(f"HUC8s in this pilot: {len(pilot_hucs)}", flush=True)
+    print(f"HUC8s to download: {len(hucs)}", flush=True)
 
     session = make_session()
     manifest = []
 
-    for i, huc in enumerate(pilot_hucs, start=1):
+    for i, huc in enumerate(hucs, start=1):
         print(
-            f"[{i}/{len(pilot_hucs)}] Processing HUC8 {huc}",
+            f"[{i}/{len(hucs)}] Processing HUC8 {huc}",
             flush=True,
         )
 
         try:
-            status, path = download_station(session, huc)
+            status, path = download_station(session, huc, output_dir)
             manifest.append({
                 "huc8": huc,
                 "status": status,
@@ -156,9 +171,9 @@ def main():
 
         time.sleep(1)
 
-    pd.DataFrame(manifest).to_csv(MANIFEST, index=False)
+    pd.DataFrame(manifest).to_csv(manifest_path, index=False)
 
-    print(f"Manifest saved to {MANIFEST}", flush=True)
+    print(f"Manifest saved to {manifest_path}", flush=True)
     print(
         pd.DataFrame(manifest)["status"].value_counts().to_dict(),
         flush=True,

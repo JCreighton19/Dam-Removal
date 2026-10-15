@@ -2,13 +2,15 @@
 #SBATCH --job-name=snap_features
 #SBATCH --output=data/slurm/logs/snap_%j.out
 #SBATCH --error=data/slurm/logs/snap_%j.err
-#SBATCH --time=02:00:00
+#SBATCH --time=06:00:00
 #SBATCH --mem=8G
 #SBATCH --cpus-per-task=2
 
 set -e
 
 cd /courses/DS5500.202710/teams/team4
+
+source data/slurm/case_study.env
 
 module load anaconda3/2024.06
 
@@ -18,6 +20,7 @@ conda activate dam-removal
 echo "========================================"
 echo "Snap Features job started"
 echo "Job ID: $SLURM_JOB_ID"
+echo "Case study: $DAM_REMOVAL_CASE_STUDY"
 echo "Python: $(which python)"
 echo "Start time: $(date)"
 echo "========================================"

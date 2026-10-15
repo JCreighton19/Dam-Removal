@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pandas as pd
 
-from etl.common.config import load_config
+from etl.common.config import default_case_study, load_config
 
 DEFAULT_STATION_TYPES = ["Stream", "River/Stream"]
 
@@ -129,7 +129,7 @@ def main():
     )
     parser.add_argument(
         "--case-study",
-        default="pilot_19020401",
+        default=default_case_study(),
         help="Name of a config file under config/ (without the .yaml extension).",
     )
     args = parser.parse_args()

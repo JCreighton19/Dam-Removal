@@ -8,7 +8,7 @@ import geopandas as gpd
 import pandas as pd
 from shapely.ops import nearest_points
 
-from etl.common.config import load_config
+from etl.common.config import default_case_study, load_config
 from etl.common.dams import load_dams
 from etl.common.io import require_file
 from etl.common.wbd import clip_to_watersheds, load_huc8_watershed
@@ -186,35 +186,15 @@ def print_duplicate_snaps(gdf, id_column, label):
 # Main
 # --------------------------------------------------
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--case-study",
-        default="pilot_19020401",
-        help="Name of a config file under config/ (without the .yaml extension).",
-    )
-    parser.add_argument(
-        "--huc8",
-        default=None,
-        help="Defaults to the first HUC8 listed in the case-study config.",
-    )
-    args = parser.parse_args()
-
-    cfg = load_config(args.case_study)
-    huc8 = args.huc8 or cfg.huc8s[0]
-
+def process_huc8(cfg, huc8, all_stations, all_dams):
     output_dir = cfg.project_root / "data" / "processed"
     output_file = output_dir / f"snapped_features_{huc8}.gpkg"
-    candidate_path = (
-        cfg.project_root / "data" / "raw" / "wqp" / "results"
-        / "pilot_station_selection.csv"
-    )
 
-    print(f"Processing HUC8: {huc8}")
+    print(f"\n=== Processing HUC8: {huc8} ===")
 
     watershed = load_huc8_watershed(cfg.path("wbd_source"), huc8)
-    stations = load_candidate_stations(candidate_path)
-    dams = load_dams(cfg.path("dam_source"))
+    stations = all_stations
+    dams = all_dams
 
     # Choose a suitable local projected CRS in meters.
     metric_crs = watershed.estimate_utm_crs()
@@ -356,6 +336,53 @@ def main():
     )
 
     print(f"\nSaved original and snapped features to: {output_file}")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--case-study",
+        default=default_case_study(),
+        help="Name of a config file under config/ (without the .yaml extension).",
+    )
+    parser.add_argument(
+        "--huc8",
+        default=None,
+        help="Process only this HUC8. Defaults to every HUC8 listed in the "
+        "case-study config, processed one at a time.",
+    )
+    args = parser.parse_args()
+
+    cfg = load_config(args.case_study)
+    huc8_list = [args.huc8] if args.huc8 else cfg.huc8s
+
+    candidate_path = (
+        cfg.project_root / "data" / "raw" / "wqp" / "results"
+        / "pilot_station_selection.csv"
+    )
+
+    # Loaded once and reused across HUC8s: the candidate file and dam
+    # source cover the whole case study, not one HUC8 each.
+    all_stations = load_candidate_stations(candidate_path)
+    all_dams = load_dams(cfg.path("dam_source"))
+
+    results = []
+
+    for huc8 in huc8_list:
+        try:
+            process_huc8(cfg, huc8, all_stations, all_dams)
+            results.append((huc8, "ok"))
+        except Exception as exc:
+            print(f"FAILED HUC8 {huc8}: {exc}", file=sys.stderr)
+            results.append((huc8, f"failed: {exc}"))
+
+    if len(huc8_list) > 1:
+        print("\n=== Summary ===")
+        for huc8, status in results:
+            print(f"  {huc8}: {status}")
+
+    if any(status != "ok" for _, status in results):
+        raise RuntimeError("One or more HUC8s failed; see log above.")
 
 
 if __name__ == "__main__":

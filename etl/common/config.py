@@ -24,6 +24,8 @@ from typing import Any
 import yaml
 
 PROJECT_ROOT_ENV_VAR = "DAM_REMOVAL_PROJECT_ROOT"
+CASE_STUDY_ENV_VAR = "DAM_REMOVAL_CASE_STUDY"
+DEFAULT_CASE_STUDY = "pilot_19020401"
 CONFIG_DIR_NAME = "config"
 
 # Keys every case-study config must define. Individual scripts validate
@@ -50,6 +52,19 @@ def get_project_root() -> Path:
 
     # This file lives at <project_root>/etl/common/config.py.
     return Path(__file__).resolve().parents[2]
+
+
+def default_case_study() -> str:
+    """The case-study name every script's --case-study flag defaults to.
+
+    Controlled by the DAM_REMOVAL_CASE_STUDY environment variable, so
+    switching every Slurm job to a different pilot watershed (or
+    eventually a national config) is one edit in one place --
+    `data/slurm/case_study.env` -- instead of editing each script's CLI
+    invocation individually. An explicit --case-study flag still
+    overrides this on any single run.
+    """
+    return os.environ.get(CASE_STUDY_ENV_VAR, DEFAULT_CASE_STUDY)
 
 
 def _config_path(name: str, project_root: Path) -> Path:

@@ -9,7 +9,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
-from etl.common.config import load_config
+from etl.common.config import default_case_study, load_config
 from etl.common.network import build_reach_graph
 
 
@@ -108,20 +108,7 @@ def calculate_network_distance(
     return distance, "network_path_fractional_endpoints"
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--case-study",
-        default="pilot_19020401",
-        help="Name of a config file under config/ (without the .yaml extension). "
-        "Used only to resolve the project root in this script.",
-    )
-    parser.add_argument("--huc8", default="19020401")
-    args = parser.parse_args()
-    cfg = load_config(args.case_study)
-    root = cfg.project_root
-    huc8 = args.huc8
-
+def process_huc8(root, huc8):
     gdb_path = (
         root / "data" / "processed" / "nhdplus_extracted"
         / f"NHDPLUS_H_{huc8}_HU8_GDB"
@@ -274,6 +261,42 @@ def main():
     print(links["relationship"].value_counts(dropna=False).to_string())
     print(f"\nOutput rows: {len(links):,}")
     print(f"Saved: {output_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--case-study",
+        default=default_case_study(),
+        help="Name of a config file under config/ (without the .yaml extension).",
+    )
+    parser.add_argument(
+        "--huc8",
+        default=None,
+        help="Process only this HUC8. Defaults to every HUC8 listed in the "
+        "case-study config, processed one at a time.",
+    )
+    args = parser.parse_args()
+    cfg = load_config(args.case_study)
+    huc8_list = [args.huc8] if args.huc8 else cfg.huc8s
+
+    results = []
+
+    for huc8 in huc8_list:
+        try:
+            process_huc8(cfg.project_root, huc8)
+            results.append((huc8, "ok"))
+        except Exception as exc:
+            print(f"FAILED HUC8 {huc8}: {exc}", file=sys.stderr)
+            results.append((huc8, f"failed: {exc}"))
+
+    if len(huc8_list) > 1:
+        print("\n=== Summary ===")
+        for huc8, status in results:
+            print(f"  {huc8}: {status}")
+
+    if any(status != "ok" for _, status in results):
+        raise RuntimeError("One or more HUC8s failed; see log above.")
 
 
 if __name__ == "__main__":

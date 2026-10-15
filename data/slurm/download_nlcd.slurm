@@ -12,11 +12,14 @@ PROJECT_DIR="/courses/DS5500.202710/teams/team4"
 
 cd "$PROJECT_DIR"
 
+source data/slurm/case_study.env
+
 mkdir -p data/slurm/logs
 mkdir -p data/raw/nlcd
 
 echo "Starting NLCD download..."
 echo "Project: $PROJECT_DIR"
+echo "Case study: $DAM_REMOVAL_CASE_STUDY"
 echo "Output: $PROJECT_DIR/data/raw/nlcd"
 echo "Started: $(date)"
 

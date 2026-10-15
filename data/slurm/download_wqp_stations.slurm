@@ -10,14 +10,16 @@ set -e
 
 cd /courses/DS5500.202710/teams/team4
 
+source data/slurm/case_study.env
+
 source ~/.bashrc
 conda activate dam-removal
 
 echo "Starting WQP station pilot"
+echo "Case study: $DAM_REMOVAL_CASE_STUDY"
 echo "Start time: $(date)"
 echo "Working directory: $(pwd)"
 
-python -u etl/download_wqp_stations.py \
-    --n-hucs 10
+python -u etl/download_wqp_stations.py
 
 echo "End time: $(date)"

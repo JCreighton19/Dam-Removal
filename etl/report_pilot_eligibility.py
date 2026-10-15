@@ -89,7 +89,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pandas as pd
 
-from etl.common.config import load_config
+from etl.common.config import default_case_study, load_config
 from etl.common.io import require_columns
 
 CONNECTED_RELATIONSHIPS = ("upstream", "downstream", "same_reach")
@@ -346,27 +346,8 @@ def _write_manifest(manifest_path, row):
     pd.DataFrame([full_row]).to_csv(manifest_path, index=False)
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument(
-        "--case-study",
-        default="pilot_19020401",
-        help="Name of a config file under config/ (without the .yaml extension).",
-    )
-    parser.add_argument(
-        "--huc8",
-        default=None,
-        help="Defaults to the first HUC8 listed in the case-study config.",
-    )
-    args = parser.parse_args()
-
-    cfg = load_config(args.case_study)
-    huc8 = args.huc8 or cfg.huc8s[0]
-
+def process_huc8(cfg, huc8, results):
     links_path = cfg.project_root / "data" / "processed" / f"dam_station_links_{huc8}.csv"
-    results_dir = cfg.project_root / "data" / "raw" / "wqp" / "results" / "pilot_download"
 
     output_dir = cfg.project_root / "data" / "processed"
     pairs_path = output_dir / f"pilot_eligibility_pairs_{huc8}.csv"
@@ -394,14 +375,8 @@ def main():
                 f"Missing input: dam-station link table not found at {links_path}. "
                 "Run link_dams_stations.py for this HUC8 first."
             )
-        if not results_dir.exists() or not any(results_dir.glob("results_batch_*.csv")):
-            raise FileNotFoundError(
-                f"Missing input: no WQP result batches found under {results_dir}. "
-                "Run download_wqp_results.py first."
-            )
 
         links = load_links(links_path)
-        results = load_results(results_dir)
 
         pairs_universe, excluded_missing_year = prepare_links(links)
         filtered_results = prepare_results(results, characteristics)
@@ -460,6 +435,68 @@ def main():
         })
         print(f"FAILED ({status}): {exc}", file=sys.stderr)
         raise
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--case-study",
+        default=default_case_study(),
+        help="Name of a config file under config/ (without the .yaml extension).",
+    )
+    parser.add_argument(
+        "--huc8",
+        default=None,
+        help="Process only this HUC8. Defaults to every HUC8 listed in the "
+        "case-study config, processed one at a time.",
+    )
+    args = parser.parse_args()
+
+    cfg = load_config(args.case_study)
+    huc8_list = [args.huc8] if args.huc8 else cfg.huc8s
+
+    # The WQP results directory is shared across the whole case study
+    # (download_wqp_results.py downloads for every candidate station at
+    # once), not per-HUC8 -- so it's checked and loaded once here, unlike
+    # the per-HUC8 dam-station link table.
+    results_dir = cfg.project_root / "data" / "raw" / "wqp" / "results" / "pilot_download"
+
+    if not results_dir.exists() or not any(results_dir.glob("results_batch_*.csv")):
+        error = FileNotFoundError(
+            f"Missing input: no WQP result batches found under {results_dir}. "
+            "Run download_wqp_results.py first."
+        )
+        output_dir = cfg.project_root / "data" / "processed"
+        for huc8 in huc8_list:
+            _write_manifest(output_dir / f"pilot_eligibility_manifest_{huc8}.csv", {
+                "huc8": huc8,
+                "status": "missing_input",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "error_message": str(error),
+            })
+        print(f"FAILED (missing_input): {error}", file=sys.stderr)
+        raise error
+
+    results = load_results(results_dir)
+
+    outcomes = []
+
+    for huc8 in huc8_list:
+        try:
+            process_huc8(cfg, huc8, results)
+            outcomes.append((huc8, "ok"))
+        except Exception as exc:
+            outcomes.append((huc8, f"failed: {exc}"))
+
+    if len(huc8_list) > 1:
+        print("\n=== Summary ===")
+        for huc8, status in outcomes:
+            print(f"  {huc8}: {status}")
+
+    if any(status != "ok" for _, status in outcomes):
+        raise RuntimeError("One or more HUC8s failed; see log above.")
 
 
 if __name__ == "__main__":
