@@ -20,10 +20,17 @@ echo "Project: $PROJECT_DIR"
 echo "Output: $PROJECT_DIR/data/raw/nlcd"
 echo "Started: $(date)"
 
-# Load your cluster's Python environment.
+# Load Conda and initialize shell integration.
 module load anaconda3/2024.06
+source "$(conda info --base)/etc/profile.d/conda.sh"
+
+# Activate the existing environment.
 conda activate dam-removal
 
+# Verify the required package is available.
+python -c "import rasterio; print('Rasterio:', rasterio.__version__)"
+
+# Run the download.
 python -u etl/download_land_cover.py
 
 echo "Finished: $(date)"
