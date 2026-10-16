@@ -32,7 +32,7 @@ HU8_PATTERN = re.compile(
 )
 
 HU4_PATTERN = re.compile(
-    r"^NHDPLUS_H_(\d{4})_HU4_GDB\.zip$",
+    r"^NHDPLUS_H_(\d{4})_HU4(?:_(\d{8}))?_GDB\.zip$",
     re.IGNORECASE,
 )
 
@@ -198,9 +198,16 @@ def select_packages(huc8_codes, files):
         match_hu4 = HU4_PATTERN.fullmatch(filename)
         if match_hu4:
             code = match_hu4.group(1)
+            date = match_hu4.group(2) or "00000000"
 
-            if code not in available_hu4:
-                available_hu4[code] = item
+            if (
+                    code not in available_hu4
+                    or date > available_hu4[code]["_date"]
+            ):
+                available_hu4[code] = {
+                    **item,
+                    "_date": date,
+                }
 
     selected = []
     missing = []
