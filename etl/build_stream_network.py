@@ -11,12 +11,15 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import geopandas as gpd
 import networkx as nx
 
 from etl.common.config import default_case_study, load_config
 from etl.common.network import build_reach_graph
-from etl.common.nhdplus import find_huc8_geodatabase, is_hu4_fallback
+from etl.common.nhdplus import (
+    find_huc8_geodatabase,
+    is_hu4_fallback,
+    read_nhdplus_layer,
+)
 
 STREAM_LAYER = "NHDFlowline"
 FLOW_LAYER = "NHDPlusFlow"
@@ -34,8 +37,8 @@ def process_huc8(root, huc8):
 
     print("Loading NHDPlus HR data...")
 
-    streams = gpd.read_file(streams_path, layer=STREAM_LAYER)
-    flow = gpd.read_file(streams_path, layer=FLOW_LAYER)
+    streams = read_nhdplus_layer(streams_path, STREAM_LAYER)
+    flow = read_nhdplus_layer(streams_path, FLOW_LAYER)
 
     print(f"Stream reaches loaded: {len(streams):,}")
     print(f"Flow relationships loaded: {len(flow):,}")

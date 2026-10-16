@@ -11,7 +11,11 @@ from shapely.ops import nearest_points
 from etl.common.config import default_case_study, load_config
 from etl.common.dams import load_dams
 from etl.common.io import require_file
-from etl.common.nhdplus import find_huc8_geodatabase, is_hu4_fallback
+from etl.common.nhdplus import (
+    find_huc8_geodatabase,
+    is_hu4_fallback,
+    read_nhdplus_layer,
+)
 from etl.common.wbd import clip_to_watersheds, load_huc8_watershed
 
 # --------------------------------------------------
@@ -222,10 +226,7 @@ def process_huc8(cfg, huc8, all_stations, all_dams):
     if is_hu4_fallback(gdb_path, huc8):
         print(f"Using HU4 fallback package for HUC8 {huc8}: {gdb_path.name}")
 
-    streams = gpd.read_file(
-        gdb_path,
-        layer=STREAM_LAYER,
-    )
+    streams = read_nhdplus_layer(gdb_path, STREAM_LAYER)
 
     if streams.crs is None:
         raise ValueError("The NHDFlowline layer has no defined CRS.")

@@ -10,7 +10,11 @@ import numpy as np
 import pandas as pd
 
 from etl.common.config import default_case_study, load_config
-from etl.common.nhdplus import find_huc8_geodatabase, is_hu4_fallback
+from etl.common.nhdplus import (
+    find_huc8_geodatabase,
+    is_hu4_fallback,
+    read_nhdplus_layer,
+)
 from etl.common.network import build_reach_graph
 
 
@@ -173,8 +177,8 @@ def process_huc8(root, huc8):
     print(f"Stations: {len(stations):,}")
     print("Loading stream lengths and flow relationships...")
 
-    streams = gpd.read_file(gdb_path, layer="NHDFlowline")
-    flow = gpd.read_file(gdb_path, layer="NHDPlusFlow")
+    streams = read_nhdplus_layer(gdb_path, "NHDFlowline")
+    flow = read_nhdplus_layer(gdb_path, "NHDPlusFlow")
 
     # Assumption to validate: FromNHDPID -> ToNHDPID is downstream.
     G, length_by_reach, stats = build_reach_graph(streams, flow)

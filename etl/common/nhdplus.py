@@ -4,6 +4,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import geopandas as gpd
+import pyogrio
+
+# Column names as the rest of the pipeline spells them. Newer NHDPlus HR
+# releases (e.g. NHDPLUS_H_0106_HU4_20230713_GDB) use lowercase field names
+# (nhdplusid, fromnhdpid, ...), so reads normalize to these spellings.
+CANONICAL_COLUMNS = (
+    "NHDPlusID",
+    "LengthKM",
+    "FromNHDPID",
+    "ToNHDPID",
+    "ReachCode",
+    "GNIS_Name",
+    "FType",
+    "FCode",
+    "FlowDir",
+)
+
 
 def find_huc8_geodatabase(nhdplus_extracted_dir, huc8):
     """Locate the extracted NHDPlus HR geodatabase covering a HUC8.
@@ -54,3 +72,36 @@ def find_huc8_geodatabase(nhdplus_extracted_dir, huc8):
 def is_hu4_fallback(gdb_path, huc8):
     """True if the located geodatabase is an HU4 fallback, not an exact HU8 match."""
     return f"_{huc8}_HU8_GDB" not in Path(gdb_path).name
+
+
+def normalize_nhdplus_columns(frame):
+    """Rename NHDPlus columns to their canonical spelling, ignoring case."""
+    canonical = {name.lower(): name for name in CANONICAL_COLUMNS}
+    renames = {
+        col: canonical[col.lower()]
+        for col in frame.columns
+        if col.lower() in canonical and col != canonical[col.lower()]
+    }
+    return frame.rename(columns=renames)
+
+
+def read_nhdplus_layer(gdb_path, layer, columns=None, **kwargs):
+    """Read an NHDPlus HR layer with canonical column names.
+
+    `columns` may use canonical names regardless of how the geodatabase
+    spells them. Extra kwargs (where, ignore_geometry, ...) pass through to
+    geopandas.read_file.
+    """
+    if columns is not None:
+        fields = pyogrio.read_info(gdb_path, layer=layer)["fields"]
+        available = {str(field).lower(): str(field) for field in fields}
+        missing = [col for col in columns if col.lower() not in available]
+        if missing:
+            raise ValueError(
+                f"Layer '{layer}' in {gdb_path} is missing columns {missing}. "
+                f"Available: {sorted(available.values())}"
+            )
+        columns = [available[col.lower()] for col in columns]
+
+    frame = gpd.read_file(gdb_path, layer=layer, columns=columns, **kwargs)
+    return normalize_nhdplus_columns(frame)
