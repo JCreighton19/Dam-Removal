@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=unzip_wbd
-#SBATCH --output=logs/unzip_wbd_%j.out
-#SBATCH --error=logs/unzip_wbd_%j.err
+#SBATCH --output=data/slurm/logs/unzip_wbd_%j.out
+#SBATCH --error=data/slurm/logs/unzip_wbd_%j.err
 #SBATCH --time=00:30:00
 #SBATCH --mem=16G
 #SBATCH --cpus-per-task=1
