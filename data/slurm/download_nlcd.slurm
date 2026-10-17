@@ -22,8 +22,9 @@ echo "Output: $PROJECT_DIR/data/raw/nlcd"
 echo "Started: $(date)"
 
 # Load Conda and initialize shell integration.
-source ~/.bashrc
-conda activate dam-removal
+# Use the verified Conda environment directly.
+export CONDA_ENV="/home/creighton.jo/.conda/envs/dam-removal"
+export PATH="$CONDA_ENV/bin:$PATH"
 
 # Verify the required package is available.
 python -c "import rasterio; print('Rasterio:', rasterio.__version__)"
