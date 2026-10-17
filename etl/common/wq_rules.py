@@ -131,6 +131,18 @@ DEFAULT_UNITS = {"ph": "std units"}
 _N_NUTRIENTS = ("nitrate", "ammonia")
 _P_NUTRIENTS = ("orthophosphate", "phosphorus")
 
+# MethodSpeciationName (resultPhysChem profile) -> (basis, factor to that
+# basis). Resolves a bare mg/L nutrient's chemical form instead of assuming
+# it; only applied when the basis matches the parameter's standard unit.
+SPECIATION_FACTORS = {
+    "as N": ("N", 1.0),
+    "as NO3": ("N", 14.007 / 62.004),
+    "as NH4": ("N", 14.007 / 18.039),
+    "as P": ("P", 1.0),
+    "as PO4": ("P", 30.974 / 94.971),
+}
+NUTRIENT_BASIS = {**{p: "N" for p in _N_NUTRIENTS}, **{p: "P" for p in _P_NUTRIENTS}}
+
 
 def _build_conversions():
     """(parameter_std, normalized unit) -> (factor, unit_basis_assumed)."""

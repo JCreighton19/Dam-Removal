@@ -109,6 +109,16 @@ ROWS = {
     "fahrenheit": {"ResultMeasure/MeasureUnitCode": "deg F", "ResultMeasureValue": "64"},
     "unknown_station": {"MonitoringLocationIdentifier": "S9"},
     "out_of_scope_parameter": {"CharacteristicName": "Lead"},
+    "keep_nitrate_speciated_n": {
+        "CharacteristicName": "Nitrate", "ResultSampleFractionText": "Total",
+        "ResultMeasureValue": "0.7", "ResultMeasure/MeasureUnitCode": "mg/L",
+        "MethodSpeciationName": "as N",
+    },
+    "keep_nitrate_speciated_no3": {
+        "CharacteristicName": "Nitrate", "ResultSampleFractionText": "Total",
+        "ResultMeasureValue": "4.43", "ResultMeasure/MeasureUnitCode": "mg/L",
+        "MethodSpeciationName": "as NO3",
+    },
     "keep_phosphorus_lt": {
         "MonitoringLocationIdentifier": "S2", "CharacteristicName": "Phosphorus",
         "ResultSampleFractionText": "Total", "ResultMeasureValue": "<0.5",
@@ -120,7 +130,7 @@ KEPT = sorted(label for label in ROWS if label.startswith("keep_"))
 
 
 def _frame(labels):
-    columns = sorted(cwr.REQUIRED_COLUMNS)
+    columns = sorted(cwr.REQUIRED_COLUMNS | {"MethodSpeciationName"})
     rows = []
     for label in labels:
         row = {col: None for col in columns}
@@ -194,6 +204,13 @@ def test_main_applies_every_rule():
         assert row.loc["keep_nitrate_bare", "unit_basis_assumed"]
         assert row.loc["keep_nitrate_bare", "result_unit_std"] == "mg/L as N"
         assert abs(row.loc["keep_nitrate_bare", "depth_m"] - 0.9144) < 1e-9
+
+        # MethodSpeciationName replaces the as-N assumption when present.
+        assert not row.loc["keep_nitrate_speciated_n", "unit_basis_assumed"]
+        assert row.loc["keep_nitrate_speciated_n", "result_value_std"] == 0.7
+        no3 = row.loc["keep_nitrate_speciated_no3"]
+        assert not no3["unit_basis_assumed"]
+        assert abs(no3["result_value_std"] - 4.43 * 14.007 / 62.004) < 1e-12
 
         nondetect = row.loc["keep_ammonia_nondetect"]
         assert nondetect["is_censored"] and abs(nondetect["result_value_std"] - 0.01) < 1e-12

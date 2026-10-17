@@ -337,6 +337,15 @@ def convert_units(df, log):
         pairs[factor.isna() & df["unit_resolved"].notna()],
     )
 
+    # A bare mg/L nutrient's chemical form comes from MethodSpeciationName when
+    # the download has it (resultPhysChem profile); otherwise it stays assumed.
+    if "MethodSpeciationName" in df.columns:
+        speciation = df["MethodSpeciationName"].str.strip().map(rules.SPECIATION_FACTORS)
+        basis_matches = speciation.str[0] == df["parameter_std"].map(rules.NUTRIENT_BASIS)
+        known = (assumed & basis_matches.fillna(False)).astype(bool)
+        factor = factor.where(~known, factor * pd.to_numeric(speciation.str[1]))
+        assumed = assumed & ~known
+
     df["result_value_std"] = df["value_native"] * factor
     df["result_unit_std"] = df["parameter_std"].map(rules.STANDARD_UNITS).astype("string")
     df["unit_basis_assumed"] = assumed

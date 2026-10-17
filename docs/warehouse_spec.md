@@ -334,7 +334,7 @@ Any other (parameter, unit) pair is dropped and logged, not guessed.
 
 **Turbidity:** NTU (EPA 180.1), FNU (ISO 7027) and NTRU come from different instrument designs and have no conversion ([USGS TWRI 9-A6.7](https://pubs.usgs.gov/publication/twri09A6.7), [USGS memo 2004.03](https://water.usgs.gov/admin/memo/QW/qw04.03.html)). They are treated as comparable (factor 1) and `result_unit_raw` is kept, so analyses can test sensitivity by restricting to one unit.
 
-**Bare mg/L nutrients** (about 230 STORET pilot rows): the chemical form decides the value by up to 4.4× (1 mg/L nitrate as N = 4.43 mg/L as NO3). The legacy result profile does not include the speciation field. The pilot assumes as N / as P and flags the rows. Before the 30–50 dam download, `download_wqp_results.py` should request `dataProfile=resultPhysChem` and use `MethodSpeciationName` to set the form; once that is confirmed, the flag should only appear where the speciation is also blank.
+**Bare mg/L nutrients** (about 230 STORET pilot rows): the chemical form decides the value by up to 4.4× (1 mg/L nitrate as N = 4.43 mg/L as NO3). `download_wqp_results.py` requests `dataProfile=resultPhysChem`, which adds `MethodSpeciationName`. When it is `as N`/`as NO3`/`as NH4` (nitrate, ammonia) or `as P`/`as PO4` (orthophosphate, phosphorus), the value is converted to the N or P basis (`SPECIATION_FACTORS` in `etl/common/wq_rules.py`) and not flagged. Rows with blank or mismatched speciation keep the as N / as P assumption and `unit_basis_assumed = true`. Checked 2026-10-17: NJ_MSU and 11113300 fill it for all bare mg/L nutrients (all as N / as P); 21OHIO_WQX leaves about 60% of orthophosphate blank.
 
 #### 3.6.5 Deduplication
 
@@ -351,7 +351,7 @@ Results with the same key but **different** values are kept (they are genuinely 
 
 #### 3.6.7 Open items
 
-- Confirm `MethodSpeciationName` in the `resultPhysChem` profile (3.6.4).
+None currently.
 
 ### 3.7 `station_watershed` (Step 5)
 

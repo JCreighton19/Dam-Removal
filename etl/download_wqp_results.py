@@ -56,6 +56,10 @@ from etl.common.links import connected_only, load_links
 
 BASE_URL = "https://www.waterqualitydata.us/data/Result/search"
 
+# WQP column set. resultPhysChem adds MethodSpeciationName (e.g. nitrate
+# "as N" vs "as NO3"), which the default profile omits.
+DATA_PROFILE = "resultPhysChem"
+
 # Print a progress summary every this many batches.
 PROGRESS_EVERY = 5
 
@@ -255,6 +259,7 @@ def main():
             "end_year": end_year,
             "station_count": len(batch),
             "stations": stations_key,
+            "data_profile": DATA_PROFILE,
             "status": None,
             "file": None,
             "rows": None,
@@ -356,6 +361,7 @@ def request_batch(session, batch, start_year, end_year):
         # WQP expects MM-DD-YYYY; both bounds are inclusive.
         ("startDateLo", f"01-01-{start_year}"),
         ("startDateHi", f"12-31-{end_year}"),
+        ("dataProfile", DATA_PROFILE),
         ("mimeType", "csv"),
         ("zip", "no"),
         ("sorted", "no"),
@@ -389,8 +395,8 @@ def load_previous_manifest(manifest_file):
 
 
 def already_done(prior, start_year, end_year, stations_key, output_file):
-    """True if an earlier run finished this exact batch (same stations and
-    date range) and, for batches with data, its CSV is still on disk."""
+    """True if an earlier run finished this exact batch (same stations, date
+    range and data profile) and, for batches with data, its CSV is still on disk."""
     if prior is None or prior.get("status") not in ("success", "zero_rows"):
         return False
 
@@ -399,6 +405,7 @@ def already_done(prior, start_year, end_year, stations_key, output_file):
             int(prior["start_year"]) == start_year
             and int(prior["end_year"]) == end_year
             and prior.get("stations") == stations_key
+            and prior.get("data_profile") == DATA_PROFILE
         )
     except (KeyError, TypeError, ValueError):
         return False  # manifest from an older version of this script
