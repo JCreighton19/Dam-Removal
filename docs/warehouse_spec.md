@@ -7,7 +7,7 @@ the rule that produces it.
 
 Status key used below:
 - **Ready**: the inputs already exist in the current pipeline.
-- **Step 2**: depends on the WQP cleaning rules (profiling not done yet).
+- **Step 2**: depends on the WQP cleaning rules (decided 2026-10-17, section 3.6).
 - **Step 5**: depends on contextual-data work (NLCD/climate source not chosen yet).
 
 ---
@@ -73,7 +73,7 @@ measurement_id = signed int64 from the first 8 bytes of
                                    ResultAnalyticalMethod/MethodIdentifier]))
 ```
 
-Nulls are joined as empty strings. Hash collisions or genuine duplicate rows are resolved by the deduplication rule (step 2) before the write. A duplicate `measurement_id` at write time is an error.
+Nulls are joined as empty strings. Hash collisions or genuine duplicate rows are resolved by the deduplication rule (section 3.6.5) before the write. A duplicate `measurement_id` at write time is an error.
 
 ---
 
@@ -86,7 +86,8 @@ Nulls are joined as empty strings. Hash collisions or genuine duplicate rows are
 | `dam_station_link` | Ready | `load_core_tables.py` | `dam_station_links_<huc8>.csv` |
 | `huc8_watershed` | Ready | `load_core_tables.py` | WBD GeoPackage (HU8 layer) |
 | `streams` | Ready | `load_core_tables.py` | NHDPlus HR `NHDFlowline` + reach graph |
-| `wq_measurement` | Step 2 | `clean_wq_results.py` (new, after `download_wqp_results`) | `pilot_download/results_batch_*.csv` |
+| `wq_measurement` | Ready (rules in 3.6) | `clean_wq_results.py` (new, after `download_wqp_results`) | `pilot_download/results_batch_*.csv` |
+| `wq_measurement_raw` | Ready | `clean_wq_results.py` | same as `wq_measurement`, unfiltered (3.6.6) |
 | `station_watershed` | Step 5 | context stage (new) | NHDPlus HR `NHDPlusCatchment` + reach graph |
 | `land_cover` | Step 5 | context stage (new) | Annual NLCD (source TBD) + `station_watershed` |
 | `land_cover_codes` | Ready | static, written once | NLCD legend (section 3.9) |
@@ -208,44 +209,147 @@ The links CSV columns `dam_name`, `year_removed`, `river`, `distance_to_dam_km` 
 
 `streams` is not the source of truth for the network. Graph logic always reads the raw NHDPlus geodatabase.
 
-### 3.6 `wq_measurement` (Step 2)
+### 3.6 `wq_measurement`
 
 - **Grain:** one row per cleaned WQP result.
 - **PK:** `measurement_id`.
-- **Rows:** results for `wq_station` stations that survive the step 2 filters (QC samples, non-water media and rejected statuses excluded; duplicates removed).
+- **Rows:** results for `wq_station` stations, limited to the parameters in the mapping table below, that survive the filters (section 3.6.2) and deduplication (3.6.5).
+- **Rules source:** profiling of the `pilot_random5_seed42` downloads (`notebooks/wqs_results_exploration.ipynb`, about 10,150 target-parameter rows), decided 2026-10-17. Re-check the value counts when the 30–50 dam sample is downloaded; unseen codes default to **kept and logged**, not silently dropped.
 
 | Column | Type | Source | Rule / notes |
 |---|---|---|---|
 | `measurement_id` | BIGINT PK | generated | Section 1, "Generated keys" |
 | `station_id` | TEXT | `MonitoringLocationIdentifier` | FK → `wq_station` |
 | `organization_id` | TEXT | `OrganizationIdentifier` | |
+| `provider` | TEXT | `ProviderName` | `NWIS` or `STORET` |
 | `activity_id` | TEXT | `ActivityIdentifier` | |
 | `sample_date` | DATE | `ActivityStartDate` | Rows with unparseable dates dropped |
 | `sample_time` | TIME | `ActivityStartTime/Time` | Null when absent |
 | `time_zone` | TEXT | `ActivityStartTime/TimeZoneCode` | |
-| `parameter` | TEXT | `CharacteristicName` | Verbatim (no merging of names) |
-| `result_value_raw` | TEXT | `ResultMeasureValue` | Verbatim, e.g. `"<0.5"`, `"ND"` |
-| `result_value_std` | DOUBLE | derived | Parsed value converted to `result_unit_std`. **Step 2:** conversion table and non-detect substitution rule |
-| `result_unit_raw` | TEXT | `ResultMeasure/MeasureUnitCode` | |
-| `result_unit_std` | TEXT | derived | One standard unit per `parameter` (+ fraction). **Step 2** |
+| `parameter` | TEXT | `CharacteristicName` | Verbatim |
+| `parameter_std` | TEXT | derived | Section 3.6.1 mapping. Analyses group on this, not `parameter` |
+| `usgs_pcode` | TEXT | `USGSPCode` | Zero-padded to 5 characters; null for STORET |
+| `result_value_raw` | TEXT | `ResultMeasureValue` | Verbatim, e.g. `"=6.59"`, `"## (Censored)"` |
+| `result_value_std` | DOUBLE | derived | Section 3.6.3 (parsing, non-detects) and 3.6.4 (units) |
+| `result_unit_raw` | TEXT | `ResultMeasure/MeasureUnitCode` | Verbatim |
+| `result_unit_std` | TEXT | derived | The standard unit for `parameter_std` (3.6.1) |
+| `unit_basis_assumed` | BOOLEAN | derived | True when the chemical form (as N / as P) was assumed, not stated (3.6.4) |
 | `detection_condition` | TEXT | `ResultDetectionConditionText` | |
 | `detection_limit` | DOUBLE | `DetectionQuantitationLimitMeasure/MeasureValue` | |
 | `detection_limit_unit` | TEXT | `DetectionQuantitationLimitMeasure/MeasureUnitCode` | |
-| `is_censored` | BOOLEAN | derived | True if `detection_condition` indicates a non-detect, or `result_value_raw` starts with `<` or `>`. **Step 2:** finalize the list of non-detect strings |
-| `sample_fraction` | TEXT | `ResultSampleFractionText` | |
+| `detection_limit_type` | TEXT | `DetectionQuantitationLimitTypeName` | |
+| `is_censored` | BOOLEAN | derived | Section 3.6.3 |
+| `sample_fraction` | TEXT | `ResultSampleFractionText` | Verbatim |
+| `sample_fraction_std` | TEXT | derived | `Filtered, field` → `Dissolved`; null for field parameters (3.6.1) |
 | `activity_type` | TEXT | `ActivityTypeCode` | Retained after filtering, for audit |
 | `media` | TEXT | `ActivityMediaName` | |
-| `result_status` | TEXT | `ResultStatusIdentifier` | |
+| `result_status` | TEXT | `ResultStatusIdentifier` | `Preliminary` is kept; filter on this column if needed |
 | `value_type` | TEXT | `ResultValueTypeName` | |
 | `qualifier_code` | TEXT | `MeasureQualifierCode` | |
+| `hydrologic_condition` | TEXT | `HydrologicCondition` | NWIS only (null for all STORET rows), so informational, not a filter |
 | `depth_m` | DOUBLE | `ActivityDepthHeightMeasure/MeasureValue` + `…/MeasureUnitCode` | Converted to meters; null when absent |
 
-**Step 2 decisions** (from profiling the pilot downloads):
-1. The standard unit for each parameter (+ fraction) and the conversion factors.
-2. The non-detect rule: e.g. `result_value_std = detection_limit / 2` with `is_censored = true`, or null.
-3. The excluded `ActivityTypeCode` values (QC blanks, spikes, replicates), the kept `ActivityMediaName` (`Water`) and the excluded `ResultStatusIdentifier` values (`Rejected`).
-4. Deduplication: the definition of a duplicate result (e.g. same station, date, time, parameter, fraction and value from different providers).
-5. Whether to also write an uncleaned `wq_measurement_raw` (all downloaded rows, typed) for audit. Recommended for the pilot.
+#### 3.6.1 Parameter mapping and standard units
+
+Rows whose `CharacteristicName` is not in this table are dropped. Field parameters have no meaningful fraction, so `sample_fraction_std` is null for them (`Total` and blank mean the same thing there). For nutrients the fraction matters, so analyses group on (`parameter_std`, `sample_fraction_std`).
+
+| `parameter_std` | `CharacteristicName` (+ unit condition) | `result_unit_std` | Field parameter |
+|---|---|---|---|
+| `water_temp` | `Temperature, water` | `deg C` | yes |
+| `specific_conductance` | `Specific conductance` | `uS/cm @25C` | yes |
+| `dissolved_oxygen` | `Dissolved oxygen (DO)`, `Oxygen`, with a mg/L unit | `mg/L` | yes |
+| `do_saturation` | `Dissolved oxygen (DO)`, `Oxygen`, with unit `%` or `% saturatn` | `%` | yes |
+| `ph` | `pH` | `std units` | yes |
+| `turbidity` | `Turbidity` | `NTU-equivalent` (raw unit kept; see 3.6.4) | yes |
+| `nitrate` | `Nitrate` | `mg/L as N` | no |
+| `ammonia` | `Ammonia and ammonium` | `mg/L as N` | no |
+| `orthophosphate` | `Orthophosphate` | `mg/L as P` | no |
+| `phosphorus` | `Phosphorus` | `mg/L as P` | no |
+| `tds` | `Total dissolved solids` | `mg/L` | no |
+
+Why one standardized name: providers name and unit the same measurement differently (NWIS `Oxygen` vs STORET `Dissolved oxygen (DO)`), which is the main known obstacle to combining WQP data ([Sprague et al., USGS](https://pubs.usgs.gov/publication/70179304)). Mapping once here keeps every analysis consistent.
+
+#### 3.6.2 Row filters
+
+Applied in this order. Each drop is counted by reason and written to the stage log.
+
+| # | Rule | Pilot rows affected |
+|---|---|---|
+| 1 | Drop `ActivityTypeCode` starting with `Quality Control` (field replicates, blanks, lab duplicates). `Unknown` is kept (pilot: routine USGS-NJ field readings) | 878 |
+| 2 | Keep `ActivityMediaName = Water` only; drop `ActivityMediaSubdivisionName` in (`Bottom material`, `Groundwater`) and any non-null `SampleAquifer` | 1 |
+| 3 | Drop `ResultStatusIdentifier = Rejected` | 115 |
+| 4 | Drop `ResultValueTypeName = Calculated` (pilot: all are NJ_MSU "Suspended" nitrate/orthophosphate, i.e. derived values) | 119 |
+| 5 | Drop non-null `StatisticalBaseCode` (daily means/maxima, not single samples) | 0 |
+| 6 | Drop fraction `Bed Sediment` and units `mg/kg` (sediment results) | 4 |
+| 7 | Drop rows whose `MeasureQualifierCode`, split on `;`, includes `H` (holding time exceeded) | 2 |
+| 8 | Drop NWIS alternate-form or derived parameter codes (below) | ~970 |
+| 9 | Drop rows with unparseable `sample_date`, or that end with no `result_value_std` and no detection limit | `NO DATA` rows |
+
+NWIS reports some measurements twice under different parameter codes (same sample restated in another chemical form, or a lab re-measurement of a field value). Keep one:
+
+| `parameter_std` | Keep pcode | Drop pcode | Reason |
+|---|---|---|---|
+| `ammonia` | 00608, 00610 (as N) | 71846, 71845 (as NH4) | Same result restated |
+| `nitrate` | 00618 (as N) | 71851 (as NO3) | Same result restated |
+| `orthophosphate` | 00671 (as P) | 00660 (as PO4) | Same result restated |
+| `tds` | 70300 (residue at 180 °C) | 70301 (sum of constituents), 70302 (tons/day), 70303 (tons/acre-ft) | Calculated or load units |
+| `specific_conductance` | 00095 (field) | 90095 (lab) | Field value preferred |
+| `ph` | 00400 (field) | 00403 (lab) | Field value preferred |
+
+#### 3.6.3 Value parsing and non-detects
+
+- Strip whitespace and a leading `=` (`=6.59` → 6.59), then parse as a number.
+- `is_censored = true` when any of:
+  - `ResultDetectionConditionText` in (`Not Detected`, `Present Below Quantification Limit`, `Below Reporting Limit`), the three values seen in the pilot. Any other non-null value is logged for review;
+  - `ResultMeasureValue` starts with `<` or equals `## (Censored)`;
+  - `MeasureQualifierCode`, split on `;`, includes `K` (pilot: only on rows already dropped by filter 4; kept as a safeguard).
+- **Non-detect value:** `result_value_std = detection_limit / 2`, converted to `result_unit_std`. If no detection limit is reported, `result_value_std` is null (the row is dropped by filter 9).
+  - Pilot: all 148 null-valued rows were non-detects (about 1.5% of rows). Substitution is acceptable at this rate ([EPA-adapted guidance, table in PMC10494629](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10494629/)) but biased when non-detects are common ([CLU-IN handout](https://clu-in.org/conf/tio/ltmo/Nondetects_handout.pdf)). `is_censored` is kept so ROS/MLE methods can replace it later; re-check the censored share per parameter at the 30–50 dam stage.
+- `>` values (above a range) are kept at the reported value with `is_censored = true`. None in the pilot.
+- `NO DATA` and other unparseable strings: null value (dropped by filter 9).
+
+#### 3.6.4 Units
+
+**Missing raw unit:** the pilot's blank-unit rows were non-detects, so the unit is taken from, in order: `detection_limit_unit`, then the pcode's unit (kept codes above), then `std units` for pH (STORET reports pH with no unit). Rows still without a unit are dropped.
+
+**Conversions** (raw unit → `result_unit_std`). Unit strings are compared case-insensitively and with spaces removed (`mg/l as N` = `mg/L as N`).
+
+| `parameter_std` | Raw unit | Factor | Notes |
+|---|---|---|---|
+| all mg/L parameters | `mg/l`, `mg/L` | 1 | Case only |
+| all mg/L parameters | `ug/L`, `ug/l` | 0.001 | Not in pilot; included for scale-up |
+| `specific_conductance` | `uS/cm`, `umho/cm`, `uS/cm @25C` | 1 | Identical units. A `ResultTemperatureBasisText` other than blank or `25 deg C` (any case) is logged |
+| `dissolved_oxygen` | `mg/L` | 1 | |
+| `do_saturation` | `%`, `% saturatn` | 1 | |
+| `turbidity` | `NTU`, `NTRU`, `FNU` | 1 | See below |
+| `nitrate`, `ammonia` | `mg/l as N` | 1 | |
+| `nitrate`, `ammonia` | bare `mg/L` | 1 | **Assumed as N**; `unit_basis_assumed = true` |
+| `orthophosphate`, `phosphorus` | `mg/l as P` | 1 | |
+| `orthophosphate`, `phosphorus` | bare `mg/L` | 1 | **Assumed as P**; `unit_basis_assumed = true` |
+
+Any other (parameter, unit) pair is dropped and logged, not guessed.
+
+**Turbidity:** NTU (EPA 180.1), FNU (ISO 7027) and NTRU come from different instrument designs and have no conversion ([USGS TWRI 9-A6.7](https://pubs.usgs.gov/publication/twri09A6.7), [USGS memo 2004.03](https://water.usgs.gov/admin/memo/QW/qw04.03.html)). They are treated as comparable (factor 1) and `result_unit_raw` is kept, so analyses can test sensitivity by restricting to one unit.
+
+**Bare mg/L nutrients** (about 230 STORET pilot rows): the chemical form decides the value by up to 4.4× (1 mg/L nitrate as N = 4.43 mg/L as NO3). The legacy result profile does not include the speciation field. The pilot assumes as N / as P and flags the rows. Before the 30–50 dam download, `download_wqp_results.py` should request `dataProfile=resultPhysChem` and use `MethodSpeciationName` to set the form; once that is confirmed, the flag should only appear where the speciation is also blank.
+
+#### 3.6.5 Deduplication
+
+Run after filters and units, in two passes:
+
+1. **Exact repeats** (the same result downloaded in more than one batch, e.g. overlapping dam windows at one station): same `measurement_id`. Keep one.
+2. **Same measurement under two activities** (pilot: one Ohio pair, `…:SR` vs `…:FM`): same `station_id`, `sample_date`, `sample_time`, `parameter_std`, `sample_fraction_std` and `result_value_std`. Keep one, preferring `Sample-Routine`, then `Field Msr/Obs`, then the lowest `measurement_id`.
+
+Results with the same key but **different** values are kept (they are genuinely separate readings, e.g. depth profiles); analyses aggregate per visit as needed. Pilot: after filters, only 2 rows were duplicated and no group spanned both providers.
+
+#### 3.6.6 Audit table
+
+`wq_measurement_raw.parquet`: every downloaded row for the case study, typed and with `measurement_id`, before any filter. Written for pilot and medium-sample case studies; skipped at national scale if size requires.
+
+#### 3.6.7 Open items
+
+- Plausible-range table for the section 4 check (e.g. pH 0–14, water temperature −1–40 °C, non-negative concentrations).
+- Confirm `MethodSpeciationName` in the `resultPhysChem` profile (3.6.4).
 
 ### 3.7 `station_watershed` (Step 5)
 
@@ -335,7 +439,7 @@ Run by each writer before the atomic rename; any failure aborts the write.
 | `wq_station` | `huc8` in `huc8_watershed`; `NHDPlusID` non-null; `snap_fraction` in [0, 1] |
 | `dam_station_link` | `AR_ID` in `dam_removal`; `station_id` in `wq_station`; `relationship` in the allowed set; `network_distance_km` ≥ 0 or null |
 | `streams` | Every `dam_removal.NHDPlusID` and `wq_station.NHDPlusID` present |
-| `wq_measurement` | `station_id` in `wq_station`; `sample_date` non-null; `result_unit_std` non-null wherever `result_value_std` is non-null; `result_value_std` within plausible range per parameter (step 2 range table) |
+| `wq_measurement` | `station_id` in `wq_station`; `sample_date` non-null; `result_unit_std` non-null wherever `result_value_std` is non-null; `parameter_std` in the 3.6.1 mapping; `result_value_std` within plausible range per parameter (range table: open item in 3.6.7) |
 | `station_watershed` | One row per `wq_station`; `area_km2` > 0 |
 | `land_cover` | `class_code` in `land_cover_codes`; `percent_area` sums to ~100 per (station, year); `valid_fraction` in [0, 1] |
 | `climate` | `station_id` in `station_watershed`; values within physical ranges |
