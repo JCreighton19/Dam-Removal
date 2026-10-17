@@ -21,9 +21,11 @@ table yet (e.g. no NHDPlus coverage) is skipped with a warning rather
 than treated as fatal, so a partially-processed case study still works.
 
 Requests are also limited to the case study's `wq_window`: each station
-is queried only for [earliest removal year - years_before, latest removal
-year + years_after] across the dams it is connected to, matching the
-windows report_pilot_eligibility.py evaluates. Stations whose connected
+is queried only for [removal year - years_before, removal year +
+years_after] around each dam it is connected to, matching the windows
+report_pilot_eligibility.py evaluates. A station connected to dams removed
+in different years gets one range per window (overlapping or adjacent
+windows are merged), so the years between them aren't downloaded. Stations whose connected
 dams all lack a removal year are skipped, since the eligibility report
 excludes them anyway. Stations sharing a date range are batched together,
 because WQP applies one date range per request.
@@ -58,8 +60,8 @@ PROGRESS_EVERY = 5
 
 def load_confirmed_stations(cfg, years_before, years_after):
     """Stations confirmed network-connected to a dam, across every HUC8
-    this case study has a link table for, with the year range to request
-    for each (start_year, end_year, inclusive)."""
+    this case study has a link table for, with the year range(s) to request
+    for each: one row per (station_id, start_year, end_year), inclusive."""
     processed_dir = cfg.project_root / "data" / "processed"
     frames = []
     missing_huc8s = []
@@ -104,15 +106,29 @@ def load_confirmed_stations(cfg, years_before, years_after):
             flush=True,
         )
 
-    stations = (
-        pairs.groupby("station_id")["year_removed"]
-        .agg(["min", "max"])
-        .reset_index()
-    )
-    stations["start_year"] = (stations["min"] - years_before).astype(int)
-    stations["end_year"] = (stations["max"] + years_after).astype(int)
+    rows = []
+    for station_id, years in pairs.groupby("station_id")["year_removed"]:
+        windows = [
+            (int(year) - years_before, int(year) + years_after)
+            for year in sorted(years.unique())
+        ]
+        for start_year, end_year in merge_windows(windows):
+            rows.append((station_id, start_year, end_year))
 
-    return stations[columns].sort_values(columns).reset_index(drop=True)
+    stations = pd.DataFrame(rows, columns=columns)
+    return stations.sort_values(columns).reset_index(drop=True)
+
+
+def merge_windows(windows):
+    """Merge sorted (start, end) year windows that overlap or touch, so no
+    year is requested twice for the same station."""
+    merged = []
+    for start, end in windows:
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def build_batches(stations, batch_size):
@@ -168,7 +184,8 @@ def main():
         )
 
     if args.max_stations is not None:
-        stations = stations.head(args.max_stations)
+        keep = stations["station_id"].drop_duplicates().head(args.max_stations)
+        stations = stations[stations["station_id"].isin(keep)]
 
     batches = build_batches(stations, args.batch_size)
 
@@ -177,7 +194,8 @@ def main():
     print(f"HUC8s ({len(cfg.huc8s)}): {', '.join(cfg.huc8s)}")
     print(f"Window: {years_before} years before / {years_after} years after removal")
     print(
-        f"Stations: {len(stations):,} in {len(batches):,} batches "
+        f"Stations: {stations['station_id'].nunique():,} "
+        f"({len(stations):,} station date ranges) in {len(batches):,} batches "
         f"of up to {args.batch_size}"
     )
     print(f"Output: {output_dir}")

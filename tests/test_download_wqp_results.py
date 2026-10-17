@@ -14,7 +14,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pandas as pd
 
 from etl.common.config import load_config
-from etl.download_wqp_results import build_batches, load_confirmed_stations
+from etl.download_wqp_results import (
+    build_batches,
+    load_confirmed_stations,
+    merge_windows,
+)
 
 
 def _write_links(path, rows):
@@ -90,7 +94,7 @@ def test_missing_huc8_link_table_is_skipped_not_fatal():
         assert stations["station_id"].tolist() == ["S1"]
 
 
-def test_window_spans_all_connected_removal_years():
+def test_overlapping_windows_are_merged():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         cfg = _write_config(root, ["11111111"])
@@ -106,6 +110,29 @@ def test_window_spans_all_connected_removal_years():
         stations = load_confirmed_stations(cfg, 5, 3)
         row = stations.set_index("station_id").loc["SHARED"]
         assert (row["start_year"], row["end_year"]) == (2005, 2018)
+
+
+def test_separate_windows_for_distant_removal_years():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        cfg = _write_config(root, ["11111111"])
+
+        processed_dir = root / "data" / "processed"
+        processed_dir.mkdir(parents=True)
+        _write_links(processed_dir / "dam_station_links_11111111.csv", [
+            ("D1", "Dam One", "SHARED", 1986, "upstream"),
+            ("D2", "Dam Two", "SHARED", 2018, "downstream"),
+            ("D3", "Dam Three", "SHARED", 1990, "upstream"),  # overlaps D1
+        ])
+
+        stations = load_confirmed_stations(cfg, 5, 5)
+        ranges = list(zip(stations["start_year"], stations["end_year"]))
+        assert ranges == [(1981, 1995), (2013, 2023)]
+
+
+def test_adjacent_windows_are_merged():
+    assert merge_windows([(2000, 2005), (2006, 2010)]) == [(2000, 2010)]
+    assert merge_windows([(2000, 2005), (2007, 2010)]) == [(2000, 2005), (2007, 2010)]
 
 
 def test_stations_without_removal_year_are_skipped():
