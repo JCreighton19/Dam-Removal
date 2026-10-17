@@ -22,3 +22,7 @@ __pycache__/
 
 # OS files
 .DS_Store
+
+# IDE and Jupyter scratch files
+.idea/
+.virtual_documents/
