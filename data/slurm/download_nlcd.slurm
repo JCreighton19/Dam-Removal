@@ -13,8 +13,6 @@ PROJECT_DIR="/courses/DS5500.202710/teams/team4"
 cd "$PROJECT_DIR"
 
 source data/slurm/case_study.env
-
-mkdir -p data/slurm/logs
 mkdir -p data/raw/nlcd
 
 echo "Starting NLCD download..."
@@ -24,10 +22,7 @@ echo "Output: $PROJECT_DIR/data/raw/nlcd"
 echo "Started: $(date)"
 
 # Load Conda and initialize shell integration.
-module load anaconda3/2024.06
-source "$(conda info --base)/etc/profile.d/conda.sh"
-
-# Activate the existing environment.
+source ~/.bashrc
 conda activate dam-removal
 
 # Verify the required package is available.

@@ -9,7 +9,7 @@ import pandas as pd
 from shapely.ops import nearest_points
 
 from etl.common.config import default_case_study, load_config
-from etl.common.dams import load_dams
+from etl.common.dams import filter_to_sampled_dams, load_dams
 from etl.common.io import require_file
 from etl.common.nhdplus import (
     find_huc8_geodatabase,
@@ -361,6 +361,15 @@ def main():
     # source cover the whole case study, not one HUC8 each.
     all_stations = load_candidate_stations(candidate_path)
     all_dams = load_dams(cfg.path("dam_source"))
+
+    sampled_dams = filter_to_sampled_dams(all_dams, cfg)
+    if len(sampled_dams) < len(all_dams):
+        print(
+            f"Restricting to the {len(sampled_dams)} sampled dam(s) in the "
+            f"config (of {len(all_dams):,} in the dam source).",
+            flush=True,
+        )
+    all_dams = sampled_dams
 
     results = []
 
