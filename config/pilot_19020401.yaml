@@ -23,8 +23,8 @@ station_types:
 # later, the full analysis-window builder). See that script's module
 # docstring for the exact definition of "pre"/"post"/removal year.
 wq_window:
-  years_before: 3
-  years_after: 3
+  years_before: 5
+  years_after: 5
 
 # WQP CharacteristicName values of interest, seeded from the exploratory
 # notebooks. Kept as exact source strings deliberately -- e.g. "Oxygen" and

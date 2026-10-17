@@ -19,6 +19,18 @@ results for exactly that station set. It must run AFTER
 link_dams_stations.py, not in parallel with it -- a HUC8 without a link
 table yet (e.g. no NHDPlus coverage) is skipped with a warning rather
 than treated as fatal, so a partially-processed case study still works.
+
+Requests are also limited to the case study's `wq_window`: each station
+is queried only for [earliest removal year - years_before, latest removal
+year + years_after] across the dams it is connected to, matching the
+windows report_pilot_eligibility.py evaluates. Stations whose connected
+dams all lack a removal year are skipped, since the eligibility report
+excludes them anyway. Stations sharing a date range are batched together,
+because WQP applies one date range per request.
+
+Existing batch files are skipped by batch number, so delete
+data/raw/wqp/results/pilot_download/ after changing wq_window or the
+station set.
 """
 
 from pathlib import Path
@@ -40,11 +52,12 @@ from etl.common.links import connected_only, load_links
 BASE_URL = "https://www.waterqualitydata.us/data/Result/search"
 
 
-def load_confirmed_stations(cfg):
-    """Station IDs confirmed network-connected to a dam, across every
-    HUC8 this case study has a link table for."""
+def load_confirmed_stations(cfg, years_before, years_after):
+    """Stations confirmed network-connected to a dam, across every HUC8
+    this case study has a link table for, with the year range to request
+    for each (start_year, end_year, inclusive)."""
     processed_dir = cfg.project_root / "data" / "processed"
-    station_ids = []
+    frames = []
     missing_huc8s = []
 
     for huc8 in cfg.huc8s:
@@ -54,11 +67,8 @@ def load_confirmed_stations(cfg):
             missing_huc8s.append(huc8)
             continue
 
-        links = load_links(links_path)
-        connected = connected_only(links)
-        station_ids.extend(
-            connected["station_id"].dropna().astype(str).str.strip().tolist()
-        )
+        connected = connected_only(load_links(links_path))
+        frames.append(connected[["station_id", "year_removed"]])
 
     if missing_huc8s:
         print(
@@ -68,7 +78,52 @@ def load_confirmed_stations(cfg):
             flush=True,
         )
 
-    return sorted({sid for sid in station_ids if sid})
+    columns = ["station_id", "start_year", "end_year"]
+    if not frames:
+        return pd.DataFrame(columns=columns)
+
+    pairs = pd.concat(frames, ignore_index=True).dropna(subset=["station_id"])
+    pairs["station_id"] = pairs["station_id"].astype(str).str.strip()
+    pairs = pairs[pairs["station_id"].ne("")]
+    pairs["year_removed"] = pd.to_numeric(pairs["year_removed"], errors="coerce")
+
+    # Same rule as report_pilot_eligibility.prepare_links: missing or zero
+    # removal years can't be placed in a window.
+    connected_count = pairs["station_id"].nunique()
+    pairs = pairs[pairs["year_removed"].notna() & pairs["year_removed"].ne(0)]
+    no_year_count = connected_count - pairs["station_id"].nunique()
+
+    if no_year_count:
+        print(
+            f"Skipping {no_year_count} connected station(s) whose dams all "
+            "lack a removal year.",
+            flush=True,
+        )
+
+    stations = (
+        pairs.groupby("station_id")["year_removed"]
+        .agg(["min", "max"])
+        .reset_index()
+    )
+    stations["start_year"] = (stations["min"] - years_before).astype(int)
+    stations["end_year"] = (stations["max"] + years_after).astype(int)
+
+    return stations[columns].sort_values(columns).reset_index(drop=True)
+
+
+def build_batches(stations, batch_size):
+    """Group stations sharing a date range, then split into batches of
+    (start_year, end_year, [station_id, ...])."""
+    batches = []
+
+    for (start_year, end_year), group in stations.groupby(
+        ["start_year", "end_year"], sort=True
+    ):
+        ids = group["station_id"].tolist()
+        for i in range(0, len(ids), batch_size):
+            batches.append((int(start_year), int(end_year), ids[i:i + batch_size]))
+
+    return batches
 
 
 def main():
@@ -96,18 +151,29 @@ def main():
     manifest_file = output_dir / "download_manifest.csv"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    site_ids = load_confirmed_stations(cfg)
+    wq_window = cfg.get("wq_window", {}) or {}
+    years_before = int(wq_window.get("years_before", 3))
+    years_after = int(wq_window.get("years_after", 3))
 
-    if not site_ids:
+    stations = load_confirmed_stations(cfg, years_before, years_after)
+
+    if stations.empty:
         raise ValueError(
-            "No network-connected stations found across this case study's "
-            "HUC8s. Run link_dams_stations.py first."
+            "No network-connected stations with a dam removal year found "
+            "across this case study's HUC8s. Run link_dams_stations.py first."
         )
 
     if args.max_stations is not None:
-        site_ids = site_ids[:args.max_stations]
+        stations = stations.head(args.max_stations)
 
-    print(f"Confirmed network-connected stations: {len(site_ids)}", flush=True)
+    batches = build_batches(stations, args.batch_size)
+
+    print("HUC8s in case study:", len(cfg.huc8s))
+    print("HUC8s:", cfg.huc8s)
+    print(f"Window: {years_before} years before, {years_after} years after removal")
+    print("Unique confirmed station IDs:", len(stations))
+    print(f"Batches at batch size {args.batch_size}:", len(batches))
+    print(f"Confirmed network-connected stations: {len(stations)}", flush=True)
 
     session = requests.Session()
 
@@ -122,10 +188,7 @@ def main():
 
     manifest = []
 
-    for start in range(0, len(site_ids), args.batch_size):
-        batch_num = start // args.batch_size + 1
-        batch = site_ids[start:start + args.batch_size]
-
+    for batch_num, (start_year, end_year, batch) in enumerate(batches, start=1):
         output_file = output_dir / f"results_batch_{batch_num:03d}.csv"
 
         if output_file.exists() and output_file.stat().st_size > 0:
@@ -134,6 +197,8 @@ def main():
             manifest.append({
                 "batch": batch_num,
                 "station_count": len(batch),
+                "start_year": start_year,
+                "end_year": end_year,
                 "status": "already_exists",
                 "file": output_file.name,
                 "rows": None,
@@ -142,7 +207,8 @@ def main():
             continue
 
         print(
-            f"Batch {batch_num}: requesting {len(batch)} stations",
+            f"Batch {batch_num}: requesting {len(batch)} stations "
+            f"({start_year}-{end_year})",
             flush=True,
         )
 
@@ -154,6 +220,9 @@ def main():
             ]
 
             params.extend([
+                # WQP expects MM-DD-YYYY; both bounds are inclusive.
+                ("startDateLo", f"01-01-{start_year}"),
+                ("startDateHi", f"12-31-{end_year}"),
                 ("mimeType", "csv"),
                 ("zip", "no"),
                 ("sorted", "no"),
@@ -213,6 +282,8 @@ def main():
             manifest.append({
                 "batch": batch_num,
                 "station_count": len(batch),
+                "start_year": start_year,
+                "end_year": end_year,
                 "status": status,
                 "file": output_file.name,
                 "rows": row_count,
@@ -225,6 +296,8 @@ def main():
             manifest.append({
                 "batch": batch_num,
                 "station_count": len(batch),
+                "start_year": start_year,
+                "end_year": end_year,
                 "status": "failed",
                 "file": output_file.name,
                 "rows": None,

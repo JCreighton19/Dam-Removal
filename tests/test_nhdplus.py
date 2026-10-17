@@ -9,7 +9,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from etl.common.nhdplus import find_huc8_geodatabase, is_hu4_fallback
+import pandas as pd
+
+from etl.common.nhdplus import (
+    find_huc8_geodatabase,
+    is_hu4_fallback,
+    normalize_nhdplus_columns,
+)
 
 
 def _make_gdb_dir(root, dirname):
@@ -62,6 +68,21 @@ def test_substring_search_catches_unexpected_directory_naming():
         assert found == weird
 
 
+def test_finds_dated_hu4_package_and_ignores_release_date():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        dated = _make_gdb_dir(root, "NHDPLUS_H_0106_HU4_20230713_GDB")
+
+        assert find_huc8_geodatabase(root, "01060003") == dated
+
+        # HUC4 0713 appears only inside the release date, so it must not match.
+        try:
+            find_huc8_geodatabase(root, "07130001")
+            raise AssertionError("Expected FileNotFoundError.")
+        except FileNotFoundError:
+            pass
+
+
 def test_raises_clear_error_when_nothing_matches():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -73,6 +94,20 @@ def test_raises_clear_error_when_nothing_matches():
         except FileNotFoundError as exc:
             assert "18070301" in str(exc)
             assert "1807" in str(exc)
+
+
+def test_normalizes_lowercase_nhdplus_columns():
+    # Newer NHDPlus HR releases spell fields in lowercase.
+    frame = pd.DataFrame(columns=["nhdplusid", "lengthkm", "fromnhdpid", "tonhdpid", "other"])
+    normalized = normalize_nhdplus_columns(frame)
+    assert list(normalized.columns) == [
+        "NHDPlusID", "LengthKM", "FromNHDPID", "ToNHDPID", "other",
+    ]
+
+
+def test_leaves_canonical_columns_unchanged():
+    frame = pd.DataFrame(columns=["NHDPlusID", "LengthKM", "ReachCode"])
+    assert list(normalize_nhdplus_columns(frame).columns) == list(frame.columns)
 
 
 if __name__ == "__main__":

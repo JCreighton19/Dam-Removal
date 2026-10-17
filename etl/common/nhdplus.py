@@ -58,7 +58,10 @@ def find_huc8_geodatabase(nhdplus_extracted_dir, huc8):
 
     if nhdplus_extracted_dir.exists():
         for path in nhdplus_extracted_dir.rglob("*.gdb"):
-            if huc8 in path.name or huc4 in path.name:
+            # Match whole "_"-separated tokens so a release date such as
+            # _20230713_ doesn't match HUC4 0713.
+            tokens = path.stem.split("_")
+            if huc8 in tokens or huc4 in tokens:
                 return path
 
     raise FileNotFoundError(

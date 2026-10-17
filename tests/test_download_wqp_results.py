@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pandas as pd
 
 from etl.common.config import load_config
-from etl.download_wqp_results import load_confirmed_stations
+from etl.download_wqp_results import build_batches, load_confirmed_stations
 
 
 def _write_links(path, rows):
@@ -50,8 +50,8 @@ def test_only_connected_stations_are_selected():
             ("D1", "Dam One", "S2", 2017, "unconnected"),
         ])
 
-        stations = load_confirmed_stations(cfg)
-        assert stations == ["S1"]
+        stations = load_confirmed_stations(cfg, 5, 5)
+        assert stations["station_id"].tolist() == ["S1"]
 
 
 def test_stations_merged_and_deduped_across_huc8s():
@@ -70,8 +70,8 @@ def test_stations_merged_and_deduped_across_huc8s():
             ("D2", "Dam Two", "SHARED", 2015, "upstream"),
         ])
 
-        stations = load_confirmed_stations(cfg)
-        assert stations == ["S1", "S2", "SHARED"]
+        stations = load_confirmed_stations(cfg, 5, 5)
+        assert sorted(stations["station_id"]) == ["S1", "S2", "SHARED"]
 
 
 def test_missing_huc8_link_table_is_skipped_not_fatal():
@@ -86,8 +86,58 @@ def test_missing_huc8_link_table_is_skipped_not_fatal():
         ])
         # No link table for 99999999 -- should warn, not raise.
 
-        stations = load_confirmed_stations(cfg)
-        assert stations == ["S1"]
+        stations = load_confirmed_stations(cfg, 5, 5)
+        assert stations["station_id"].tolist() == ["S1"]
+
+
+def test_window_spans_all_connected_removal_years():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        cfg = _write_config(root, ["11111111"])
+
+        processed_dir = root / "data" / "processed"
+        processed_dir.mkdir(parents=True)
+        _write_links(processed_dir / "dam_station_links_11111111.csv", [
+            ("D1", "Dam One", "SHARED", 2010, "upstream"),
+            ("D2", "Dam Two", "SHARED", 2015, "downstream"),
+            ("D3", "Dam Three", "SHARED", 1990, "unconnected"),  # ignored
+        ])
+
+        stations = load_confirmed_stations(cfg, 5, 3)
+        row = stations.set_index("station_id").loc["SHARED"]
+        assert (row["start_year"], row["end_year"]) == (2005, 2018)
+
+
+def test_stations_without_removal_year_are_skipped():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        cfg = _write_config(root, ["11111111"])
+
+        processed_dir = root / "data" / "processed"
+        processed_dir.mkdir(parents=True)
+        _write_links(processed_dir / "dam_station_links_11111111.csv", [
+            ("D1", "Dam One", "S1", 2017, "upstream"),
+            ("D2", "Dam Two", "S2", None, "upstream"),
+            ("D3", "Dam Three", "S3", 0, "downstream"),
+        ])
+
+        stations = load_confirmed_stations(cfg, 5, 5)
+        assert stations["station_id"].tolist() == ["S1"]
+
+
+def test_batches_never_mix_date_ranges():
+    stations = pd.DataFrame({
+        "station_id": ["A", "B", "C", "D"],
+        "start_year": [2005, 2005, 2005, 2010],
+        "end_year": [2015, 2015, 2015, 2020],
+    })
+
+    batches = build_batches(stations, batch_size=2)
+    assert batches == [
+        (2005, 2015, ["A", "B"]),
+        (2005, 2015, ["C"]),
+        (2010, 2020, ["D"]),
+    ]
 
 
 if __name__ == "__main__":
