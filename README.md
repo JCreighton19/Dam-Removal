@@ -1,0 +1,69 @@
+# Dam Removal and Water Quality
+
+DS5500 capstone project (Northeastern, team 4) studying how dam removals affect water quality upstream and downstream of the removed dam.
+
+The pipeline links each dam removal to the water-quality monitoring stations on the same river network, downloads those stations' measurements from the years around the removal, and loads everything into a small Parquet + DuckDB warehouse for analysis.
+
+## Data sources
+
+| Source | Used for |
+|---|---|
+| American Rivers dam removal list (Figshare, Mar 2026) | Dam locations and removal years (placed manually in `data/raw/dams/`) |
+| USGS Watershed Boundary Dataset (WBD), national GeoPackage | HUC8 watershed boundaries |
+| NHDPlus High Resolution | Stream flowlines and the flow network |
+| Water Quality Portal (WQP) | Monitoring stations and measurements |
+| NLCD | Land cover (in progress) |
+
+## Repository layout
+
+```
+config/          Case-study configs: which HUC8s and dams are in scope
+etl/             Pipeline scripts (one per stage) and shared helpers in etl/common/
+data/slurm/      One Slurm job per pipeline stage; case_study.env selects the config
+docs/            Warehouse table spec (docs/warehouse_spec.md)
+notebooks/       Exploration and QA notebooks
+tests/           Lightweight tests, runnable with `python tests/<file>.py` or pytest
+```
+
+Data (`data/raw/`, `data/processed/`, `data/warehouse/`) is not tracked in git. It lives on the Explorer cluster at `/courses/DS5500.202710/teams/team4`.
+
+## Setup
+
+On Explorer:
+
+```bash
+sbatch create_env.slurm        # creates or updates the `dam-removal` conda env
+```
+
+Set the case study every job runs against in `data/slurm/case_study.env`, and make sure `config/<case_study>.yaml` exists.
+
+## Pipeline
+
+Run the Slurm jobs in this order (each from the project root):
+
+1. `download_huc8` → `unzip_huc8`: WBD boundaries
+2. `sample_random_pilot` (optional): generate a config from a random sample of dams
+3. `download_wqp_stations` → `select_candidate_stations`: WQP stations in the case-study HUC8s
+4. `download_streams` → `unzip_nhdplus`: NHDPlus HR geodatabases
+5. `build_stream_network`: network diagnostics
+6. `snap_features`: snap dams and stations to the nearest flowline
+7. `link_dams`: classify each station as upstream, downstream or unconnected relative to each dam
+8. `download_wqp_results`: measurements within each dam's analysis window
+9. `report_pilot_eligibility`: which dams have enough before/after data
+10. `load_core_tables`: write the warehouse tables (see below)
+
+`download_nlcd` can run any time after the config exists.
+
+## Warehouse
+
+Curated tables are written as Parquet (GeoParquet for geometry) to `data/warehouse/<case_study>/` and queried with DuckDB. The column-level spec, cleaning rules and validation checks are in [`docs/warehouse_spec.md`](docs/warehouse_spec.md), based on the ERD in `DS5500 Capstone ERD final.jpeg`.
+
+| Table | Status |
+|---|---|
+| `dam_removal`, `wq_station`, `dam_station_link`, `huc8_watershed`, `streams` | `load_core_tables.py` |
+| `wq_measurement` | Cleaning rules decided; loader not yet written |
+| `station_watershed`, `land_cover`, `climate` | Planned |
+
+## Current status
+
+Pilot case study: `pilot_random5_seed42` (5 randomly sampled dams, seed 42). Next: run `load_core_tables` on the pilot, write `clean_wq_results.py`, then replace the eligibility report with DuckDB views.

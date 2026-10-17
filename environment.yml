@@ -22,7 +22,7 @@ dependencies:
   - fiona
   - rasterio
   - pyogrio
-  - sqlalchemy
-  - psycopg
+  - pyarrow
+  - duckdb
   - tqdm
   - pyyaml

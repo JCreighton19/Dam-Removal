@@ -5,6 +5,9 @@ data/raw/
 data/processed/*
 !data/processed/huc4_list.txt
 
+# Curated warehouse tables (rebuilt by load_core_tables.py etc.)
+data/warehouse/
+
 # Slurm and application logs
 data/slurm/logs/
 logs/

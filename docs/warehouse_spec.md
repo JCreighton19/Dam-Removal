@@ -195,7 +195,7 @@ The links CSV columns `dam_name`, `year_removed`, `river`, `distance_to_dam_km` 
 
 - **Grain:** one row per NHDPlus HR flowline.
 - **PK:** `nhdplus_id`.
-- **Rows:** every reach upstream or downstream of a case-study dam (via the reach graph), plus the snapped reach of every `wq_station`, limited to reaches whose `ReachCode` starts with a case-study HUC8. The same scoping is used by the pilot map in `notebooks/stream_network_exploration.ipynb`.
+- **Rows:** every reach upstream or downstream of a case-study dam (via the reach graph), limited to reaches whose `ReachCode` starts with a case-study HUC8, plus the snapped reach of every dam and `wq_station` (kept even across a HUC8 boundary, so every `NHDPlusID` FK resolves). The same scoping is used by the pilot map in `notebooks/stream_network_exploration.ipynb`.
 
 | Column | Type | Source | Rule / notes |
 |---|---|---|---|
