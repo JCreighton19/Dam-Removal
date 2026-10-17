@@ -38,8 +38,10 @@ date range, so changing wq_window or the station set re-requests it.
 
 from pathlib import Path
 from io import StringIO
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import argparse
 import sys
+import threading
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -56,6 +58,11 @@ BASE_URL = "https://www.waterqualitydata.us/data/Result/search"
 
 # Print a progress summary every this many batches.
 PROGRESS_EVERY = 5
+
+# Concurrent WQP requests. WQP is a shared public service; keep this small.
+DEFAULT_WORKERS = 4
+
+_thread_local = threading.local()
 
 
 def load_confirmed_stations(cfg, years_before, years_after):
@@ -163,6 +170,12 @@ def main():
         "network-connected station.",
     )
     parser.add_argument("--batch-size", type=int, default=5)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help="Number of batches to request from WQP concurrently.",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
@@ -203,17 +216,6 @@ def main():
 
     warn_about_orphaned_batch_files(output_dir, len(batches))
 
-    session = requests.Session()
-
-    retries = Retry(
-        total=4,
-        backoff_factor=2,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["GET"],
-    )
-
-    session.mount("https://", HTTPAdapter(max_retries=retries))
-
     # Keyed by batch number; earlier-run entries are kept until each batch
     # is revisited, so an interrupted run doesn't forget finished batches.
     manifest = {
@@ -227,6 +229,17 @@ def main():
     total_rows = 0
     started = time.monotonic()
     width = len(str(len(batches)))
+    completed = 0
+    pending = []
+
+    def record(batch_num, entry):
+        nonlocal completed
+        manifest[batch_num] = entry
+        write_manifest(manifest, manifest_file)
+        completed += 1
+
+        if completed % PROGRESS_EVERY == 0 or completed == len(batches):
+            print_progress(completed, len(batches), counts, total_rows, started)
 
     for batch_num, (start_year, end_year, batch) in enumerate(batches, start=1):
         output_file = output_dir / f"results_batch_{batch_num:03d}.csv"
@@ -254,9 +267,23 @@ def main():
             entry.update(status=prior["status"], file=prior["file"], rows=prior["rows"])
             counts["skipped"] += 1
             print(f"{prefix} skipped (done in an earlier run)", flush=True)
+            record(batch_num, entry)
         else:
+            pending.append((batch_num, start_year, end_year, batch, output_file, prefix, entry))
+
+    # Requests run in worker threads; saving files, the manifest and all
+    # printing stay on the main thread as each batch completes.
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        futures = {}
+        for item in pending:
+            _, start_year, end_year, batch, _, _, _ = item
+            futures[pool.submit(fetch_batch, batch, start_year, end_year)] = item
+
+        for future in as_completed(futures):
+            batch_num, start_year, end_year, batch, output_file, prefix, entry = futures[future]
+
             try:
-                df = request_batch(session, batch, start_year, end_year)
+                df = future.result()
 
                 if len(df):
                     df.to_csv(output_file, index=False)
@@ -277,13 +304,7 @@ def main():
                 counts["failed"] += 1
                 print(f"{prefix} FAILED: {exc}", flush=True)
 
-            time.sleep(1)
-
-        manifest[batch_num] = entry
-        write_manifest(manifest, manifest_file)
-
-        if batch_num % PROGRESS_EVERY == 0 or batch_num == len(batches):
-            print_progress(batch_num, len(batches), counts, total_rows, started)
+            record(batch_num, entry)
 
     failed = [b for b, e in sorted(manifest.items()) if e["status"] == "failed"]
 
@@ -297,6 +318,34 @@ def main():
         print(f"  Failed batch numbers: {failed} -- re-run to retry them")
     print(f"  Manifest: {manifest_file}")
     print("=" * 70, flush=True)
+
+
+def get_session():
+    """One requests.Session per worker thread (Session isn't guaranteed
+    to be thread-safe)."""
+    session = getattr(_thread_local, "session", None)
+
+    if session is None:
+        session = requests.Session()
+        retries = Retry(
+            total=4,
+            backoff_factor=2,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET"],
+        )
+        session.mount("https://", HTTPAdapter(max_retries=retries))
+        _thread_local.session = session
+
+    return session
+
+
+def fetch_batch(batch, start_year, end_year):
+    """Worker-thread task: request one batch, then pause so each worker
+    keeps the original one-request-per-second pace."""
+    try:
+        return request_batch(get_session(), batch, start_year, end_year)
+    finally:
+        time.sleep(1)
 
 
 def request_batch(session, batch, start_year, end_year):
