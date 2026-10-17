@@ -86,7 +86,7 @@ Nulls are joined as empty strings. Hash collisions or genuine duplicate rows are
 | `dam_station_link` | Ready | `load_core_tables.py` | `dam_station_links_<huc8>.csv` |
 | `huc8_watershed` | Ready | `load_core_tables.py` | WBD GeoPackage (HU8 layer) |
 | `streams` | Ready | `load_core_tables.py` | NHDPlus HR `NHDFlowline` + reach graph |
-| `wq_measurement` | Ready (rules in 3.6) | `clean_wq_results.py` (new, after `download_wqp_results`) | `pilot_download/results_batch_*.csv` |
+| `wq_measurement` | Ready (rules in 3.6) | `clean_wq_results.py` (after `download_wqp_results` and `load_core_tables`) | `pilot_download/results_batch_*.csv` listed in `download_manifest.csv`; `wq_station.parquet` |
 | `wq_measurement_raw` | Ready | `clean_wq_results.py` | same as `wq_measurement`, unfiltered (3.6.6) |
 | `station_watershed` | Step 5 | context stage (new) | NHDPlus HR `NHDPlusCatchment` + reach graph |
 | `land_cover` | Step 5 | context stage (new) | Annual NLCD (source TBD) + `station_watershed` |
@@ -214,7 +214,7 @@ The links CSV columns `dam_name`, `year_removed`, `river`, `distance_to_dam_km` 
 - **Grain:** one row per cleaned WQP result.
 - **PK:** `measurement_id`.
 - **Rows:** results for `wq_station` stations, limited to the parameters in the mapping table below, that survive the filters (section 3.6.2) and deduplication (3.6.5).
-- **Rules source:** profiling of the `pilot_random5_seed42` downloads (`notebooks/wqs_results_exploration.ipynb`, about 10,150 target-parameter rows), decided 2026-10-17. Re-check the value counts when the 30–50 dam sample is downloaded; unseen codes default to **kept and logged**, not silently dropped.
+- **Rules source:** profiling of the `pilot_random5_seed42` downloads (`notebooks/wqs_results_exploration.ipynb`, about 10,150 target-parameter rows), decided 2026-10-17. The rule tables are implemented as data in `etl/common/wq_rules.py`, applied by `etl/clean_wq_results.py`. Re-check the value counts when the 30–50 dam sample is downloaded; unseen codes default to **kept and logged**, not silently dropped.
 
 | Column | Type | Source | Rule / notes |
 |---|---|---|---|
@@ -284,6 +284,9 @@ Applied in this order. Each drop is counted by reason and written to the stage l
 | 7 | Drop rows whose `MeasureQualifierCode`, split on `;`, includes `H` (holding time exceeded) | 2 |
 | 8 | Drop NWIS alternate-form or derived parameter codes (below) | ~970 |
 | 9 | Drop rows with unparseable `sample_date`, or that end with no `result_value_std` and no detection limit | `NO DATA` rows |
+| 10 | Drop values outside the plausible range for their `parameter_std` (`PLAUSIBLE_RANGES` in `etl/common/wq_rules.py`, e.g. pH 0–14, water temperature −1–40 °C, DO 0–25 mg/L). Wide on purpose: catches unit and entry errors, not unusual readings | not yet profiled |
+
+Also dropped and logged before filter 1: parameters not in the 3.6.1 mapping, and stations not in `wq_station`. Units that can't be resolved or converted (3.6.4) are dropped between filters 8 and 9.
 
 NWIS reports some measurements twice under different parameter codes (same sample restated in another chemical form, or a lab re-measurement of a field value). Keep one:
 
@@ -303,7 +306,7 @@ NWIS reports some measurements twice under different parameter codes (same sampl
   - `ResultDetectionConditionText` in (`Not Detected`, `Present Below Quantification Limit`, `Below Reporting Limit`), the three values seen in the pilot. Any other non-null value is logged for review;
   - `ResultMeasureValue` starts with `<` or equals `## (Censored)`;
   - `MeasureQualifierCode`, split on `;`, includes `K` (pilot: only on rows already dropped by filter 4; kept as a safeguard).
-- **Non-detect value:** `result_value_std = detection_limit / 2`, converted to `result_unit_std`. If no detection limit is reported, `result_value_std` is null (the row is dropped by filter 9).
+- **Non-detect value:** `result_value_std = detection_limit / 2`, converted to `result_unit_std` from the detection limit's unit. If no detection limit is reported but the value is `<x`, `x` is used as the limit; otherwise `result_value_std` is null (the row is dropped by filter 9).
   - Pilot: all 148 null-valued rows were non-detects (about 1.5% of rows). Substitution is acceptable at this rate ([EPA-adapted guidance, table in PMC10494629](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10494629/)) but biased when non-detects are common ([CLU-IN handout](https://clu-in.org/conf/tio/ltmo/Nondetects_handout.pdf)). `is_censored` is kept so ROS/MLE methods can replace it later; re-check the censored share per parameter at the 30–50 dam stage.
 - `>` values (above a range) are kept at the reported value with `is_censored = true`. None in the pilot.
 - `NO DATA` and other unparseable strings: null value (dropped by filter 9).
@@ -344,11 +347,10 @@ Results with the same key but **different** values are kept (they are genuinely 
 
 #### 3.6.6 Audit table
 
-`wq_measurement_raw.parquet`: every downloaded row for the case study, typed and with `measurement_id`, before any filter. Written for pilot and medium-sample case studies; skipped at national scale if size requires.
+`wq_measurement_raw.parquet`: every downloaded row for the case study before any filter: all WQP columns as verbatim strings, plus `measurement_id` and `source_file` (the batch CSV). It has no primary key, since exact repeats across batches are kept for audit. Only batch files the download manifest lists as `success` are read. Written for pilot and medium-sample case studies; skipped at national scale if size requires.
 
 #### 3.6.7 Open items
 
-- Plausible-range table for the section 4 check (e.g. pH 0–14, water temperature −1–40 °C, non-negative concentrations).
 - Confirm `MethodSpeciationName` in the `resultPhysChem` profile (3.6.4).
 
 ### 3.7 `station_watershed` (Step 5)
@@ -439,7 +441,7 @@ Run by each writer before the atomic rename; any failure aborts the write.
 | `wq_station` | `huc8` in `huc8_watershed`; `NHDPlusID` non-null; `snap_fraction` in [0, 1] |
 | `dam_station_link` | `AR_ID` in `dam_removal`; `station_id` in `wq_station`; `relationship` in the allowed set; `network_distance_km` ≥ 0 or null |
 | `streams` | Every `dam_removal.NHDPlusID` and `wq_station.NHDPlusID` present |
-| `wq_measurement` | `station_id` in `wq_station`; `sample_date` non-null; `result_unit_std` non-null wherever `result_value_std` is non-null; `parameter_std` in the 3.6.1 mapping; `result_value_std` within plausible range per parameter (range table: open item in 3.6.7) |
+| `wq_measurement` | `station_id` in `wq_station`; `sample_date` non-null; `result_unit_std` non-null wherever `result_value_std` is non-null; `parameter_std` in the 3.6.1 mapping; `result_value_std` within plausible range per parameter (filter 10) |
 | `station_watershed` | One row per `wq_station`; `area_km2` > 0 |
 | `land_cover` | `class_code` in `land_cover_codes`; `percent_area` sums to ~100 per (station, year); `valid_fraction` in [0, 1] |
 | `climate` | `station_id` in `station_watershed`; values within physical ranges |

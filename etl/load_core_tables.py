@@ -27,7 +27,6 @@ into place. The intermediate gpkg/CSV files are only read, never modified.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from collections import defaultdict
 from datetime import date
@@ -45,6 +44,7 @@ from etl.common.io import find_column
 from etl.common.links import CONNECTED_RELATIONSHIPS, connected_only, load_links
 from etl.common.network import build_reach_graph
 from etl.common.nhdplus import find_huc8_geodatabase, read_nhdplus_layer
+from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
 from etl.common.wbd import find_hu8_layer
 
 # --------------------------------------------------
@@ -534,25 +534,10 @@ def validate_tables(tables, current_year=None):
 
     for name, frame in tables.items():
         expected = SCHEMAS[name]
-        if list(frame.columns) != list(expected):
-            errors.append(f"{name}: columns {list(frame.columns)} != spec {list(expected)}")
+        table_errors = schema_errors(name, frame, expected, PRIMARY_KEYS[name])
+        errors.extend(table_errors)
+        if table_errors:
             continue
-
-        for column, dtype in expected.items():
-            actual = frame[column].dtype
-            matches = (
-                str(actual) == "geometry" if dtype == "geometry"
-                else actual == pd.api.types.pandas_dtype(dtype)
-            )
-            if not matches:
-                errors.append(f"{name}.{column}: dtype {frame[column].dtype}, expected {dtype}")
-
-        key = frame[PRIMARY_KEYS[name]]
-        if key.isna().any().any():
-            errors.append(f"{name}: null primary key value(s)")
-        if key.duplicated().any():
-            dupes = key[key.duplicated(keep=False)].drop_duplicates()
-            errors.append(f"{name}: duplicate primary key(s): {dupes.to_dict('records')}")
 
         if "geometry" in expected:
             if frame.crs is None or frame.crs.to_epsg() != 4326:
@@ -608,17 +593,6 @@ def validate_tables(tables, current_year=None):
             errors.append(f"{name}.NHDPlusID not in streams: {bad}")
 
     return errors
-
-
-# --------------------------------------------------
-# Writing
-# --------------------------------------------------
-
-def write_parquet_atomic(frame, path):
-    """Write to <path>.tmp, then rename over `path` (spec section 1)."""
-    tmp_path = path.with_name(path.name + ".tmp")
-    frame.to_parquet(tmp_path, index=False)
-    os.replace(tmp_path, path)
 
 
 # --------------------------------------------------
@@ -679,7 +653,7 @@ def main():
             + "\n  - ".join(errors)
         )
 
-    output_dir = cfg.project_root / "data" / "warehouse" / cfg.name
+    output_dir = warehouse_dir(cfg)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("\n=== Written ===")

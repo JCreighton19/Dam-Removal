@@ -50,7 +50,8 @@ Run the Slurm jobs in this order (each from the project root):
 7. `link_dams`: classify each station as upstream, downstream or unconnected relative to each dam
 8. `download_wqp_results`: measurements within each dam's analysis window
 9. `report_pilot_eligibility`: which dams have enough before/after data
-10. `load_core_tables`: write the warehouse tables (see below)
+10. `load_core_tables`: write the core warehouse tables (see below)
+11. `clean_wq_results`: clean the downloaded results into `wq_measurement`
 
 `download_nlcd` can run any time after the config exists.
 
@@ -61,9 +62,9 @@ Curated tables are written as Parquet (GeoParquet for geometry) to `data/warehou
 | Table | Status |
 |---|---|
 | `dam_removal`, `wq_station`, `dam_station_link`, `huc8_watershed`, `streams` | `load_core_tables.py` |
-| `wq_measurement` | Cleaning rules decided; loader not yet written |
+| `wq_measurement`, `wq_measurement_raw` | `clean_wq_results.py` (rules in `etl/common/wq_rules.py`) |
 | `station_watershed`, `land_cover`, `climate` | Planned |
 
 ## Current status
 
-Pilot case study: `pilot_random5_seed42` (5 randomly sampled dams, seed 42). Next: run `load_core_tables` on the pilot, write `clean_wq_results.py`, then replace the eligibility report with DuckDB views.
+Pilot case study: `pilot_random5_seed42` (5 randomly sampled dams, seed 42). Next: run `clean_wq_results` on the pilot, then replace the eligibility report with DuckDB views.
