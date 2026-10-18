@@ -111,6 +111,8 @@ def read_inputs(db_path, years_before, years_after):
     }
     station_years = pd.DataFrame(sorted(station_years), columns=["station_id", "year"])
     station_years = station_years[station_years["station_id"].isin(membership["station_id"])]
+    # Stations whose whole window is before 1985 get no land cover.
+    membership = membership[membership["station_id"].isin(station_years["station_id"])]
     return membership, station_years
 
 

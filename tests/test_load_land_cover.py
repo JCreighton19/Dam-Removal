@@ -85,9 +85,10 @@ def _build_project(root):
     out.mkdir(parents=True)
     pd.DataFrame({"station_id": ["S1", "S2"], "area_km2": [area[1] + area[2], area[2]]}) \
         .to_parquet(out / "station_watershed.parquet")
-    members = pd.DataFrame({"station_id": ["S1", "S1", "S2"], "catchment_id": [1, 2, 2]})
-    pairs = pd.DataFrame({"station_id": ["S1", "S2"], "removal_year": [2010, 2010],
-                          "has_both": [True, True]})
+    # S3's window is before NLCD starts (1985), so it gets no rows.
+    members = pd.DataFrame({"station_id": ["S1", "S1", "S2", "S3"], "catchment_id": [1, 2, 2, 1]})
+    pairs = pd.DataFrame({"station_id": ["S1", "S2", "S3"], "removal_year": [2010, 2010, 1970],
+                          "has_both": [True, True, True]})
     with duckdb.connect(str(out / "warehouse.duckdb")) as con:
         con.register("members_df", members)
         con.register("pairs_df", pairs)
@@ -117,6 +118,7 @@ def test_land_cover_percentages():
 
         # One row per station x year x class.
         assert len(table) == 2 * 2 * 16
+        assert "S3" not in set(table["station_id"])
 
         # S2 only drains catchment 2: all crops, then all developed.
         assert _percent(table, "S2", 2010)[82] == 100
