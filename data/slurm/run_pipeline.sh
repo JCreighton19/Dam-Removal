@@ -33,6 +33,7 @@ STAGES=(
     load_core_tables
     clean_wq_results
     build_views
+    build_station_watershed
 )
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

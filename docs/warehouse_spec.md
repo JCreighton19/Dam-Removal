@@ -353,18 +353,33 @@ Results with the same key but **different** values are kept (they are genuinely 
 
 None currently.
 
+### Step 5 context data: decisions (2026-10-18)
+
+- **Which stations:** only stations in `eligibility_pairs` with `has_both` for at least one parameter (downstream sites and upstream controls). Context data for stations that never enter the analysis is skipped.
+- **Upstream area:** built from NHDPlus HR catchments and the existing reach graph (3.7), not EPA StreamCat, so it matches the network used everywhere else.
+- **Land cover:** Annual NLCD Collection 1.2 (C1V2), CONUS, 1985–2025, from the free public USGS ScienceBase release (one ~1.35 GB zip per year). No AWS requester-pays bucket and no credentials. Public domain; citation requested.
+- **Climate:** PRISM AN time series, annual grids, 800 m, via the free PRISM web service (`https://services.nacse.org/prism/data/get/us/800m/<ppt|tmean>/<yyyy>`). Free to use; the PRISM Climate Group, the URL and the access date must be cited. Each file may be downloaded at most twice per 24 h, so downloads are cached and never repeated.
+- **Years:** the union of `removal_year ± wq_window` over the eligible pairs. Each source's raw files are cached once under `data/raw/` and shared across case studies.
+- **Method:** class areas and climate means are computed once per NHDPlus catchment, then summed or area-weighted up the reach graph to each station (3.8), instead of masking each station's large dissolved polygon.
+- **Coverage:** both sources cover CONUS only. Stations in Alaska, Hawaii or Puerto Rico get no land cover or climate rows.
+
 ### 3.7 `station_watershed` (Step 5)
 
-- **Grain:** one row per `wq_station`.
-- **PK:** `station_id`. 1:1 with `wq_station`.
+- **Grain:** one row per eligible station (see the decisions above).
+- **PK:** `station_id`. FK → `wq_station`.
 
-| Column | Type | Source | Rule / notes |
-|---|---|---|---|
-| `station_id` | TEXT PK | `wq_station` | FK → `wq_station` |
-| `upstream_area_polygon` | MultiPolygon, 4326 | `NHDPlusCatchment` | Dissolved union of the catchments of the station's reach and all of its graph ancestors |
-| `area_km2` | DOUBLE | derived | Sum of catchment areas (projected CRS) |
-| `n_catchments` | INTEGER | derived | Number of catchments in the union |
-| `truncated` | BOOLEAN | derived | True if any ancestor chain reaches the edge of the NHDPlus package (flow enters from outside it), so the upstream area is incomplete |
+**Status:** built by `etl/build_station_watershed.py` (after `build_views`, which supplies the eligible stations). It reads every case-study NHDPlus HR geodatabase and stitches them into one reach graph, so reaches crossing between packages connect. The station's own catchment is included whole, even if the station sits partway along its reach.
+
+| Column | Type | Meaning | Source | Rule / notes |
+|---|---|---|---|---|
+| `station_id` | TEXT PK | The station | `wq_station` | FK → `wq_station` |
+| `NHDPlusID` | BIGINT | Reach the station sits on | `wq_station.NHDPlusID` | |
+| `area_km2` | DOUBLE | Land area draining to the station (km²) | `NHDPlusCatchment.AreaSqKm` | Sum over the station's reach and all of its graph ancestors |
+| `n_catchments` | BIGINT | Number of small catchments making up that area | derived | |
+| `nhdplus_total_area_km2` | DOUBLE | NHDPlus's own published drainage area at the station's reach | `NHDPlusFlowlineVAA.TotDASqKm` | Null if the layer is absent |
+| `area_coverage` | DOUBLE | Share of the published drainage area our upstream area covers | derived | `area_km2 / nhdplus_total_area_km2` |
+| `truncated` | BOOLEAN | True if the upstream area is incomplete | derived | A flow row enters an upstream reach from a reach in no downloaded package, or `area_coverage` < 0.9 |
+| `geometry` | MultiPolygon, 4326 | Outline of the upstream area | `NHDPlusCatchment` | Dissolved union, simplified ~30 m; for maps only (later stages use the catchments) |
 
 ### 3.8 `land_cover` (Step 5)
 
@@ -382,7 +397,7 @@ None currently.
 | `valid_fraction` | DOUBLE | derived | Share of the upstream area with valid (non-nodata) pixels |
 | `source` | TEXT | constant | e.g. `annual_nlcd_c1v2` |
 
-Computed per catchment, then accumulated downstream to each station's reach (one pass in flow order), rather than masking each station's dissolved polygon. **Step 5:** choose the source (official AWS with credentials for every year 1985–2025, or the public COG mirror with missing years).
+Computed per catchment, then accumulated downstream to each station's reach (one pass in flow order), rather than masking each station's dissolved polygon. **Source:** Annual NLCD C1V2 (decisions above); `source` = `annual_nlcd_c1v2`.
 
 ### 3.9 `land_cover_codes`
 
@@ -423,9 +438,9 @@ Optional extra column: `class_group` (Water, Developed, Barren, Forest, Shrublan
 | `year` | SMALLINT | climate source | |
 | `temperature_mean_c` | DOUBLE | derived | Area-weighted mean annual air temperature over the upstream area |
 | `precipitation_mm` | DOUBLE | derived | Area-weighted annual total precipitation over the upstream area |
-| `source` | TEXT | constant | e.g. `prism`, `gridmet`, `daymet` |
+| `source` | TEXT | constant | `prism_an_800m` |
 
-**Step 5:** choose the source.
+**Source:** PRISM annual `ppt` and `tmean` grids (decisions above). Computed per catchment as an area-weighted mean, then accumulated up the reach graph like `land_cover`.
 
 ---
 
@@ -442,7 +457,7 @@ Run by each writer before the atomic rename; any failure aborts the write.
 | `dam_station_link` | `AR_ID` in `dam_removal`; `station_id` in `wq_station`; `relationship` in the allowed set; `network_distance_km` ≥ 0 or null |
 | `streams` | Every `dam_removal.NHDPlusID` and `wq_station.NHDPlusID` present |
 | `wq_measurement` | `station_id` in `wq_station`; `sample_date` non-null; `result_unit_std` non-null wherever `result_value_std` is non-null; `parameter_std` in the 3.6.1 mapping; `result_value_std` within plausible range per parameter (filter 10) |
-| `station_watershed` | One row per `wq_station`; `area_km2` > 0 |
+| `station_watershed` | `station_id` in `wq_station`; `area_km2` > 0 |
 | `land_cover` | `class_code` in `land_cover_codes`; `percent_area` sums to ~100 per (station, year); `valid_fraction` in [0, 1] |
 | `climate` | `station_id` in `station_watershed`; values within physical ranges |
 

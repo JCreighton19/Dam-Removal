@@ -54,6 +54,10 @@ TABLES = [
     "wq_measurement_raw",
 ]
 
+# Context tables built after this script (build_station_watershed.py, …).
+# They add their own view when written; a rebuild keeps any that exist.
+OPTIONAL_TABLES = ["station_watershed"]
+
 DEFAULT_MIN_SAMPLES = 3
 DEFAULT_MIN_YEARS = 2
 
@@ -146,6 +150,17 @@ ORDER BY dams_eligible DESC, parameter_std;
 """
 
 
+def table_view_sql(table, path):
+    # Absolute paths, so the views work from any working directory.
+    return f"CREATE OR REPLACE VIEW {table} AS SELECT * FROM read_parquet('{Path(path).resolve()}')"
+
+
+def add_view(db_path, table, path):
+    """Add (or replace) one table view in an existing warehouse.duckdb."""
+    with duckdb.connect(str(db_path)) as con:
+        con.execute(table_view_sql(table, path))
+
+
 def build_database(db_path, parquet_dir, years_before, years_after, min_samples, min_years):
     """Write the views to db_path (via a .tmp file, so a failed build never
     replaces a working database)."""
@@ -153,10 +168,11 @@ def build_database(db_path, parquet_dir, years_before, years_after, min_samples,
     tmp_path.unlink(missing_ok=True)
 
     with duckdb.connect(str(tmp_path)) as con:
-        # Absolute paths, so the views work from any working directory.
         for table in TABLES:
-            path = (parquet_dir / f"{table}.parquet").resolve()
-            con.execute(f"CREATE VIEW {table} AS SELECT * FROM read_parquet('{path}')")
+            con.execute(table_view_sql(table, parquet_dir / f"{table}.parquet"))
+        for table in OPTIONAL_TABLES:
+            if (parquet_dir / f"{table}.parquet").exists():
+                con.execute(table_view_sql(table, parquet_dir / f"{table}.parquet"))
 
         con.execute(f"""
             CREATE VIEW eligibility_settings AS SELECT
