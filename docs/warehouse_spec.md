@@ -408,7 +408,9 @@ None currently.
 | `valid_fraction` | DOUBLE | derived | Share of the upstream area with valid (non-nodata) pixels |
 | `source` | TEXT | constant | e.g. `annual_nlcd_c1v2` |
 
-Computed per catchment, then accumulated downstream to each station's reach (one pass in flow order), rather than masking each station's dissolved polygon. **Source:** Annual NLCD C1V2 (decisions above); `source` = `annual_nlcd_c1v2`.
+Computed per catchment, then summed to each station through `station_catchment` (3.7a), rather than masking each station's dissolved polygon. **Source:** Annual NLCD C1V2 (decisions above); `source` = `annual_nlcd_c1v2`.
+
+**Status:** raster download done (`etl/download_land_cover.py`, stage `download_nlcd`): for each needed year, the CONUS zip is downloaded, clipped to each NHDPlus package holding an eligible station's catchment (on the original 30 m NLCD grid, 10-pixel pad), and deleted. Clips: `data/raw/nlcd/annual_c1v2/<package>/LndCov_<year>.tif`, shared across case studies. Table load (`load_land_cover.py`): next.
 
 ### 3.9 `land_cover_codes`
 

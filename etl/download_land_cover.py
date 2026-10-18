@@ -1,304 +1,218 @@
-from pathlib import Path
+"""
+Download Annual NLCD land cover for the years and areas the eligible
+stations need, clipped to each NHDPlus package (docs/warehouse_spec.md,
+"Step 5 context data: decisions" and section 3.8).
+
+Source: Annual NLCD Collection 1.2 (C1V2), CONUS, 1985-2025, from MRLC's
+free direct-download server (no login). Each year is one ~1.35 GB zip.
+
+Which years
+-----------
+Every year in removal_year +/- wq_window for the dam-station pairs with
+`has_both` (eligibility_pairs in warehouse.duckdb), limited to the years
+NLCD has.
+
+Which areas
+-----------
+Every case-study NHDPlus package (HU8 or HU4 geodatabase) holding at least
+one catchment in station_catchment.parquet (build_station_watershed.py).
+Each year's raster is clipped to that package's catchment extent, on the
+original NLCD 30 m grid (no reprojection), so every year lines up pixel
+for pixel.
+
+Per year: download the zip, extract the GeoTIFF, write one small clip per
+package, then delete the zip and the full GeoTIFF. Clips are written to
+
+    data/raw/nlcd/annual_c1v2/<package>/LndCov_<year>.tif
+
+and shared across case studies. A re-run skips every year whose clips all
+exist, so an interrupted job resumes where it stopped.
+"""
+
+from __future__ import annotations
+
 import argparse
-import logging
-import re
+import math
 import sys
+import time
+import zipfile
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import geopandas as gpd
-import pandas as pd
+import duckdb
+import pyogrio
 import rasterio
-from rasterio.mask import mask
-from rasterio.errors import RasterioIOError
+import requests
+from rasterio.warp import transform_bounds
+from rasterio.windows import Window, from_bounds
 
 from etl.common.config import default_case_study, load_config
+from etl.common.io import require_file
+from etl.common.nhdplus import find_huc8_geodatabase
+from etl.common.warehouse import warehouse_dir
 
-
-# ---------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------
-
-YEARS_BEFORE = 3
-YEARS_AFTER = 3
-
-# Current Annual NLCD Collection 1 versions, newest first.
-COLLECTION = "c1"
-VERSIONS = [2, 1, 0]
-
-# Annual NLCD land-cover products currently cover CONUS.
-# This is a coarse geographic filter, not a substitute for checking
-# actual raster coverage.
-CONUS_BOUNDS = (-125.0, 24.0, -66.0, 50.0)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s: %(message)s",
+URL_TEMPLATE = (
+    "https://www.mrlc.gov/downloads/sciweb1/shared/mrlc/data-bundles/"
+    "Annual_NLCD_LndCov_{year}_CU_C1V2.zip"
 )
-logger = logging.getLogger(__name__)
+FIRST_YEAR, LAST_YEAR = 1985, 2025
+
+# Extra pixels around each package extent, so edge catchments are whole.
+PAD_PIXELS = 10
+
+DOWNLOAD_RETRIES = 3
 
 
-# ---------------------------------------------------------------------
-# Prepare dams and watershed geometries
-# ---------------------------------------------------------------------
+# --------------------------------------------------
+# What to download
+# --------------------------------------------------
 
-def load_dams_and_watersheds(dam_csv_path, wbd_path):
-    dams = pd.read_csv(dam_csv_path, dtype={"HUC8": str})
-    wbd = gpd.read_file(wbd_path, layer="WBDHU8")
-
-    required_dam_columns = {
-        "AR_ID", "HUC8", "Year_Removed", "Latitude", "Longitude"
+def needed_years(db_path, years_before, years_after):
+    """Years in some eligible pair's window that NLCD covers."""
+    with duckdb.connect(str(db_path), read_only=True) as con:
+        removal_years = [
+            int(y) for (y,) in con.sql(
+                "SELECT DISTINCT removal_year FROM eligibility_pairs WHERE has_both"
+            ).fetchall()
+        ]
+    years = {
+        year
+        for removal in removal_years
+        for year in range(removal - years_before, removal + years_after + 1)
     }
-    missing = required_dam_columns - set(dams.columns)
-    if missing:
-        raise ValueError(f"Missing dam columns: {sorted(missing)}")
-
-    if not {"huc8", "name", "geometry"}.issubset(wbd.columns):
-        raise ValueError("WBDHU8 must contain huc8, name, and geometry.")
-
-    dams["Year_Removed"] = pd.to_numeric(
-        dams["Year_Removed"], errors="coerce"
-    )
-    dams["HUC8"] = dams["HUC8"].astype("string").str.strip()
-
-    wbd = wbd.to_crs("EPSG:4326").copy()
-    wbd["huc8"] = wbd["huc8"].astype(str).str.zfill(8)
-
-    # Use spatial matching where coordinates are available.
-    valid_xy = (
-        pd.to_numeric(dams["Longitude"], errors="coerce").between(-180, 180)
-        & pd.to_numeric(dams["Latitude"], errors="coerce").between(-90, 90)
-    )
-
-    dam_points = dams.loc[valid_xy].copy()
-    dam_points["Longitude"] = pd.to_numeric(dam_points["Longitude"])
-    dam_points["Latitude"] = pd.to_numeric(dam_points["Latitude"])
-
-    dam_gdf = gpd.GeoDataFrame(
-        dam_points,
-        geometry=gpd.points_from_xy(
-            dam_points["Longitude"], dam_points["Latitude"]
-        ),
-        crs="EPSG:4326",
-    )
-
-    spatial = gpd.sjoin(
-        dam_gdf,
-        wbd[["huc8", "geometry"]],
-        how="left",
-        predicate="within",
-    ).drop(columns=["index_right"], errors="ignore")
-
-    # Start with the source HUC8 field, then prefer spatially matched
-    # HUC8 identifiers where the join succeeded.
-    huc_by_dam = dams.set_index("AR_ID")["HUC8"].to_dict()
-    for _, row in spatial.iterrows():
-        if pd.notna(row.get("huc8")):
-            huc_by_dam[row["AR_ID"]] = str(row["huc8"]).zfill(8)
-
-    dams["huc8_resolved"] = dams["AR_ID"].map(huc_by_dam)
-
-    # If the source field contains watershed NAMES rather than codes,
-    # resolve those names against WBDHU8.
-    name_to_huc = (
-        wbd[["name", "huc8"]]
-        .dropna()
-        .drop_duplicates("name")
-        .set_index("name")["huc8"]
-        .to_dict()
-    )
-
-    def resolve_huc(value):
-        if pd.isna(value):
-            return None
-
-        value = str(value).strip()
-
-        if re.fullmatch(r"\d{8}", value):
-            return value
-
-        return name_to_huc.get(value)
-
-    dams["huc8_resolved"] = dams["huc8_resolved"].map(resolve_huc)
-
-    dams = dams[
-        dams["Year_Removed"].notna()
-        & dams["huc8_resolved"].notna()
-    ].copy()
-
-    dams["Year_Removed"] = dams["Year_Removed"].astype(int)
-
-    # Dissolve duplicate watershed polygons into one geometry per HUC8.
-    watersheds = (
-        wbd[["huc8", "geometry"]]
-        .dissolve(by="huc8")
-    )
-
-    return dams, watersheds
+    return sorted(y for y in years if FIRST_YEAR <= y <= LAST_YEAR)
 
 
-# ---------------------------------------------------------------------
-# Build the download manifest
-# ---------------------------------------------------------------------
+def needed_packages(db_path, gdb_paths):
+    """Packages holding at least one catchment upstream of an eligible
+    station, with their catchment-layer extent and CRS."""
+    with duckdb.connect(str(db_path), read_only=True) as con:
+        catchment_ids = {
+            int(c) for (c,) in con.sql(
+                "SELECT DISTINCT catchment_id FROM station_catchment"
+            ).fetchall()
+        }
 
-def build_manifest(dams, output_dir):
-    requests = set()
-
-    for row in dams[
-        ["AR_ID", "huc8_resolved", "Year_Removed"]
-    ].itertuples(index=False, name=None):
-        dam_id, huc8, removal_year = row
-
-        for year in range(
-            removal_year - YEARS_BEFORE,
-            removal_year + YEARS_AFTER + 1,
-        ):
-            requests.add((dam_id, huc8, year))
-
-    manifest = pd.DataFrame(
-        sorted(requests),
-        columns=["AR_ID", "HUC8", "Land_Cover_Year"],
-    )
-
-    manifest.to_csv(output_dir / "download_manifest.csv", index=False)
-
-    return manifest
+    packages = {}
+    for gdb_path in gdb_paths:
+        fields = {str(f).lower(): str(f) for f in
+                  pyogrio.read_info(gdb_path, layer="NHDPlusCatchment")["fields"]}
+        ids = pyogrio.read_dataframe(
+            gdb_path, layer="NHDPlusCatchment", columns=[fields["nhdplusid"]],
+            read_geometry=False,
+        ).iloc[:, 0]
+        if catchment_ids.isdisjoint(int(i) for i in ids.dropna()):
+            continue
+        info = pyogrio.read_info(gdb_path, layer="NHDPlusCatchment", force_total_bounds=True)
+        packages[gdb_path.stem] = {"bounds": info["total_bounds"], "crs": info["crs"]}
+    return packages
 
 
-# ---------------------------------------------------------------------
-# Locate the remote annual land-cover raster
-# ---------------------------------------------------------------------
-
-def mosaic_url(year, version):
-    filename = (
-        f"Annual_NLCD_LndCov_{year}_CU_C1V{version}.tif"
-    )
-
-    return (
-        "https://usgs-landcover.s3.us-west-2.amazonaws.com/"
-        f"annual-nlcd/{COLLECTION}/v{version}/cu/mosaic/{filename}"
-    )
+def clip_path(nlcd_dir, package, year):
+    return nlcd_dir / package / f"LndCov_{year}.tif"
 
 
-def open_nlcd_raster(year):
-    # Requester-pays is required by the official AWS distribution.
-    # GDAL/rasterio must support this configuration for remote reads.
-    env = rasterio.Env(
-        AWS_REQUEST_PAYER="requester",
-        GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
-    )
-    env.__enter__()
+# --------------------------------------------------
+# Download and clip
+# --------------------------------------------------
 
-    for version in VERSIONS:
-        url = mosaic_url(year, version)
-
+def download_file(url, path):
+    """Stream url to path via a .part file, checking the size, with retries."""
+    part = path.with_name(path.name + ".part")
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
         try:
-            src = rasterio.open(url)
-            logger.info("Opened NLCD %s (Collection 1, version %s)", year, version)
-            return env, src, version
-        except (RasterioIOError, Exception) as exc:
-            logger.warning(
-                "Could not open NLCD year %s version %s: %s",
-                year, version, exc,
-            )
+            with requests.get(url, stream=True, timeout=(30, 300)) as response:
+                response.raise_for_status()
+                expected = int(response.headers.get("content-length", 0))
+                with open(part, "wb") as out:
+                    for chunk in response.iter_content(chunk_size=8 * 1024 * 1024):
+                        out.write(chunk)
+            if expected and part.stat().st_size != expected:
+                raise IOError(f"got {part.stat().st_size:,} of {expected:,} bytes")
+            part.replace(path)
+            return
+        except (requests.RequestException, IOError) as exc:
+            part.unlink(missing_ok=True)
+            if attempt == DOWNLOAD_RETRIES:
+                raise
+            print(f"    download failed ({exc}); retrying", flush=True)
+            time.sleep(30 * attempt)
 
-    env.__exit__(None, None, None)
-    raise RuntimeError(
-        f"No accessible CONUS NLCD mosaic found for year {year}. "
-        "The year may be unavailable, or remote AWS access may have failed."
+
+def extract_tif(zip_path, out_dir):
+    with zipfile.ZipFile(zip_path) as archive:
+        names = [n for n in archive.namelist() if n.lower().endswith(".tif")]
+        if len(names) != 1:
+            raise ValueError(f"Expected one .tif in {zip_path.name}, found {names}")
+        return Path(archive.extract(names[0], out_dir))
+
+
+def clip_window(src, bounds, bounds_crs):
+    """Pixel window covering bounds (plus padding), snapped to the grid."""
+    left, bottom, right, top = transform_bounds(bounds_crs, src.crs, *bounds, densify_pts=21)
+    window = from_bounds(left, bottom, right, top, transform=src.transform)
+    col = math.floor(window.col_off) - PAD_PIXELS
+    row = math.floor(window.row_off) - PAD_PIXELS
+    width = math.ceil(window.col_off + window.width) + PAD_PIXELS - col
+    height = math.ceil(window.row_off + window.height) + PAD_PIXELS - row
+    return Window(col, row, width, height).intersection(Window(0, 0, src.width, src.height))
+
+
+def write_clip(src, window, path):
+    data = src.read(1, window=window)
+    profile = src.profile.copy()
+    profile.update(
+        driver="GTiff", width=window.width, height=window.height,
+        transform=src.window_transform(window),
+        compress="deflate", tiled=True, blockxsize=256, blockysize=256,
     )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with rasterio.open(tmp, "w", **profile) as dst:
+        dst.write(data, 1)
+    tmp.replace(path)
 
 
-# ---------------------------------------------------------------------
-# Clip a remote raster to one watershed
-# ---------------------------------------------------------------------
+def process_year(year, packages, nlcd_dir):
+    """Download one year, clip it to every package missing a clip, clean up."""
+    missing = {name: info for name, info in packages.items()
+               if not clip_path(nlcd_dir, name, year).exists()}
+    if not missing:
+        print(f"{year}: all {len(packages)} clips exist, skipped", flush=True)
+        return "skipped"
 
-def download_clip(huc8, year, watershed, raster_dir):
-    out_dir = raster_dir / huc8
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    output_path = out_dir / f"NLCD_LandCover_{year}_{huc8}.tif"
-
-    if output_path.exists() and output_path.stat().st_size > 0:
-        logger.info("Already exists: %s", output_path)
-        return str(output_path), "already_exists", ""
-
-    # Fast approximate geographic check. Do not try CONUS data for
-    # clearly non-CONUS watersheds.
-    bounds = watershed.to_crs("EPSG:4326").total_bounds
-    minx, miny, maxx, maxy = bounds
-    west, south, east, north = CONUS_BOUNDS
-
-    if maxx < west or minx > east or maxy < south or miny > north:
-        return "", "unsupported_region", (
-            "Outside approximate CONUS coverage; current Annual NLCD "
-            "land-cover mosaics do not cover this watershed."
-        )
-
-    env = None
-    src = None
+    work_dir = nlcd_dir / "_downloads"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = work_dir / f"Annual_NLCD_LndCov_{year}_CU_C1V2.zip"
+    tif_path = None
 
     try:
-        env, src, version = open_nlcd_raster(year)
+        print(f"{year}: downloading", flush=True)
+        download_file(URL_TEMPLATE.format(year=year), zip_path)
+        tif_path = extract_tif(zip_path, work_dir)
+        zip_path.unlink()
 
-        # Reproject the watershed polygon to the raster CRS.
-        geom = watershed.to_crs(src.crs)
-        shapes = [
-            geom.geometry.iloc[0].__geo_interface__
-        ]
-
-        # Read only the crop window from the remote raster where possible.
-        clipped, transform = mask(
-            src,
-            shapes,
-            crop=True,
-            filled=True,
-            nodata=src.nodata if src.nodata is not None else 250,
-        )
-
-        if clipped.size == 0:
-            return "", "empty_clip", "Clipping returned no raster cells."
-
-        profile = src.profile.copy()
-        profile.update(
-            driver="GTiff",
-            height=clipped.shape[1],
-            width=clipped.shape[2],
-            transform=transform,
-            compress="LZW",
-            tiled=True,
-            nodata=src.nodata if src.nodata is not None else 250,
-        )
-
-        # Write to a temporary file first so interrupted downloads
-        # do not leave a seemingly valid final output.
-        temp_path = output_path.with_suffix(".tmp.tif")
-
-        with rasterio.open(temp_path, "w", **profile) as dst:
-            dst.write(clipped)
-
-        temp_path.replace(output_path)
-
-        logger.info("Saved %s", output_path)
-        return str(output_path), "downloaded", f"Collection 1 version {version}"
-
-    except Exception as exc:
-        logger.exception("Failed HUC8 %s, year %s", huc8, year)
-        return "", "failed", str(exc)
-
+        with rasterio.open(tif_path) as src:
+            for name, info in missing.items():
+                window = clip_window(src, info["bounds"], info["crs"])
+                write_clip(src, window, clip_path(nlcd_dir, name, year))
+                print(f"    {name}: {window.width:,} x {window.height:,} pixels", flush=True)
+        return "downloaded"
     finally:
-        if src is not None:
-            src.close()
-        if env is not None:
-            env.__exit__(None, None, None)
+        zip_path.unlink(missing_ok=True)
+        if tif_path is not None:
+            tif_path.unlink(missing_ok=True)
 
 
-# ---------------------------------------------------------------------
+# --------------------------------------------------
 # Main
-# ---------------------------------------------------------------------
+# --------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--case-study",
         default=default_case_study(),
@@ -307,74 +221,42 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
-    huc8s = set(cfg.huc8s)
-
-    output_dir = cfg.project_root / "data" / "raw" / "nlcd"
-    raster_dir = output_dir / "rasters"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    raster_dir.mkdir(parents=True, exist_ok=True)
-
-    dams, watersheds = load_dams_and_watersheds(
-        cfg.path("dam_source"), cfg.path("wbd_source")
+    db_path = require_file(
+        warehouse_dir(cfg) / "warehouse.duckdb", "warehouse.duckdb (run build_views.py first)"
     )
-    dams = dams[dams["huc8_resolved"].isin(huc8s)].copy()
-    watersheds = watersheds.loc[watersheds.index.astype(str).isin(huc8s)]
-
-    manifest = build_manifest(dams, output_dir)
-
-    print(f"HUC8 scope: {sorted(huc8s)}")
-    print(f"Eligible dams: {dams['AR_ID'].nunique():,}")
-    print(f"Unique HUC8 watersheds: {manifest['HUC8'].nunique():,}")
-    print(f"Dam/HUC8/year requests: {len(manifest):,}")
-
-    # Download each unique HUC8/year only once, even if multiple dams
-    # in the same watershed have overlapping time windows.
-    unique_requests = (
-        manifest[["HUC8", "Land_Cover_Year"]]
-        .drop_duplicates()
-        .sort_values(["HUC8", "Land_Cover_Year"])
+    require_file(
+        warehouse_dir(cfg) / "station_catchment.parquet",
+        "station_catchment table (run build_station_watershed.py first)",
     )
 
-    results = []
-
-    for row in unique_requests.itertuples(index=False):
-        huc8 = row.HUC8
-        year = int(row.Land_Cover_Year)
-
-        if huc8 not in watersheds.index:
-            results.append({
-                "HUC8": huc8,
-                "Land_Cover_Year": year,
-                "status": "missing_geometry",
-                "output_path": "",
-                "details": "No matching WBD watershed geometry.",
-            })
-            continue
-
-        geometry = watersheds.loc[[huc8]]
-
-        output_path, status, details = download_clip(
-            huc8, year, geometry, raster_dir
-        )
-
-        results.append({
-            "HUC8": huc8,
-            "Land_Cover_Year": year,
-            "status": status,
-            "output_path": output_path,
-            "details": details,
-        })
-
-    results_df = pd.DataFrame(results)
-    results_df.to_csv(
-        output_dir / "download_results.csv", index=False
+    wq_window = cfg.get("wq_window", {}) or {}
+    years = needed_years(
+        db_path, int(wq_window.get("years_before", 3)), int(wq_window.get("years_after", 3))
     )
 
-    print("\nDownload summary:")
-    print(results_df["status"].value_counts(dropna=False).to_string())
-    print(f"\nManifest: {output_dir / 'download_manifest.csv'}")
-    print(f"Results:  {output_dir / 'download_results.csv'}")
-    print(f"Rasters:  {raster_dir}")
+    nhd_dir = cfg.project_root / "data" / "processed" / "nhdplus_extracted"
+    gdb_paths = sorted({find_huc8_geodatabase(nhd_dir, h.zfill(8)) for h in cfg.huc8s})
+    packages = needed_packages(db_path, gdb_paths)
+
+    nlcd_dir = cfg.project_root / "data" / "raw" / "nlcd" / "annual_c1v2"
+    print(f"Case study: {cfg.name}")
+    print(f"Years ({len(years)}): {years[0] if years else '-'}-{years[-1] if years else '-'}")
+    print(f"NHDPlus packages with eligible-station catchments: {len(packages)}")
+    print(f"Output: {nlcd_dir}", flush=True)
+
+    statuses = {}
+    failed = []
+    for year in years:
+        try:
+            statuses[year] = process_year(year, packages, nlcd_dir)
+        except Exception as exc:
+            failed.append(year)
+            print(f"{year}: FAILED: {exc}", flush=True)
+
+    print("\nDone:", {s: list(statuses.values()).count(s) for s in set(statuses.values())})
+    if failed:
+        print(f"Failed years: {failed} -- re-run to retry them")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

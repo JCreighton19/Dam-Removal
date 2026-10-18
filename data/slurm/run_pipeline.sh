@@ -15,7 +15,6 @@
 #
 # Not included (run separately):
 #   create_env, download_huc8, unzip_huc8   one-time setup
-#   download_nlcd                           context data, not yet wired in
 #   report_pilot_eligibility                replaced by build_views; kept until
 #                                           the views are checked against it
 
@@ -34,6 +33,7 @@ STAGES=(
     clean_wq_results
     build_views
     build_station_watershed
+    download_nlcd
 )
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -60,8 +60,7 @@ The stages, in order:
 10. `clean_wq_results`: clean the downloaded results into `wq_measurement`
 11. `build_views`: `warehouse.duckdb` views, including which dams have enough before/after data
 12. `build_station_watershed`: upstream drainage area of each eligible station (context data, step 1 of 3)
-
-`download_nlcd` can run any time after the config exists.
+13. `download_nlcd`: Annual NLCD land cover for the needed years, clipped per NHDPlus package
 
 ## Warehouse
 
