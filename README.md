@@ -56,9 +56,9 @@ The stages, in order:
 6. `snap_features`: snap dams and stations to the nearest flowline
 7. `link_dams`: classify each station as upstream, downstream or unconnected relative to each dam
 8. `download_wqp_results`: measurements within each dam's analysis window
-9. `report_pilot_eligibility`: which dams have enough before/after data
-10. `load_core_tables`: write the core warehouse tables (see below)
-11. `clean_wq_results`: clean the downloaded results into `wq_measurement`
+9. `load_core_tables`: write the core warehouse tables (see below)
+10. `clean_wq_results`: clean the downloaded results into `wq_measurement`
+11. `build_views`: `warehouse.duckdb` views, including which dams have enough before/after data
 
 `download_nlcd` can run any time after the config exists.
 
@@ -71,6 +71,8 @@ Curated tables are written as Parquet (GeoParquet for geometry) to `data/warehou
 | `dam_removal`, `wq_station`, `dam_station_link`, `huc8_watershed`, `streams` | `load_core_tables.py` |
 | `wq_measurement`, `wq_measurement_raw` | `clean_wq_results.py` (rules in `etl/common/wq_rules.py`) |
 | `station_watershed`, `land_cover`, `climate` | Planned |
+
+`build_views.py` writes `data/warehouse/<case_study>/warehouse.duckdb`, which holds views only (no data). Open it with `duckdb.connect(path, read_only=True)` and query e.g. `eligibility_summary`. Eligibility thresholds come from the config's optional `eligibility: {min_samples: 3, min_years: 2}` block.
 
 ## Current status
 

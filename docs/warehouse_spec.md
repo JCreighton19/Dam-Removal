@@ -448,11 +448,15 @@ Run by each writer before the atomic rename; any failure aborts the write.
 
 ---
 
-## 5. DuckDB views (built in step 4)
+## 5. DuckDB views
 
-`warehouse.duckdb` defines views only, for example:
+**Status:** built by `etl/build_views.py` (last pipeline stage). `warehouse.duckdb` defines views only, over absolute Parquet paths:
 
-- One view per table, `CREATE VIEW dam_removal AS SELECT * FROM 'dam_removal.parquet'`, so notebooks don't hardcode paths.
-- **`measurement_window`:** `dam_station_link` ⋈ `dam_removal` ⋈ `wq_measurement`, with each measurement classified `pre` / `post` / `removal_year` / `outside` using `wq_window` (same definition as `etl/report_pilot_eligibility.py`).
-- **`eligibility_pairs` / `eligibility_dams`:** the SQL replacement for `report_pilot_eligibility.py`, checked against the current CSV reports on the pilot data before the script is retired.
+- One view per table (`dam_removal`, `wq_station`, `dam_station_link`, `huc8_watershed`, `streams`, `wq_measurement`, `wq_measurement_raw`), so notebooks don't hardcode paths.
+- **`eligibility_settings`:** one row: `years_before` / `years_after` (config `wq_window`) and `min_samples` / `min_years` (config `eligibility`, defaults 3 and 2).
+- **`measurement_window`:** `dam_station_link` ⋈ `dam_removal` ⋈ `wq_station` ⋈ `wq_measurement`, one row per measurement × linked dam, for dams with a `Year_Removed`. `period` is `pre` / `post` / `removal_year` / `outside` (same definition as `etl/report_pilot_eligibility.py`: the removal year is in neither window). `side` is `relationship`, except `same_reach` stations are placed `downstream` / `upstream` by comparing `snap_fraction` with the dam's (null if equal).
+- **`eligibility_pairs`:** one row per dam × station × `parameter_std` × `sample_fraction_std` with any pre/post data: `n_pre`, `n_post`, `years_pre`, `years_post` (distinct years); `has_pre` / `has_post` when a side has ≥ `min_samples` samples in ≥ `min_years` years; `has_both`.
+- **`eligibility_dams`:** one row per dam × parameter × fraction: `downstream_stations_both`, `upstream_stations_both`; `has_both` (a downstream station has both sides) and `has_upstream_control` (an upstream one does too).
+- **`eligibility_summary`:** one row per parameter × fraction: `dams_eligible`, `dams_with_upstream_control`, `dams_with_removal_year`.
+- **Replaces `report_pilot_eligibility.py`**, which is out of the pipeline but kept until checked: on cleaned data the views should find the same or fewer dams (query `eligibility_pairs` with `n_pre > 0 AND n_post > 0` to match its one-sample rule), with differences explained by cleaning.
 - **Context joins:** `land_cover` and `climate` join to measurements on `station_id` and `year(sample_date) = year`. That's a join condition, not an FK.
