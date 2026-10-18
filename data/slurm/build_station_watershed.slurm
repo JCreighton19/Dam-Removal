@@ -20,6 +20,8 @@ echo "Job started: $(date)"
 echo "Case study: $DAM_REMOVAL_CASE_STUDY"
 echo "Building upstream areas for eligible stations (run after build_views)"
 
-python -u etl/build_station_watershed.py
+# --with-outlines builds map outlines for QA; drop it at national scale
+# (slow for large rivers, and later stages don't use them).
+python -u etl/build_station_watershed.py --with-outlines
 
 echo "Job completed: $(date)"

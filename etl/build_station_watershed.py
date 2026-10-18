@@ -18,9 +18,13 @@ How the upstream area is built
 2. A station's upstream reaches are its own reach plus every graph
    ancestor. Each reach has one NHDPlusCatchment polygon (the land that
    drains to it), with the same NHDPlusID.
-3. area_km2 is the sum of those catchments' published AreaSqKm; geometry
-   is their dissolved union (for maps; later stages use the catchments
-   themselves).
+3. area_km2 is the sum of those catchments' published AreaSqKm.
+4. The station -> catchment membership is also written to
+   station_catchment.parquet, so the land-cover and climate stages reuse it
+   instead of rebuilding the reach graph.
+5. With --with-outlines, geometry is the dissolved union of the catchments
+   (for map QA). Merging tens of thousands of catchments per large river is
+   slow, so it is off by default and geometry is null.
 
 The station's own catchment is included whole, even though the station
 may sit partway along its reach.
@@ -67,6 +71,11 @@ MIN_AREA_COVERAGE = 0.9
 # Dissolved polygons are simplified (in meters) to keep the file small;
 # they are for maps only.
 SIMPLIFY_M = 30
+
+CATCHMENT_SCHEMA = {
+    "station_id": "string",
+    "catchment_id": "int64",
+}
 
 SCHEMA = {
     "station_id": "string",
@@ -192,11 +201,11 @@ def upstream_reaches(graph, reach):
     return nx.ancestors(graph, reach) | {reach}
 
 
-def has_outside_inflow(flow, reaches_upstream, known_reaches):
-    """True if water enters these reaches from a reach not downloaded."""
-    inflow = flow[flow["ToNHDPID"].isin(reaches_upstream)]
-    source = inflow["FromNHDPID"]
-    return bool((source.notna() & source.ne(0) & ~source.isin(known_reaches)).any())
+def reaches_with_outside_inflow(flow, known_reaches):
+    """Reaches that water enters from a reach in no downloaded package."""
+    source = flow["FromNHDPID"]
+    outside = source.notna() & source.ne(0) & ~source.isin(known_reaches)
+    return set(flow.loc[outside, "ToNHDPID"].dropna().astype("int64"))
 
 
 def dissolve(polygons):
@@ -207,29 +216,33 @@ def dissolve(polygons):
     return merged.to_crs(metric_crs).simplify(SIMPLIFY_M).to_crs(WGS84).iloc[0]
 
 
-def build_station_watershed(stations, reaches, flow, catchments, total_area):
+def build_station_watershed(stations, reaches, flow, catchments, total_area,
+                            with_outlines=False):
+    """Returns (station_watershed table, station_catchment table)."""
     graph, _, stats = build_reach_graph(reaches, flow)
     print(f"Reach graph: {stats['stream_count']:,} reaches, "
           f"{graph.number_of_edges():,} connections", flush=True)
 
     known_reaches = set(reaches["NHDPlusID"].astype("int64"))
+    outside_entry = reaches_with_outside_inflow(flow, known_reaches)
     upstream = {
         row.station_id: upstream_reaches(graph, int(row.NHDPlusID))
         for row in stations.itertuples(index=False)
     }
 
-    all_ids = set().union(*upstream.values()) if upstream else set()
-    geometries = read_catchment_geometries(catchments, all_ids)
+    if with_outlines:
+        all_ids = set().union(*upstream.values()) if upstream else set()
+        geometries = read_catchment_geometries(catchments, all_ids)
     area_by_catchment = catchments["areasqkm"].astype("float64")
 
-    rows = []
+    rows, memberships = [], []
     for row in stations.itertuples(index=False):
         ids = upstream[row.station_id]
         in_catchments = catchments.index.intersection(list(ids))
         area = float(area_by_catchment.loc[in_catchments].sum())
         nhdplus_total = total_area.get(int(row.NHDPlusID))
         coverage = area / nhdplus_total if nhdplus_total and nhdplus_total > 0 else None
-        truncated = has_outside_inflow(flow, ids, known_reaches) or (
+        truncated = not outside_entry.isdisjoint(ids) or (
             coverage is not None and coverage < MIN_AREA_COVERAGE
         )
         rows.append({
@@ -240,8 +253,15 @@ def build_station_watershed(stations, reaches, flow, catchments, total_area):
             "nhdplus_total_area_km2": nhdplus_total,
             "area_coverage": coverage,
             "truncated": truncated,
-            "geometry": dissolve(geometries.loc[geometries.index.intersection(in_catchments)]),
+            "geometry": (
+                dissolve(geometries.loc[geometries.index.intersection(in_catchments)])
+                if with_outlines else None
+            ),
         })
+        memberships.append(pd.DataFrame({
+            "station_id": row.station_id,
+            "catchment_id": in_catchments.astype("int64"),
+        }))
         print(f"  {row.station_id}: {area:,.1f} km2 from {len(in_catchments):,} catchments"
               + (" (truncated)" if truncated else ""), flush=True)
 
@@ -249,15 +269,22 @@ def build_station_watershed(stations, reaches, flow, catchments, total_area):
     for column, dtype in SCHEMA.items():
         if column != "geometry":
             table[column] = table[column].astype(dtype)
-    return table
+
+    membership = (
+        pd.concat(memberships, ignore_index=True) if memberships
+        else pd.DataFrame(columns=list(CATCHMENT_SCHEMA))
+    ).astype(CATCHMENT_SCHEMA)
+    return table, membership
 
 
 # --------------------------------------------------
 # Validation (spec section 4)
 # --------------------------------------------------
 
-def validate(table, station_ids):
+def validate(table, membership, station_ids):
     errors = schema_errors("station_watershed", table, SCHEMA, ["station_id"])
+    errors += schema_errors("station_catchment", membership, CATCHMENT_SCHEMA,
+                            ["station_id", "catchment_id"])
     if errors:
         return errors
     if bad := sorted(set(table["station_id"]) - set(station_ids))[:10]:
@@ -281,6 +308,12 @@ def main():
         default=default_case_study(),
         help="Name of a config file under config/ (without the .yaml extension).",
     )
+    parser.add_argument(
+        "--with-outlines",
+        action="store_true",
+        help="Also dissolve each station's catchments into an outline polygon "
+        "(for map QA; slow for large rivers).",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
@@ -297,11 +330,13 @@ def main():
     gdb_paths = sorted({find_huc8_geodatabase(nhd_dir, huc8.zfill(8)) for huc8 in cfg.huc8s})
     reaches, flow, catchments, total_area = read_network(gdb_paths)
 
-    table = build_station_watershed(stations, reaches, flow, catchments, total_area)
+    table, membership = build_station_watershed(
+        stations, reaches, flow, catchments, total_area, with_outlines=args.with_outlines
+    )
 
     with duckdb.connect(str(db_path), read_only=True) as con:
         station_ids = con.sql("SELECT station_id FROM wq_station").df()["station_id"]
-    errors = validate(table, station_ids)
+    errors = validate(table, membership, station_ids)
     if errors:
         raise ValueError(
             "Validation failed; no warehouse files were written:\n  - "
@@ -312,6 +347,11 @@ def main():
     write_parquet_atomic(table, path)
     add_view(db_path, "station_watershed", path)
     print(f"\nWrote {len(table):,} rows ({int(table['truncated'].sum()):,} truncated) to {path}")
+
+    membership_path = output_dir / "station_catchment.parquet"
+    write_parquet_atomic(membership, membership_path)
+    add_view(db_path, "station_catchment", membership_path)
+    print(f"Wrote {len(membership):,} station-catchment rows to {membership_path}")
 
 
 if __name__ == "__main__":

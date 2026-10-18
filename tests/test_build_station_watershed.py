@@ -109,9 +109,10 @@ def _build_project(root):
     return out
 
 
-def _run(root):
+def _run(root, *extra):
+    argv = ["build_station_watershed.py", "--case-study", "pilot_test", *extra]
     with mock.patch.dict(os.environ, {PROJECT_ROOT_ENV_VAR: str(root)}), \
-            mock.patch.object(sys, "argv", ["build_station_watershed.py", "--case-study", "pilot_test"]):
+            mock.patch.object(sys, "argv", argv):
         bsw.main()
 
 
@@ -119,7 +120,7 @@ def test_upstream_areas_and_truncation():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         out = _build_project(root)
-        _run(root)
+        _run(root, "--with-outlines")
 
         table = gpd.read_parquet(out / "station_watershed.parquet").set_index("station_id")
         assert list(table.index) == ["S3", "S5"]  # S2 isn't eligible
@@ -145,6 +146,22 @@ def test_upstream_areas_and_truncation():
 
         with duckdb.connect(str(out / "warehouse.duckdb"), read_only=True) as con:
             assert con.sql("SELECT count(*) FROM station_watershed").fetchone()[0] == 2
+            members = con.sql("""
+                SELECT station_id, list_sort(list(catchment_id)) FROM station_catchment
+                GROUP BY station_id ORDER BY station_id
+            """).fetchall()
+        assert members == [("S3", [1, 2, 3, 5, 9]), ("S5", [5])]
+
+
+def test_without_outlines_geometry_is_null_but_numbers_match():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        out = _build_project(root)
+        _run(root)
+        table = gpd.read_parquet(out / "station_watershed.parquet").set_index("station_id")
+        assert table.geometry.isna().all()
+        assert table.loc["S3", "area_km2"] == 15.0
+        assert table.loc["S3", "truncated"] and not table.loc["S5", "truncated"]
 
 
 def test_schema_matches_spec():
@@ -154,6 +171,9 @@ def test_schema_matches_spec():
         _run(root)
         table = gpd.read_parquet(out / "station_watershed.parquet")
         assert bsw.schema_errors("station_watershed", table, bsw.SCHEMA, ["station_id"]) == []
+        membership = pd.read_parquet(out / "station_catchment.parquet")
+        assert bsw.schema_errors("station_catchment", membership, bsw.CATCHMENT_SCHEMA,
+                                 ["station_id", "catchment_id"]) == []
 
 
 if __name__ == "__main__":
