@@ -48,8 +48,16 @@ FIELD_PARAMETERS = {
     "water_temp", "specific_conductance", "dissolved_oxygen",
     "do_saturation", "ph", "turbidity",
 }
+# TDS is dissolved by definition, so its fraction label carries no meaning.
+NO_FRACTION_PARAMETERS = FIELD_PARAMETERS | {"tds"}
 
-FRACTION_ALIASES = {"Filtered, field": "Dissolved"}
+# Agency labels for the same two fractions: filtered (Dissolved) or not (Total).
+FRACTION_ALIASES = {
+    "Filtered, field": "Dissolved",
+    "Filtered, lab": "Dissolved",
+    "Filtered field and/or lab": "Dissolved",
+    "Unfiltered": "Total",
+}
 
 # --------------------------------------------------
 # 3.6.2 Row filters

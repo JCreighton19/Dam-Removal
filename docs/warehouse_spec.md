@@ -105,32 +105,32 @@ The two new loader stages leave the existing ETL scripts untouched. They read th
 - **PK:** `AR_ID`.
 - **Rows:** dams kept by `snap_features.py` (`filter_to_sampled_dams` for sampled case studies) that snapped to a reach.
 
-| Column | Type | Source | Rule / notes |
-|---|---|---|---|
-| `AR_ID` | TEXT PK | dam CSV `AR_ID` | Cast to string |
-| `NABI_ID` | TEXT | dam CSV `NABI_ID` | |
-| `Dam_Name` | TEXT | dam CSV `Dam_Name` | |
-| `Year_Removed` | SMALLINT | dam CSV `Year_Removed` | Non-numeric or 0 → null (same rule as `report_pilot_eligibility.prepare_links`) |
-| `Latitude` | DOUBLE | dam CSV `Latitude` | **Original** coordinate |
-| `Longitude` | DOUBLE | dam CSV `Longitude` | **Original** coordinate |
-| `City_County` | TEXT | dam CSV `City_County` | |
-| `River` | TEXT | dam CSV `River` | |
-| `HUC8` | CHAR(8) | pipeline | The HUC8 the dam was clipped to in `snap_features.py` (authoritative), zero-padded. Not the CSV's own HUC8 field. |
-| `State` | TEXT | dam CSV `State` | Two-letter code; dams on a state line list each, e.g. `"MN; ND"` |
-| `Dam_Height_ft` | DOUBLE | dam CSV `Dam_Height_ft` | Non-numeric → null |
-| `Dam_Length_ft` | DOUBLE | dam CSV `Dam_Length_ft` | Non-numeric → null |
-| `Year_built` | SMALLINT | dam CSV **`Year_Built`** | Source spelling differs from the ERD; non-numeric or 0 → null |
-| `Original_Use` | TEXT | dam CSV `Original_Use` | |
-| `Type_Material` | TEXT | dam CSV `Type_Material` | |
-| `Reason_for_removal` | TEXT | dam CSV `Reason_for_removal` | |
-| `Miles_Restored_US` | DOUBLE | dam CSV `Miles_Restored_US` | |
-| `Miles_Restored_DS` | DOUBLE | dam CSV `Miles_Restored_DS` | |
-| `Last_Updated` | DATE | dam CSV `Last_Updated` | Parse; unparseable → null |
-| `NHDPlusID` | BIGINT | gpkg `dams_snapped.NHDPlusID` | FK → `streams.nhdplus_id` |
-| `snap_distance_m` | DOUBLE | gpkg `dams_snapped.snap_distance_m` | |
-| `snap_fraction` | DOUBLE | gpkg `dams_snapped.snap_fraction` | 0 at the reach's start, 1 at its end |
-| `match_method` | TEXT | constant | `nearest_flowline` |
-| `geometry` | Point, 4326 | gpkg `dams_snapped` geometry | **Snapped** location |
+| Column | Type | Meaning | Source | Rule / notes |
+|---|---|---|---|---|
+| `AR_ID` | TEXT PK | American Rivers' ID for the removal; the dam's key | dam CSV `AR_ID` | Cast to string |
+| `NABI_ID` | TEXT | ID in the National Aquatic Barrier Inventory, if linked | dam CSV `NABI_ID` | |
+| `Dam_Name` | TEXT | Dam name | dam CSV `Dam_Name` | |
+| `Year_Removed` | SMALLINT | Year the dam was removed; splits before from after | dam CSV `Year_Removed` | Non-numeric or 0 → null (same rule as `report_pilot_eligibility.prepare_links`) |
+| `Latitude` | DOUBLE | Reported latitude | dam CSV `Latitude` | **Original** coordinate |
+| `Longitude` | DOUBLE | Reported longitude | dam CSV `Longitude` | **Original** coordinate |
+| `City_County` | TEXT | City or county | dam CSV `City_County` | |
+| `River` | TEXT | River the dam was on | dam CSV `River` | |
+| `HUC8` | CHAR(8) | 8-digit watershed the dam is in | pipeline | The HUC8 the dam was clipped to in `snap_features.py` (authoritative), zero-padded. Not the CSV's own HUC8 field. |
+| `State` | TEXT | State(s) the dam is in | dam CSV `State` | Two-letter code; dams on a state line list each, e.g. `"MN; ND"` |
+| `Dam_Height_ft` | DOUBLE | Dam height (ft) | dam CSV `Dam_Height_ft` | Non-numeric → null |
+| `Dam_Length_ft` | DOUBLE | Dam length (ft) | dam CSV `Dam_Length_ft` | Non-numeric → null |
+| `Year_built` | SMALLINT | Year the dam was built | dam CSV **`Year_Built`** | Source spelling differs from the ERD; non-numeric or 0 → null |
+| `Original_Use` | TEXT | What the dam was built for (mill, hydropower, …) | dam CSV `Original_Use` | |
+| `Type_Material` | TEXT | Construction type (earth, concrete, …) | dam CSV `Type_Material` | |
+| `Reason_for_removal` | TEXT | Why it was removed | dam CSV `Reason_for_removal` | |
+| `Miles_Restored_US` | DOUBLE | River miles reopened upstream | dam CSV `Miles_Restored_US` | |
+| `Miles_Restored_DS` | DOUBLE | River miles reopened downstream | dam CSV `Miles_Restored_DS` | |
+| `Last_Updated` | DATE | When the source record was last edited | dam CSV `Last_Updated` | Parse; unparseable → null |
+| `NHDPlusID` | BIGINT | Stream reach the dam sits on | gpkg `dams_snapped.NHDPlusID` | FK → `streams.nhdplus_id` |
+| `snap_distance_m` | DOUBLE | How far (m) the dam was moved to land on that reach | gpkg `dams_snapped.snap_distance_m` | |
+| `snap_fraction` | DOUBLE | Position along the reach, 0 = upstream end, 1 = downstream end | gpkg `dams_snapped.snap_fraction` | 0 at the reach's start, 1 at its end |
+| `match_method` | TEXT | How the dam was matched to a reach | constant | `nearest_flowline` |
+| `geometry` | Point, 4326 | Location on the stream line | gpkg `dams_snapped` geometry | **Snapped** location |
 
 **Duplicate snaps.** A dam equidistant to two reaches currently appears twice in `dams_snapped`. Keep one row per `AR_ID`: the smallest `snap_distance_m`, then the smallest `NHDPlusID` as a deterministic tie-break. Log every dropped duplicate.
 
@@ -140,25 +140,25 @@ The two new loader stages leave the existing ETL scripts untouched. They read th
 - **PK:** `station_id`.
 - **Rows:** stations that appear in `dam_station_link`, i.e. network-connected to at least one dam. This keeps the table small and guarantees every FK from the link table resolves.
 
-| Column | Type | Source | Rule / notes |
-|---|---|---|---|
-| `station_id` | TEXT PK | WQP `MonitoringLocationIdentifier` | |
-| `station_name` | TEXT | WQP `MonitoringLocationName` | |
-| `station_type` | TEXT | WQP `MonitoringLocationTypeName` | Already filtered to the config's `station_types` |
-| `organization_id` | TEXT | WQP `OrganizationIdentifier` | |
-| `organization_name` | TEXT | WQP `OrganizationFormalName` | |
-| `latitude` | DOUBLE | WQP `LatitudeMeasure` | **Original** coordinate |
-| `longitude` | DOUBLE | WQP `LongitudeMeasure` | **Original** coordinate |
-| `state_code` | TEXT | WQP `StateCode` | |
-| `county_code` | TEXT | WQP `CountyCode` | |
-| `huc8` | CHAR(8) | pipeline | The HUC8 whose snapped file the station came from. FK → `huc8_watershed` |
-| `horizontal_datum` | TEXT | WQP `HorizontalCoordinateReferenceSystemDatumName` | |
-| `horizontal_method` | TEXT | WQP `HorizontalCollectionMethodName` | |
-| `NHDPlusID` | BIGINT | gpkg `stations_snapped.NHDPlusID` | FK → `streams.nhdplus_id` |
-| `snap_distance_m` | DOUBLE | gpkg `stations_snapped.snap_distance_m` | |
-| `snap_fraction` | DOUBLE | gpkg `stations_snapped.snap_fraction` | |
-| `match_method` | TEXT | constant | `nearest_flowline` |
-| `geometry` | Point, 4326 | gpkg `stations_snapped` geometry | **Snapped** location |
+| Column | Type | Meaning | Source | Rule / notes |
+|---|---|---|---|---|
+| `station_id` | TEXT PK | WQP station ID, e.g. `USGS-01108300` | WQP `MonitoringLocationIdentifier` | |
+| `station_name` | TEXT | Station name | WQP `MonitoringLocationName` | |
+| `station_type` | TEXT | Kind of site (river/stream, …) | WQP `MonitoringLocationTypeName` | Already filtered to the config's `station_types` |
+| `organization_id` | TEXT | ID of the agency running the station | WQP `OrganizationIdentifier` | |
+| `organization_name` | TEXT | Name of that agency | WQP `OrganizationFormalName` | |
+| `latitude` | DOUBLE | Reported latitude | WQP `LatitudeMeasure` | **Original** coordinate |
+| `longitude` | DOUBLE | Reported longitude | WQP `LongitudeMeasure` | **Original** coordinate |
+| `state_code` | TEXT | State FIPS code | WQP `StateCode` | |
+| `county_code` | TEXT | County FIPS code | WQP `CountyCode` | |
+| `huc8` | CHAR(8) | 8-digit watershed the station is in | pipeline | The HUC8 whose snapped file the station came from. FK → `huc8_watershed` |
+| `horizontal_datum` | TEXT | Coordinate datum the location was recorded in | WQP `HorizontalCoordinateReferenceSystemDatumName` | |
+| `horizontal_method` | TEXT | How the location was measured (GPS, map, …) | WQP `HorizontalCollectionMethodName` | |
+| `NHDPlusID` | BIGINT | Stream reach the station sits on | gpkg `stations_snapped.NHDPlusID` | FK → `streams.nhdplus_id` |
+| `snap_distance_m` | DOUBLE | How far (m) the station was moved to land on that reach | gpkg `stations_snapped.snap_distance_m` | |
+| `snap_fraction` | DOUBLE | Position along the reach, 0 = upstream end, 1 = downstream end | gpkg `stations_snapped.snap_fraction` | |
+| `match_method` | TEXT | How the station was matched to a reach | constant | `nearest_flowline` |
+| `geometry` | Point, 4326 | Location on the stream line | gpkg `stations_snapped` geometry | **Snapped** location |
 
 Duplicate snaps are resolved the same way as for dams (section 3.1). A station near a HUC8 boundary that appears in two HUC8s' files keeps the row from the HUC8 its point falls within.
 
@@ -168,13 +168,13 @@ Duplicate snaps are resolved the same way as for dams (section 3.1). A station n
 - **PK:** `(AR_ID, station_id)`.
 - **Rows:** `dam_station_links_<huc8>.csv` rows with `relationship` in (`upstream`, `downstream`, `same_reach`). `unconnected` pairs are **not stored**; they remain in the intermediate CSVs for QA.
 
-| Column | Type | Source | Rule / notes |
-|---|---|---|---|
-| `AR_ID` | TEXT | links `dam_id` | FK → `dam_removal` |
-| `station_id` | TEXT | links `station_id` | FK → `wq_station` |
-| `relationship` | TEXT | links `relationship` | One of `upstream`, `downstream`, `same_reach` |
-| `network_distance_km` | DOUBLE | links `network_distance_km` | Null when no path or fraction was available |
-| `distance_method` | TEXT | links `distance_method` | `same_reach_fraction` or `network_path_fractional_endpoints` |
+| Column | Type | Meaning | Source | Rule / notes |
+|---|---|---|---|---|
+| `AR_ID` | TEXT | The dam | links `dam_id` | FK → `dam_removal` |
+| `station_id` | TEXT | The station | links `station_id` | FK → `wq_station` |
+| `relationship` | TEXT | Where the station is relative to the dam along the river | links `relationship` | One of `upstream`, `downstream`, `same_reach` |
+| `network_distance_km` | DOUBLE | Distance between them along the river (km) | links `network_distance_km` | Null when no path or fraction was available |
+| `distance_method` | TEXT | How that distance was computed | links `distance_method` | `same_reach_fraction` or `network_path_fractional_endpoints` |
 
 The links CSV columns `dam_name`, `year_removed`, `river`, `distance_to_dam_km` (a duplicate of `network_distance_km`), the reach IDs and the snap columns are dropped. They live on `dam_removal` and `wq_station`.
 
@@ -183,13 +183,13 @@ The links CSV columns `dam_name`, `year_removed`, `river`, `distance_to_dam_km` 
 - **Grain:** one row per HUC8 in the case study.
 - **PK:** `huc8`.
 
-| Column | Type | Source | Rule / notes |
-|---|---|---|---|
-| `huc8` | CHAR(8) PK | WBD HU8 layer `huc8` | Zero-padded |
-| `name` | TEXT | WBD `name` | |
-| `states` | TEXT | WBD `states` | e.g. `"OH,PA"` |
-| `areasqkm` | DOUBLE | WBD `areasqkm` | As published by WBD |
-| `geometry` | MultiPolygon, 4326 | WBD geometry | Reprojected to 4326 |
+| Column | Type | Meaning | Source | Rule / notes |
+|---|---|---|---|---|
+| `huc8` | CHAR(8) PK | 8-digit watershed code | WBD HU8 layer `huc8` | Zero-padded |
+| `name` | TEXT | Watershed name | WBD `name` | |
+| `states` | TEXT | States the watershed covers | WBD `states` | e.g. `"OH,PA"` |
+| `areasqkm` | DOUBLE | Area (km²) | WBD `areasqkm` | As published by WBD |
+| `geometry` | MultiPolygon, 4326 | Watershed boundary | WBD geometry | Reprojected to 4326 |
 
 ### 3.5 `streams` (mapping helper)
 
@@ -197,15 +197,15 @@ The links CSV columns `dam_name`, `year_removed`, `river`, `distance_to_dam_km` 
 - **PK:** `nhdplus_id`.
 - **Rows:** every reach upstream or downstream of a case-study dam (via the reach graph), limited to reaches whose `ReachCode` starts with a case-study HUC8, plus the snapped reach of every dam and `wq_station` (kept even across a HUC8 boundary, so every `NHDPlusID` FK resolves). The same scoping is used by the pilot map in `notebooks/stream_network_exploration.ipynb`.
 
-| Column | Type | Source | Rule / notes |
-|---|---|---|---|
-| `nhdplus_id` | BIGINT PK | `NHDFlowline.NHDPlusID` | Read via `read_nhdplus_layer` (case-insensitive) |
-| `reach_code` | TEXT | `NHDFlowline.ReachCode` | First 8 characters = HUC8 |
-| `gnis_name` | TEXT | `NHDFlowline.GNIS_Name` | |
-| `length_km` | DOUBLE | `NHDFlowline.LengthKM` | As published |
-| `feature_type` | SMALLINT | `NHDFlowline.FType` | e.g. 460 stream/river, 336 canal/ditch |
-| `feature_code` | INTEGER | `NHDFlowline.FCode` | |
-| `geometry` | MultiLineString, 4326 | `NHDFlowline` geometry | Z/M dropped; simplified (tolerance ~5 m) for map rendering |
+| Column | Type | Meaning | Source | Rule / notes |
+|---|---|---|---|---|
+| `nhdplus_id` | BIGINT PK | Reach ID; dams and stations point here | `NHDFlowline.NHDPlusID` | Read via `read_nhdplus_layer` (case-insensitive) |
+| `reach_code` | TEXT | National reach code | `NHDFlowline.ReachCode` | First 8 characters = HUC8 |
+| `gnis_name` | TEXT | River name | `NHDFlowline.GNIS_Name` | |
+| `length_km` | DOUBLE | Reach length (km) | `NHDFlowline.LengthKM` | As published |
+| `feature_type` | SMALLINT | Kind of channel (stream, canal, …) | `NHDFlowline.FType` | e.g. 460 stream/river, 336 canal/ditch |
+| `feature_code` | INTEGER | More detailed channel type | `NHDFlowline.FCode` | |
+| `geometry` | MultiLineString, 4326 | The reach line | `NHDFlowline` geometry | Z/M dropped; simplified (tolerance ~5 m) for map rendering |
 
 `streams` is not the source of truth for the network. Graph logic always reads the raw NHDPlus geodatabase.
 
@@ -216,42 +216,42 @@ The links CSV columns `dam_name`, `year_removed`, `river`, `distance_to_dam_km` 
 - **Rows:** results for `wq_station` stations, limited to the parameters in the mapping table below, that survive the filters (section 3.6.2) and deduplication (3.6.5).
 - **Rules source:** profiling of the `pilot_random5_seed42` downloads (`notebooks/wqs_results_exploration.ipynb`, about 10,150 target-parameter rows), decided 2026-10-17. The rule tables are implemented as data in `etl/common/wq_rules.py`, applied by `etl/clean_wq_results.py`. Re-check the value counts when the 30–50 dam sample is downloaded; unseen codes default to **kept and logged**, not silently dropped.
 
-| Column | Type | Source | Rule / notes |
-|---|---|---|---|
-| `measurement_id` | BIGINT PK | generated | Section 1, "Generated keys" |
-| `station_id` | TEXT | `MonitoringLocationIdentifier` | FK → `wq_station` |
-| `organization_id` | TEXT | `OrganizationIdentifier` | |
-| `provider` | TEXT | `ProviderName` | `NWIS` or `STORET` |
-| `activity_id` | TEXT | `ActivityIdentifier` | |
-| `sample_date` | DATE | `ActivityStartDate` | Rows with unparseable dates dropped |
-| `sample_time` | TIME | `ActivityStartTime/Time` | Null when absent |
-| `time_zone` | TEXT | `ActivityStartTime/TimeZoneCode` | |
-| `parameter` | TEXT | `CharacteristicName` | Verbatim |
-| `parameter_std` | TEXT | derived | Section 3.6.1 mapping. Analyses group on this, not `parameter` |
-| `usgs_pcode` | TEXT | `USGSPCode` | Zero-padded to 5 characters; null for STORET |
-| `result_value_raw` | TEXT | `ResultMeasureValue` | Verbatim, e.g. `"=6.59"`, `"## (Censored)"` |
-| `result_value_std` | DOUBLE | derived | Section 3.6.3 (parsing, non-detects) and 3.6.4 (units) |
-| `result_unit_raw` | TEXT | `ResultMeasure/MeasureUnitCode` | Verbatim |
-| `result_unit_std` | TEXT | derived | The standard unit for `parameter_std` (3.6.1) |
-| `unit_basis_assumed` | BOOLEAN | derived | True when the chemical form (as N / as P) was assumed, not stated (3.6.4) |
-| `detection_condition` | TEXT | `ResultDetectionConditionText` | |
-| `detection_limit` | DOUBLE | `DetectionQuantitationLimitMeasure/MeasureValue` | |
-| `detection_limit_unit` | TEXT | `DetectionQuantitationLimitMeasure/MeasureUnitCode` | |
-| `detection_limit_type` | TEXT | `DetectionQuantitationLimitTypeName` | |
-| `is_censored` | BOOLEAN | derived | Section 3.6.3 |
-| `sample_fraction` | TEXT | `ResultSampleFractionText` | Verbatim |
-| `sample_fraction_std` | TEXT | derived | `Filtered, field` → `Dissolved`; null for field parameters (3.6.1) |
-| `activity_type` | TEXT | `ActivityTypeCode` | Retained after filtering, for audit |
-| `media` | TEXT | `ActivityMediaName` | |
-| `result_status` | TEXT | `ResultStatusIdentifier` | `Preliminary` is kept; filter on this column if needed |
-| `value_type` | TEXT | `ResultValueTypeName` | |
-| `qualifier_code` | TEXT | `MeasureQualifierCode` | |
-| `hydrologic_condition` | TEXT | `HydrologicCondition` | NWIS only (null for all STORET rows), so informational, not a filter |
-| `depth_m` | DOUBLE | `ActivityDepthHeightMeasure/MeasureValue` + `…/MeasureUnitCode` | Converted to meters; null when absent |
+| Column | Type | Meaning | Source | Rule / notes |
+|---|---|---|---|---|
+| `measurement_id` | BIGINT PK | Stable ID for the result | generated | Section 1, "Generated keys" |
+| `station_id` | TEXT | Where it was measured | `MonitoringLocationIdentifier` | FK → `wq_station` |
+| `organization_id` | TEXT | Agency that measured it | `OrganizationIdentifier` | |
+| `provider` | TEXT | Database it came from: USGS (`NWIS`) or states/others (`STORET`) | `ProviderName` | `NWIS` or `STORET` |
+| `activity_id` | TEXT | The sampling visit it belongs to | `ActivityIdentifier` | |
+| `sample_date` | DATE | Date sampled | `ActivityStartDate` | Rows with unparseable dates dropped |
+| `sample_time` | TIME | Time sampled | `ActivityStartTime/Time` | Null when absent |
+| `time_zone` | TEXT | Time zone of `sample_time` | `ActivityStartTime/TimeZoneCode` | |
+| `parameter` | TEXT | Original WQP parameter name | `CharacteristicName` | Verbatim |
+| `parameter_std` | TEXT | Standard parameter name; analyze on this | derived | Section 3.6.1 mapping. Analyses group on this, not `parameter` |
+| `usgs_pcode` | TEXT | USGS parameter code | `USGSPCode` | Zero-padded to 5 characters; null for STORET |
+| `result_value_raw` | TEXT | Value exactly as reported | `ResultMeasureValue` | Verbatim, e.g. `"=6.59"`, `"## (Censored)"` |
+| `result_value_std` | DOUBLE | Cleaned numeric value in the standard unit; analyze on this | derived | Section 3.6.3 (parsing, non-detects) and 3.6.4 (units) |
+| `result_unit_raw` | TEXT | Unit as reported | `ResultMeasure/MeasureUnitCode` | Verbatim |
+| `result_unit_std` | TEXT | Standard unit of `result_value_std` | derived | The standard unit for `parameter_std` (3.6.1) |
+| `unit_basis_assumed` | BOOLEAN | True if the nutrient form (as N / as P) was guessed | derived | True when the chemical form (as N / as P) was assumed, not stated (3.6.4) |
+| `detection_condition` | TEXT | Lab note such as `Not Detected` | `ResultDetectionConditionText` | |
+| `detection_limit` | DOUBLE | Lowest value the lab could detect | `DetectionQuantitationLimitMeasure/MeasureValue` | |
+| `detection_limit_unit` | TEXT | Unit of `detection_limit` | `DetectionQuantitationLimitMeasure/MeasureUnitCode` | |
+| `detection_limit_type` | TEXT | Which kind of detection limit it is | `DetectionQuantitationLimitTypeName` | |
+| `is_censored` | BOOLEAN | True if below detection; value set to half the limit | derived | Section 3.6.3 |
+| `sample_fraction` | TEXT | Filter label as reported | `ResultSampleFractionText` | Verbatim |
+| `sample_fraction_std` | TEXT | `Dissolved` (filtered) or `Total` (unfiltered); null when not applicable | derived | Trimmed; blank → null; `Filtered, field`, `Filtered, lab`, `Filtered field and/or lab` → `Dissolved`; `Unfiltered` → `Total`; null for field parameters and `tds` (3.6.1) |
+| `activity_type` | TEXT | Kind of sample (routine sample, field measurement, …) | `ActivityTypeCode` | Retained after filtering, for audit |
+| `media` | TEXT | What was sampled (always water) | `ActivityMediaName` | |
+| `result_status` | TEXT | Review status (`Accepted`, `Final`, `Preliminary`, …) | `ResultStatusIdentifier` | `Preliminary` is kept; filter on this column if needed |
+| `value_type` | TEXT | `Actual`, `Estimated`, … | `ResultValueTypeName` | |
+| `qualifier_code` | TEXT | Lab flags on the result | `MeasureQualifierCode` | |
+| `hydrologic_condition` | TEXT | Flow condition when sampled | `HydrologicCondition` | NWIS only (null for all STORET rows), so informational, not a filter |
+| `depth_m` | DOUBLE | Sample depth (m) | `ActivityDepthHeightMeasure/MeasureValue` + `…/MeasureUnitCode` | Converted to meters; null when absent |
 
 #### 3.6.1 Parameter mapping and standard units
 
-Rows whose `CharacteristicName` is not in this table are dropped. Field parameters have no meaningful fraction, so `sample_fraction_std` is null for them (`Total` and blank mean the same thing there). For nutrients the fraction matters, so analyses group on (`parameter_std`, `sample_fraction_std`).
+Rows whose `CharacteristicName` is not in this table are dropped. Field parameters have no meaningful fraction, so `sample_fraction_std` is null for them (`Total` and blank mean the same thing there), and for `tds`, which is dissolved by definition. For nutrients the fraction matters, so analyses group on (`parameter_std`, `sample_fraction_std`).
 
 | `parameter_std` | `CharacteristicName` (+ unit condition) | `result_unit_std` | Field parameter |
 |---|---|---|---|

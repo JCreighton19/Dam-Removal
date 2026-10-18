@@ -119,6 +119,22 @@ ROWS = {
         "ResultMeasureValue": "4.43", "ResultMeasure/MeasureUnitCode": "mg/L",
         "MethodSpeciationName": "as NO3",
     },
+    "keep_phosphorus_unfiltered": {
+        "CharacteristicName": "Phosphorus", "ResultSampleFractionText": "Unfiltered",
+        "ResultMeasureValue": "0.1", "ResultMeasure/MeasureUnitCode": "mg/l as P",
+    },
+    "keep_nitrate_filtered_lab": {
+        "CharacteristicName": "Nitrate", "ResultSampleFractionText": "Filtered, lab",
+        "ResultMeasureValue": "0.9", "ResultMeasure/MeasureUnitCode": "mg/l as N",
+    },
+    "keep_nitrate_blank_fraction": {
+        "CharacteristicName": "Nitrate", "ResultSampleFractionText": " ",
+        "ResultMeasureValue": "0.8", "ResultMeasure/MeasureUnitCode": "mg/l as N",
+    },
+    "keep_tds_dissolved": {
+        "CharacteristicName": "Total dissolved solids", "ResultSampleFractionText": "Dissolved",
+        "ResultMeasureValue": "250", "ResultMeasure/MeasureUnitCode": "mg/L",
+    },
     "keep_phosphorus_lt": {
         "MonitoringLocationIdentifier": "S2", "CharacteristicName": "Phosphorus",
         "ResultSampleFractionText": "Total", "ResultMeasureValue": "<0.5",
@@ -224,6 +240,10 @@ def test_main_applies_every_rule():
         assert row.loc["keep_oxygen_mgl", "parameter_std"] == "dissolved_oxygen"
         assert pd.isna(row.loc["keep_oxygen_mgl", "sample_fraction_std"])
         assert row.loc["keep_ortho_filtered", "sample_fraction_std"] == "Dissolved"
+        assert row.loc["keep_phosphorus_unfiltered", "sample_fraction_std"] == "Total"
+        assert row.loc["keep_nitrate_filtered_lab", "sample_fraction_std"] == "Dissolved"
+        assert pd.isna(row.loc["keep_nitrate_blank_fraction", "sample_fraction_std"])
+        assert pd.isna(row.loc["keep_tds_dissolved", "sample_fraction_std"])
         assert row.loc["keep_sc_routine", "activity_type"] == "Sample-Routine"
 
 

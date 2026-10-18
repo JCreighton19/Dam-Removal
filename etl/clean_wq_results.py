@@ -404,9 +404,6 @@ def to_time(series):
 
 def build_table(df):
     """Rename and type the cleaned rows into the 3.6 schema."""
-    is_field = df["parameter_std"].isin(rules.FIELD_PARAMETERS)
-    fraction_std = df["ResultSampleFractionText"].replace(rules.FRACTION_ALIASES)
-
     table = pd.DataFrame({
         "measurement_id": df["measurement_id"],
         "station_id": df["MonitoringLocationIdentifier"].str.strip(),
@@ -430,7 +427,7 @@ def build_table(df):
         "detection_limit_type": df["DetectionQuantitationLimitTypeName"],
         "is_censored": df["is_censored"].astype(bool),
         "sample_fraction": df["ResultSampleFractionText"],
-        "sample_fraction_std": fraction_std.mask(is_field),
+        "sample_fraction_std": df["sample_fraction_std"],
         "activity_type": df["ActivityTypeCode"],
         "media": df["ActivityMediaName"],
         "result_status": df["ResultStatusIdentifier"],
@@ -456,9 +453,11 @@ def clean_results(raw, station_ids):
     df = resolve_units(df)
 
     # Fraction standardization feeds dedup, so it is computed before it.
+    # Blank or whitespace-only labels become null, like a missing label.
     df["sample_fraction_std"] = (
-        df["ResultSampleFractionText"].replace(rules.FRACTION_ALIASES)
-        .mask(df["parameter_std"].isin(rules.FIELD_PARAMETERS))
+        df["ResultSampleFractionText"].str.strip().replace("", pd.NA)
+        .replace(rules.FRACTION_ALIASES)
+        .mask(df["parameter_std"].isin(rules.NO_FRACTION_PARAMETERS))
     )
 
     df = parse_values(df)
