@@ -34,6 +34,7 @@ STAGES=(
     build_views
     build_station_watershed
     download_nlcd
+    load_land_cover
 )
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

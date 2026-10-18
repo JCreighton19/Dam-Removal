@@ -396,27 +396,27 @@ None currently.
 
 - **Grain:** one row per station × year × NLCD class.
 - **PK:** `(station_id, year, class_code)`.
-- **Rows:** only years inside some dam window for that station (removal year ± `wq_window`, same windows as the WQP download), and only years the land-cover source has.
+- **Rows:** for each station, the years inside some eligible pair's window (removal year ± `wq_window`, pairs with `has_both`) that NLCD has (1985–2025); all 16 classes per station-year, zeros included.
 
-| Column | Type | Source | Rule / notes |
-|---|---|---|---|
-| `station_id` | TEXT | `station_watershed` | FK → `station_watershed` |
-| `year` | SMALLINT | land-cover source | |
-| `class_code` | SMALLINT | raster value | FK → `land_cover_codes` |
-| `area_km2` | DOUBLE | derived | Class area in the upstream area (projected/equal-area) |
-| `percent_area` | DOUBLE | derived | `area_km2` / valid area × 100 |
-| `valid_fraction` | DOUBLE | derived | Share of the upstream area with valid (non-nodata) pixels |
-| `source` | TEXT | constant | e.g. `annual_nlcd_c1v2` |
+| Column | Type | Meaning | Source | Rule / notes |
+|---|---|---|---|---|
+| `station_id` | TEXT | The station | `station_watershed` | FK → `station_watershed` |
+| `year` | SMALLINT | Land-cover year | NLCD clip year | |
+| `class_code` | SMALLINT | Land-cover class | raster value | FK → `land_cover_codes` |
+| `area_km2` | DOUBLE | Area of that class upstream of the station (km²) | derived | Pixel count × 0.0009 (30 m pixels in NLCD's equal-area projection) |
+| `percent_area` | DOUBLE | Share of the upstream area in that class (%) | derived | Class pixels / valid pixels × 100; sums to 100 per station-year; null if no valid pixels |
+| `valid_fraction` | DOUBLE | Share of the upstream area with usable land-cover data | derived | Valid-pixel area / `station_watershed.area_km2`, capped at 1 (pixel-center burning differs slightly from published areas). Low values mean nodata or catchments outside the clips |
+| `source` | TEXT | Land-cover product | constant | `annual_nlcd_c1v2` |
 
 Computed per catchment, then summed to each station through `station_catchment` (3.7a), rather than masking each station's dissolved polygon. **Source:** Annual NLCD C1V2 (decisions above); `source` = `annual_nlcd_c1v2`.
 
-**Status:** raster download done (`etl/download_land_cover.py`, stage `download_nlcd`): for each needed year, the CONUS zip is downloaded, clipped to each NHDPlus package holding an eligible station's catchment (on the original 30 m NLCD grid, 10-pixel pad), and deleted. Clips: `data/raw/nlcd/annual_c1v2/<package>/LndCov_<year>.tif`, shared across case studies. Table load (`load_land_cover.py`): next.
+**Status:** raster download done (`etl/download_land_cover.py`, stage `download_nlcd`): for each needed year, the CONUS zip is downloaded, clipped to each NHDPlus package holding an eligible station's catchment (on the original 30 m NLCD grid, 10-pixel pad), and deleted. Clips: `data/raw/nlcd/annual_c1v2/<package>/LndCov_<year>.tif`, shared across case studies. Table load: `etl/load_land_cover.py` (stage `load_land_cover`). Per package, the needed catchments are burned into the clip grid once (pixel centers); each year's pixels are counted per catchment and class in one pass, then summed to stations through a sparse station × catchment matrix. Stations spanning packages are summed across them.
 
 ### 3.9 `land_cover_codes`
 
 - **Grain:** one row per NLCD class.
 - **PK:** `class_code`.
-- Static. Written once, from the standard NLCD legend.
+- Static, from the Annual NLCD legend; written by `load_land_cover.py`. Columns: `class_code` (SMALLINT), `class_label` (TEXT), `class_group` (TEXT: Water, Developed, Barren, Forest, Shrubland, Herbaceous, Agriculture, Wetlands, for coarser summaries).
 
 | `class_code` | `class_label` |
 |---|---|
@@ -437,7 +437,6 @@ Computed per catchment, then summed to each station through `station_catchment` 
 | 90 | Woody Wetlands |
 | 95 | Emergent Herbaceous Wetlands |
 
-Optional extra column: `class_group` (Water, Developed, Barren, Forest, Shrubland, Herbaceous, Agriculture, Wetlands) for coarser summaries.
 
 ### 3.10 `climate` (Step 5)
 
@@ -472,7 +471,7 @@ Run by each writer before the atomic rename; any failure aborts the write.
 | `wq_measurement` | `station_id` in `wq_station`; `sample_date` non-null; `result_unit_std` non-null wherever `result_value_std` is non-null; `parameter_std` in the 3.6.1 mapping; `result_value_std` within plausible range per parameter (filter 10) |
 | `station_watershed` | `station_id` in `wq_station`; `area_km2` > 0 |
 | `station_catchment` | Unique `(station_id, catchment_id)` |
-| `land_cover` | `class_code` in `land_cover_codes`; `percent_area` sums to ~100 per (station, year); `valid_fraction` in [0, 1] |
+| `land_cover` | `class_code` in `land_cover_codes`; `percent_area` sums to ~100 per (station, year); `valid_fraction` in [0, 1]; one row per needed station-year × class |
 | `climate` | `station_id` in `station_watershed`; values within physical ranges |
 
 ---

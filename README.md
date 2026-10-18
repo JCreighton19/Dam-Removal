@@ -61,6 +61,7 @@ The stages, in order:
 11. `build_views`: `warehouse.duckdb` views, including which dams have enough before/after data
 12. `build_station_watershed`: upstream drainage area of each eligible station (context data, step 1 of 3)
 13. `download_nlcd`: Annual NLCD land cover for the needed years, clipped per NHDPlus package
+14. `load_land_cover`: land-cover percentages per station and year
 
 ## Warehouse
 
@@ -71,7 +72,9 @@ Curated tables are written as Parquet (GeoParquet for geometry) to `data/warehou
 | `dam_removal`, `wq_station`, `dam_station_link`, `huc8_watershed`, `streams` | `load_core_tables.py` |
 | `wq_measurement`, `wq_measurement_raw` | `clean_wq_results.py` (rules in `etl/common/wq_rules.py`) |
 | `station_watershed` | `build_station_watershed.py` |
-| `land_cover`, `climate` | Planned |
+| `station_catchment` | `build_station_watershed.py` |
+| `land_cover`, `land_cover_codes` | `load_land_cover.py` |
+| `climate` | Planned |
 
 `build_views.py` writes `data/warehouse/<case_study>/warehouse.duckdb`, which holds views only (no data). Open it with `duckdb.connect(path, read_only=True)` and query e.g. `eligibility_summary`. Eligibility thresholds come from the config's optional `eligibility: {min_samples: 3, min_years: 2}` block.
 
