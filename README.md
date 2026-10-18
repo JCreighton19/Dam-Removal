@@ -35,7 +35,7 @@ On Explorer:
 sbatch create_env.slurm        # creates or updates the `dam-removal` conda env
 ```
 
-Set the case study every job runs against in `data/slurm/case_study.env`, and make sure `config/<case_study>.yaml` exists.
+Choose the case study in `data/slurm/case_study.env`, the one file every job reads. For a random sample of dams, set `PILOT_N_DAMS` and `PILOT_SEED`; `run_pipeline.sh` generates `config/pilot_random<N>_seed<SEED>.yaml` on its first run.
 
 ## Pipeline
 

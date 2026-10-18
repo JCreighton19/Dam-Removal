@@ -9,9 +9,12 @@
 #     bash data/slurm/run_pipeline.sh --from snap_features
 #     bash data/slurm/run_pipeline.sh --list             # show stages
 #
+# The case study comes from case_study.env. If its config doesn't exist yet
+# and it's a random sample (PILOT_N_DAMS / PILOT_SEED), sample_random_pilot
+# is submitted first to generate it.
+#
 # Not included (run separately):
 #   create_env, download_huc8, unzip_huc8   one-time setup
-#   sample_random_pilot                     creates the config this reads
 #   download_nlcd                           context data, not yet wired in
 
 set -euo pipefail
@@ -50,9 +53,17 @@ if (( start < 0 )); then
 fi
 
 source data/slurm/case_study.env
+to_submit=("${STAGES[@]:$start}")
+
 if [[ ! -f "config/${DAM_REMOVAL_CASE_STUDY}.yaml" ]]; then
-    echo "config/${DAM_REMOVAL_CASE_STUDY}.yaml not found (set in data/slurm/case_study.env)."
-    exit 1
+    if [[ -n "${PILOT_N_DAMS:-}" && -n "${PILOT_SEED:-}" \
+          && "$DAM_REMOVAL_CASE_STUDY" == "pilot_random${PILOT_N_DAMS}_seed${PILOT_SEED}" ]]; then
+        echo "config/${DAM_REMOVAL_CASE_STUDY}.yaml not found; it will be generated first."
+        to_submit=(sample_random_pilot "${to_submit[@]}")
+    else
+        echo "config/${DAM_REMOVAL_CASE_STUDY}.yaml not found (set in data/slurm/case_study.env)."
+        exit 1
+    fi
 fi
 
 mkdir -p data/slurm/logs
@@ -60,7 +71,7 @@ echo "Case study: $DAM_REMOVAL_CASE_STUDY"
 echo "Submitting from: $from_stage"
 
 previous=""
-for stage in "${STAGES[@]:$start}"; do
+for stage in "${to_submit[@]}"; do
     dependency=()
     [[ -n "$previous" ]] && dependency=(--dependency="afterok:$previous" --kill-on-invalid-dep=yes)
     # ${arr[@]+...} keeps an empty array safe under `set -u` on older bash.

@@ -10,6 +10,8 @@ set -e
 
 cd /courses/DS5500.202710/teams/team4
 
+source data/slurm/case_study.env
+
 module load anaconda3/2024.06
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate dam-removal
@@ -17,8 +19,8 @@ conda activate dam-removal
 echo "Starting random pilot sampling"
 echo "Start time: $(date)"
 
-# Edit these as needed, or just run the script directly in an interactive
-# session -- this is a one-off setup task, not a recurring pipeline stage.
-python -u etl/sample_random_pilot.py --n-dams 5 --seed 42
+# Sample size and seed come from case_study.env (PILOT_N_DAMS, PILOT_SEED).
+# run_pipeline.sh submits this job automatically when the config is missing.
+python -u etl/sample_random_pilot.py --n-dams "$PILOT_N_DAMS" --seed "$PILOT_SEED"
 
 echo "Finished: $(date)"
