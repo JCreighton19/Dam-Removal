@@ -68,8 +68,9 @@ DOWNLOAD_RETRIES = 3
 # What to download
 # --------------------------------------------------
 
-def needed_years(db_path, years_before, years_after):
-    """Years in some eligible pair's window that NLCD covers."""
+def needed_years(db_path, years_before, years_after, first_year=FIRST_YEAR, last_year=LAST_YEAR):
+    """Years in some eligible pair's window that the source covers
+    (NLCD by default)."""
     with duckdb.connect(str(db_path), read_only=True) as con:
         removal_years = [
             int(y) for (y,) in con.sql(
@@ -81,7 +82,7 @@ def needed_years(db_path, years_before, years_after):
         for removal in removal_years
         for year in range(removal - years_before, removal + years_after + 1)
     }
-    return sorted(y for y in years if FIRST_YEAR <= y <= LAST_YEAR)
+    return sorted(y for y in years if first_year <= y <= last_year)
 
 
 def needed_packages(db_path, gdb_paths):

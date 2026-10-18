@@ -94,8 +94,9 @@ CODES_SCHEMA = {"class_code": "int16", "class_label": "string", "class_group": "
 # Inputs
 # --------------------------------------------------
 
-def read_inputs(db_path, years_before, years_after):
-    """station_catchment rows, and the years each station needs."""
+def read_inputs(db_path, years_before, years_after, first_year=FIRST_YEAR, last_year=LAST_YEAR):
+    """station_catchment rows, and the years each station needs that the
+    source covers (NLCD by default)."""
     with duckdb.connect(str(db_path), read_only=True) as con:
         membership = con.sql("SELECT station_id, catchment_id FROM station_catchment").df()
         removal = con.sql("""
@@ -107,11 +108,11 @@ def read_inputs(db_path, years_before, years_after):
         for row in removal.itertuples(index=False)
         for year in range(int(row.removal_year) - years_before,
                           int(row.removal_year) + years_after + 1)
-        if FIRST_YEAR <= year <= LAST_YEAR
+        if first_year <= year <= last_year
     }
     station_years = pd.DataFrame(sorted(station_years), columns=["station_id", "year"])
     station_years = station_years[station_years["station_id"].isin(membership["station_id"])]
-    # Stations whose whole window is before 1985 get no land cover.
+    # Stations whose whole window is outside the source's years get no rows.
     membership = membership[membership["station_id"].isin(station_years["station_id"])]
     return membership, station_years
 

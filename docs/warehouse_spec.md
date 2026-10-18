@@ -8,7 +8,7 @@ the rule that produces it.
 Status key used below:
 - **Ready**: the inputs already exist in the current pipeline.
 - **Step 2**: depends on the WQP cleaning rules (decided 2026-10-17, section 3.6).
-- **Step 5**: depends on contextual-data work (NLCD/climate source not chosen yet).
+- **Step 5**: contextual data (sources and method in "Step 5 context data: decisions").
 
 ---
 
@@ -89,9 +89,9 @@ Nulls are joined as empty strings. Hash collisions or genuine duplicate rows are
 | `wq_measurement` | Ready (rules in 3.6) | `clean_wq_results.py` (after `download_wqp_results` and `load_core_tables`) | `data/raw/wqp/results/<case_study>/pilot_download/results_batch_*.csv` listed in `download_manifest.csv`; `wq_station.parquet` |
 | `wq_measurement_raw` | Ready | `clean_wq_results.py` | same as `wq_measurement`, unfiltered (3.6.6) |
 | `station_watershed` | Step 5 | context stage (new) | NHDPlus HR `NHDPlusCatchment` + reach graph |
-| `land_cover` | Step 5 | context stage (new) | Annual NLCD (source TBD) + `station_watershed` |
+| `land_cover` | Step 5 | `load_land_cover.py` (after `download_nlcd`) | Annual NLCD clips + `station_catchment` |
 | `land_cover_codes` | Ready | static, written once | NLCD legend (section 3.9) |
-| `climate` | Step 5 | context stage (new) | climate source TBD + `station_watershed` |
+| `climate` | Step 5 | `load_climate.py` (after `download_climate`) | PRISM monthly clips + `station_catchment` |
 
 The two new loader stages leave the existing ETL scripts untouched. They read the outputs those scripts already produce (gpkg, CSV) and write the curated tables, so the existing per-stage outputs remain the intermediate layer.
 
@@ -358,9 +358,9 @@ None currently.
 - **Which stations:** only stations in `eligibility_pairs` with `has_both` for at least one parameter (downstream sites and upstream controls). Context data for stations that never enter the analysis is skipped.
 - **Upstream area:** built from NHDPlus HR catchments and the existing reach graph (3.7), not EPA StreamCat, so it matches the network used everywhere else.
 - **Land cover:** Annual NLCD Collection 1.2 (C1V2), CONUS, 1985–2025, from MRLC's free direct-download server (`https://www.mrlc.gov/downloads/sciweb1/shared/mrlc/data-bundles/Annual_NLCD_LndCov_<yyyy>_CU_C1V2.zip`, one ~1.35 GB zip per year; the same files ScienceBase hosts, but ScienceBase needs a login for scripts). No AWS requester-pays bucket and no credentials. Each zip is downloaded, clipped to the case study and deleted (reading a window straight from the remote zip fails). Public domain; citation requested.
-- **Climate:** PRISM AN time series, annual grids, 800 m, via the free PRISM web service (`https://services.nacse.org/prism/data/get/us/800m/<ppt|tmean>/<yyyy>`). Free to use; the PRISM Climate Group, the URL and the access date must be cited. Each file may be downloaded at most twice per 24 h, so downloads are cached and never repeated.
+- **Climate:** PRISM AN time series, **monthly** grids, 800 m, 1895–present, via the free PRISM web service (`https://services.nacse.org/prism/data/get/us/800m/<ppt|tmean>/<yyyymm>`, one ~40 MB zip holding a GeoTIFF per variable-month). Monthly rather than annual because water quality (especially temperature) varies more with season than with removal, so measurements are matched to their month's climate. Each zip is clipped per NHDPlus package and deleted (keeping all of them would be ~40 GB). Only years whose 12 months are final are used (PRISM revises a month for ~6 months). Free to use; the PRISM Climate Group, the URL and the access date must be cited. Each file may be downloaded at most twice per 24 h, so a zip is kept until its clips are written, a failed download is retried once at most, and a non-zip answer (the limit message) is never retried.
 - **Years:** the union of `removal_year ± wq_window` over the eligible pairs. Each source's raw files are cached once under `data/raw/` and shared across case studies.
-- **Method:** class areas and climate means are computed once per NHDPlus catchment, then summed or area-weighted up the reach graph to each station (3.8), instead of masking each station's large dissolved polygon.
+- **Method:** class areas and climate means are computed per NHDPlus catchment, then summed or area-weighted to each station through `station_catchment` (3.8, 3.10), instead of masking each station's large dissolved polygon. Climate uses area weights rather than cell centers, because an 800 m PRISM cell is often bigger than a whole catchment.
 - **Coverage:** both sources cover CONUS only. Stations in Alaska, Hawaii or Puerto Rico get no land cover or climate rows.
 
 ### 3.7 `station_watershed` (Step 5)
@@ -440,19 +440,22 @@ Computed per catchment, then summed to each station through `station_catchment` 
 
 ### 3.10 `climate` (Step 5)
 
-- **Grain:** one row per station × year.
-- **PK:** `(station_id, year)`.
-- **Rows:** same year selection as `land_cover`.
+- **Grain:** one row per station × year × month.
+- **PK:** `(station_id, year, month)`.
+- **Rows:** for each station, all 12 months of the years inside some eligible pair's window (removal year ± `wq_window`, pairs with `has_both`), from 1895 to the last year whose months are all final. Unlike `land_cover`, pre-1985 removals are covered.
+- **Status:** written by `etl/load_climate.py` from the clips of `etl/download_climate.py`.
 
-| Column | Type | Source | Rule / notes |
-|---|---|---|---|
-| `station_id` | TEXT | `station_watershed` | FK → `station_watershed` |
-| `year` | SMALLINT | climate source | |
-| `temperature_mean_c` | DOUBLE | derived | Area-weighted mean annual air temperature over the upstream area |
-| `precipitation_mm` | DOUBLE | derived | Area-weighted annual total precipitation over the upstream area |
-| `source` | TEXT | constant | `prism_an_800m` |
+| Column | Type | Meaning | Source | Rule / notes |
+|---|---|---|---|---|
+| `station_id` | TEXT | The station | `station_watershed` | FK → `station_watershed` |
+| `year` | SMALLINT | Calendar year | PRISM clip | |
+| `month` | TINYINT | Calendar month (1–12) | PRISM clip | |
+| `temperature_mean_c` | DOUBLE | Mean air temperature over the upstream area that month (°C) | derived | Area-weighted mean of PRISM `tmean` cells; null if no cell has data |
+| `precipitation_mm` | DOUBLE | Total precipitation that month, averaged over the upstream area (mm) | derived | Area-weighted mean of PRISM `ppt` cells; null if no cell has data |
+| `valid_fraction` | DOUBLE | Share of the upstream area with PRISM data for both variables | derived | Valid area / `station_watershed.area_km2`, capped at 1 (PRISM is CONUS only) |
+| `source` | TEXT | Data source | constant | `prism_an_800m_monthly` |
 
-**Source:** PRISM annual `ppt` and `tmean` grids (decisions above). Computed per catchment as an area-weighted mean, then accumulated up the reach graph like `land_cover`.
+**How:** per NHDPlus package, the needed catchments are burned into a 30 m Albers grid and the PRISM grid is projected onto it once (nearest cell). Counting 30 m pixels per (catchment, PRISM cell) and summing through `station_catchment` gives each station's area in each cell; a month's value is the area-weighted mean over cells with data. Annual values are a `GROUP BY` away (mean temperature, summed precipitation).
 
 ---
 
@@ -472,7 +475,7 @@ Run by each writer before the atomic rename; any failure aborts the write.
 | `station_watershed` | `station_id` in `wq_station`; `area_km2` > 0 |
 | `station_catchment` | Unique `(station_id, catchment_id)` |
 | `land_cover` | `class_code` in `land_cover_codes`; `percent_area` sums to ~100 per (station, year); `valid_fraction` in [0, 1]; one row per needed station-year × class |
-| `climate` | `station_id` in `station_watershed`; values within physical ranges |
+| `climate` | `temperature_mean_c` in [−45, 45]; `precipitation_mm` in [0, 3000]; `valid_fraction` in [0, 1]; one row per needed station-year × month |
 
 ---
 
@@ -487,4 +490,4 @@ Run by each writer before the atomic rename; any failure aborts the write.
 - **`eligibility_dams`:** one row per dam × parameter × fraction: `downstream_stations_both`, `upstream_stations_both`; `has_both` (a downstream station has both sides) and `has_upstream_control` (an upstream one does too).
 - **`eligibility_summary`:** one row per parameter × fraction: `dams_eligible`, `dams_with_upstream_control`, `dams_with_removal_year`.
 - **Replaces `report_pilot_eligibility.py`**, which is out of the pipeline but kept until checked: on cleaned data the views should find the same or fewer dams (query `eligibility_pairs` with `n_pre > 0 AND n_post > 0` to match its one-sample rule), with differences explained by cleaning.
-- **Context joins:** `land_cover` and `climate` join to measurements on `station_id` and `year(sample_date) = year`. That's a join condition, not an FK.
+- **Context joins:** `land_cover` joins to measurements on `station_id` and `year(sample_date) = year`; `climate` also on `month(sample_date) = month`. Those are join conditions, not FKs.
