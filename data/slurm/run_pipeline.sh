@@ -67,6 +67,7 @@ if [[ ! -f "config/${DAM_REMOVAL_CASE_STUDY}.yaml" ]]; then
 fi
 
 mkdir -p data/slurm/logs
+echo "Started:    $(date)"
 echo "Case study: $DAM_REMOVAL_CASE_STUDY"
 echo "Submitting from: $from_stage"
 
