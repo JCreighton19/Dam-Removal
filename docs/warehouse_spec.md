@@ -116,7 +116,7 @@ The two new loader stages leave the existing ETL scripts untouched. They read th
 | `City_County` | TEXT | dam CSV `City_County` | |
 | `River` | TEXT | dam CSV `River` | |
 | `HUC8` | CHAR(8) | pipeline | The HUC8 the dam was clipped to in `snap_features.py` (authoritative), zero-padded. Not the CSV's own HUC8 field. |
-| `State` | CHAR(2) | dam CSV `State` | |
+| `State` | TEXT | dam CSV `State` | Two-letter code; dams on a state line list each, e.g. `"MN; ND"` |
 | `Dam_Height_ft` | DOUBLE | dam CSV `Dam_Height_ft` | Non-numeric → null |
 | `Dam_Length_ft` | DOUBLE | dam CSV `Dam_Length_ft` | Non-numeric → null |
 | `Year_built` | SMALLINT | dam CSV **`Year_Built`** | Source spelling differs from the ERD; non-numeric or 0 → null |

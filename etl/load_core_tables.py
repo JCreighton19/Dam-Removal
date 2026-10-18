@@ -560,11 +560,15 @@ def validate_tables(tables, current_year=None):
         ("huc8_watershed", "huc8", 8),
         ("dam_removal", "HUC8", 8),
         ("wq_station", "huc8", 8),
-        ("dam_removal", "State", 2),
     ]:
-        lengths = tables[name][column].dropna().str.len()
-        if (lengths != width).any():
-            errors.append(f"{name}.{column}: values not {width} characters long")
+        values = tables[name][column].dropna()
+        if bad := sorted(values[values.str.len() != width].unique())[:10]:
+            errors.append(f"{name}.{column}: values not {width} characters long: {bad}")
+
+    # Two-letter codes; dams on a state line list each, e.g. "MN; ND".
+    states = dams["State"].dropna()
+    if bad := sorted(states[~states.str.fullmatch(r"[A-Z]{2}(; [A-Z]{2})*")].unique())[:10]:
+        errors.append(f"dam_removal.State: not two-letter codes separated by '; ': {bad}")
 
     if bad := _outside(dams["HUC8"], watersheds["huc8"]):
         errors.append(f"dam_removal.HUC8 not in huc8_watershed: {bad}")
