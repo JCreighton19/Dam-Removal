@@ -352,10 +352,7 @@ def main():
     cfg = load_config(args.case_study)
     huc8_list = [args.huc8] if args.huc8 else cfg.huc8s
 
-    candidate_path = (
-        cfg.project_root / "data" / "raw" / "wqp" / "results"
-        / "pilot_station_selection.csv"
-    )
+    candidate_path = cfg.wqp_results_dir / "pilot_station_selection.csv"
 
     # Loaded once and reused across HUC8s: the candidate file and dam
     # source cover the whole case study, not one HUC8 each.

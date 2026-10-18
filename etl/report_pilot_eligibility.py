@@ -454,7 +454,7 @@ def main():
     # (download_wqp_results.py downloads for every candidate station at
     # once), not per-HUC8 -- so it's checked and loaded once here, unlike
     # the per-HUC8 dam-station link table.
-    results_dir = cfg.project_root / "data" / "raw" / "wqp" / "results" / "pilot_download"
+    results_dir = cfg.wqp_results_dir / "pilot_download"
 
     if not results_dir.exists() or not any(results_dir.glob("results_batch_*.csv")):
         error = FileNotFoundError(

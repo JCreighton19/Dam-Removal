@@ -184,7 +184,7 @@ def main():
 
     cfg = load_config(args.case_study)
 
-    output_dir = cfg.project_root / "data" / "raw" / "wqp" / "results" / "pilot_download"
+    output_dir = cfg.wqp_results_dir / "pilot_download"
     manifest_file = output_dir / "download_manifest.csv"
     output_dir.mkdir(parents=True, exist_ok=True)
 

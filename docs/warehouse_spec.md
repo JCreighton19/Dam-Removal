@@ -86,7 +86,7 @@ Nulls are joined as empty strings. Hash collisions or genuine duplicate rows are
 | `dam_station_link` | Ready | `load_core_tables.py` | `dam_station_links_<huc8>.csv` |
 | `huc8_watershed` | Ready | `load_core_tables.py` | WBD GeoPackage (HU8 layer) |
 | `streams` | Ready | `load_core_tables.py` | NHDPlus HR `NHDFlowline` + reach graph |
-| `wq_measurement` | Ready (rules in 3.6) | `clean_wq_results.py` (after `download_wqp_results` and `load_core_tables`) | `pilot_download/results_batch_*.csv` listed in `download_manifest.csv`; `wq_station.parquet` |
+| `wq_measurement` | Ready (rules in 3.6) | `clean_wq_results.py` (after `download_wqp_results` and `load_core_tables`) | `data/raw/wqp/results/<case_study>/pilot_download/results_batch_*.csv` listed in `download_manifest.csv`; `wq_station.parquet` |
 | `wq_measurement_raw` | Ready | `clean_wq_results.py` | same as `wq_measurement`, unfiltered (3.6.6) |
 | `station_watershed` | Step 5 | context stage (new) | NHDPlus HR `NHDPlusCatchment` + reach graph |
 | `land_cover` | Step 5 | context stage (new) | Annual NLCD (source TBD) + `station_watershed` |

@@ -2,7 +2,7 @@
 Select WQP stations in scope for this case study's watershed(s).
 
 This is the sole, canonical generator of
-`data/raw/wqp/results/pilot_station_selection.csv`. Nothing else should
+`data/raw/wqp/results/<case_study>/pilot_station_selection.csv`. Nothing else should
 write to that path.
 
 An earlier version of this script (and, before that, two conflicting
@@ -136,7 +136,7 @@ def main():
 
     cfg = load_config(args.case_study)
 
-    results_dir = cfg.project_root / "data" / "raw" / "wqp" / "results"
+    results_dir = cfg.wqp_results_dir
     output_path = results_dir / "pilot_station_selection.csv"
     manifest_path = results_dir / "pilot_station_selection_manifest.csv"
 

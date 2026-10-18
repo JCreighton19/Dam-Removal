@@ -25,7 +25,7 @@ notebooks/       Exploration and QA notebooks
 tests/           Lightweight tests, runnable with `python tests/<file>.py` or pytest
 ```
 
-Data (`data/raw/`, `data/processed/`, `data/warehouse/`) is not tracked in git. It lives on the Explorer cluster at `/courses/DS5500.202710/teams/team4`.
+Data (`data/raw/`, `data/processed/`, `data/warehouse/`) is not tracked in git. WQP station selections and result downloads are stored per case study under `data/raw/wqp/results/<case_study>/`. It lives on the Explorer cluster at `/courses/DS5500.202710/teams/team4`.
 
 ## Setup
 
@@ -39,7 +39,14 @@ Set the case study every job runs against in `data/slurm/case_study.env`, and ma
 
 ## Pipeline
 
-Run the Slurm jobs in this order (each from the project root):
+To run stages 3–11 as one chain of Slurm jobs (each waits for the previous one to succeed), run from the login node:
+
+```bash
+bash data/slurm/run_pipeline.sh                      # every stage
+bash data/slurm/run_pipeline.sh --from snap_features # resume from a stage
+```
+
+The stages, in order:
 
 1. `download_huc8` → `unzip_huc8`: WBD boundaries
 2. `sample_random_pilot` (optional): generate a config from a random sample of dams

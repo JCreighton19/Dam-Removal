@@ -105,6 +105,15 @@ class CaseStudyConfig:
     def huc8s(self) -> list:
         return [str(huc8) for huc8 in self.raw.get("huc8s", [])]
 
+    @property
+    def wqp_results_dir(self) -> Path:
+        """This case study's WQP station selection and result downloads.
+
+        One folder per case study, so running a new case study never
+        overwrites another's selected stations or downloaded results.
+        """
+        return self.project_root / "data" / "raw" / "wqp" / "results" / self.name
+
 
 def load_config(name: str, project_root: Path | None = None) -> CaseStudyConfig:
     """Load a case-study config by name (e.g. "pilot_19020401").

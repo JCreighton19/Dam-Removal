@@ -69,7 +69,7 @@ def test_select_candidate_stations_end_to_end(monkeypatch):
         importlib.reload(mod)
         mod.main()
 
-        output_path = root / "data" / "raw" / "wqp" / "results" / "pilot_station_selection.csv"
+        output_path = root / "data" / "raw" / "wqp" / "results" / "pilot_test" / "pilot_station_selection.csv"
         manifest_path = output_path.with_name("pilot_station_selection_manifest.csv")
 
         assert output_path.exists()
@@ -97,7 +97,7 @@ def test_select_candidate_stations_does_not_overwrite_on_failure(monkeypatch):
         # Seed an existing "good" output file, then break the only input
         # this script reads (the raw station file) so the run fails --
         # the existing file must survive untouched.
-        output_path = root / "data" / "raw" / "wqp" / "results" / "pilot_station_selection.csv"
+        output_path = root / "data" / "raw" / "wqp" / "results" / "pilot_test" / "pilot_station_selection.csv"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text("MonitoringLocationIdentifier\nPRE_EXISTING\n")
 
@@ -169,7 +169,7 @@ def test_report_pilot_eligibility_end_to_end_ok_run(monkeypatch):
             "distance_to_dam_km": [1.0, 2.0],
         }).to_csv(processed_dir / "dam_station_links_19020401.csv", index=False)
 
-        results_dir = root / "data" / "raw" / "wqp" / "results" / "pilot_download"
+        results_dir = root / "data" / "raw" / "wqp" / "results" / "pilot_test" / "pilot_download"
         results_dir.mkdir(parents=True, exist_ok=True)
         pd.DataFrame({
             "MonitoringLocationIdentifier": ["S1", "S2"],
@@ -233,7 +233,7 @@ wq_characteristics: ["Turbidity"]
             "distance_to_dam_km": [1.0],
         }).to_csv(processed_dir / "dam_station_links_11111111.csv", index=False)
 
-        results_dir = root / "data" / "raw" / "wqp" / "results" / "pilot_download"
+        results_dir = root / "data" / "raw" / "wqp" / "results" / "pilot_multi" / "pilot_download"
         results_dir.mkdir(parents=True)
         pd.DataFrame({
             "MonitoringLocationIdentifier": ["S1"],

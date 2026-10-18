@@ -156,7 +156,7 @@ wbd_source: data/raw/wbd/wbd.gpkg
     warehouse.mkdir(parents=True)
     pd.DataFrame({"station_id": STATIONS}).to_parquet(warehouse / "wq_station.parquet")
 
-    download = root / "data" / "raw" / "wqp" / "results" / "pilot_download"
+    download = root / "data" / "raw" / "wqp" / "results" / "pilot_test" / "pilot_download"
     download.mkdir(parents=True)
     labels = list(ROWS)
     _frame(labels[:10]).to_csv(download / "results_batch_001.csv", index=False)

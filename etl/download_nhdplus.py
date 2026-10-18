@@ -9,15 +9,16 @@ import xml.etree.ElementTree as ET
 
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from etl.common.config import default_case_study, load_config
+
 
 # --------------------------------------------------
 # Configuration
 # --------------------------------------------------
 
 ROOT = Path("/courses/DS5500.202710/teams/team4")
-STATION_FILE = (
-    ROOT / "data/raw/wqp/results/pilot_station_selection.csv"
-)
 OUTPUT_DIR = ROOT / "data/raw/nhdplus"
 MANIFEST_FILE = OUTPUT_DIR / "download_manifest.csv"
 BUCKET_URL = "https://prd-tnm.s3.amazonaws.com/"
@@ -382,9 +383,15 @@ def main():
         action="store_true",
         help="Show planned downloads without downloading",
     )
+    parser.add_argument(
+        "--case-study",
+        default=default_case_study(),
+        help="Name of a config file under config/ (without the .yaml extension).",
+    )
     args = parser.parse_args()
+    cfg = load_config(args.case_study)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    huc8_codes = read_pilot_huc8s(STATION_FILE)
+    huc8_codes = read_pilot_huc8s(cfg.wqp_results_dir / "pilot_station_selection.csv")
 
     with requests.Session() as session:
         files = list_s3_files(session)

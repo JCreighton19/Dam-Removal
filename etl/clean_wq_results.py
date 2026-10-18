@@ -9,7 +9,7 @@ live in etl/common/wq_rules.py) and writes, to data/warehouse/<case_study>/:
 
 Inputs:
 
-    data/raw/wqp/results/pilot_download/download_manifest.csv and the
+    data/raw/wqp/results/<case_study>/pilot_download/download_manifest.csv and the
         results_batch_*.csv files it lists as downloaded
         (download_wqp_results.py)
     data/warehouse/<case_study>/wq_station.parquet (load_core_tables.py),
@@ -512,7 +512,7 @@ def main():
 
     cfg = load_config(args.case_study)
     output_dir = warehouse_dir(cfg)
-    download_dir = cfg.project_root / "data" / "raw" / "wqp" / "results" / "pilot_download"
+    download_dir = cfg.wqp_results_dir / "pilot_download"
 
     print(f"Case study: {cfg.name}")
 
