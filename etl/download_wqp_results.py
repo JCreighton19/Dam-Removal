@@ -63,8 +63,14 @@ DATA_PROFILE = "resultPhysChem"
 # Print a progress summary every this many batches.
 PROGRESS_EVERY = 5
 
-# Concurrent WQP requests. WQP is a shared public service; keep this small.
-DEFAULT_WORKERS = 4
+# Concurrent WQP requests. WQP is a shared public service and answers
+# HTTP 429 (too many requests) when hit too hard; 4 workers triggered it.
+DEFAULT_WORKERS = 2
+
+# Stop the run after this many failed batches in a row. Once WQP starts
+# rate-limiting, every later request fails too, so it's better to stop and
+# re-run later (finished batches are skipped) than to fail every batch.
+MAX_CONSECUTIVE_FAILURES = 10
 
 _thread_local = threading.local()
 
@@ -230,6 +236,8 @@ def main():
     previous = dict(manifest)
 
     counts = {"data": 0, "empty": 0, "skipped": 0, "failed": 0}
+    consecutive_failures = 0
+    aborted = False
     total_rows = 0
     started = time.monotonic()
     width = len(str(len(batches)))
@@ -304,12 +312,27 @@ def main():
                     counts["empty"] += 1
                     print(f"{prefix} no results", flush=True)
 
+                consecutive_failures = 0
+
             except Exception as exc:
                 entry.update(status="failed", error=str(exc))
                 counts["failed"] += 1
+                consecutive_failures += 1
                 print(f"{prefix} FAILED: {exc}", flush=True)
 
             record(batch_num, entry)
+
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                aborted = True
+                print(
+                    f"\nStopping: {consecutive_failures} batches failed in a row "
+                    "(WQP is likely rate-limiting or down). Re-run later; "
+                    "finished batches will be skipped.",
+                    flush=True,
+                )
+                # Drop queued batches; the with-block waits for in-flight ones.
+                pool.shutdown(wait=False, cancel_futures=True)
+                break
 
     failed = [b for b, e in sorted(manifest.items()) if e["status"] == "failed"]
 
@@ -319,10 +342,17 @@ def main():
     print(f"  Batches empty:      {counts['empty']:,} (not saved)")
     print(f"  Skipped (earlier):  {counts['skipped']:,}")
     print(f"  Failed:             {counts['failed']:,}")
+    if aborted:
+        print(f"  Not attempted:      {len(batches) - completed:,} (run stopped early)")
     if failed:
         print(f"  Failed batch numbers: {failed} -- re-run to retry them")
     print(f"  Manifest: {manifest_file}")
     print("=" * 70, flush=True)
+
+    # Exit non-zero so run_pipeline.sh stops here instead of running later
+    # stages on a partial download.
+    if failed or aborted:
+        sys.exit(1)
 
 
 def get_session():
@@ -332,9 +362,11 @@ def get_session():
 
     if session is None:
         session = requests.Session()
+        # On 429/5xx, wait 5, 10, 20, 40, 80 s, then 120 s (urllib3's cap)
+        # between attempts, or as long as WQP's Retry-After header asks.
         retries = Retry(
-            total=4,
-            backoff_factor=2,
+            total=8,
+            backoff_factor=5,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET"],
         )

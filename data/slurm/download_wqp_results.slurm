@@ -2,7 +2,7 @@
 #SBATCH --job-name=wqp_results
 #SBATCH --output=data/slurm/logs/wqp_results_%j.out
 #SBATCH --error=data/slurm/logs/wqp_results_%j.err
-#SBATCH --time=02:00:00
+#SBATCH --time=08:00:00
 #SBATCH --mem=4G
 #SBATCH --cpus-per-task=1
 
@@ -23,7 +23,8 @@ echo "only for stations link_dams_stations.py confirmed network-connected."
 date
 
 python -u etl/download_wqp_results.py \
-    --batch-size 5
+    --batch-size 5 \
+    --workers 2
 
 echo "Finished WQP result download"
 date
