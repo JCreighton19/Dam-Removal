@@ -26,7 +26,9 @@ Counts from different packages are summed, so a station whose upstream
 area spans packages is handled.
 
 Rows: one per station x year x class (all 16 classes, zeros included),
-for the years inside some eligible pair's window for that station.
+for the years inside some eligible pair's window for that station. Window
+years outside NLCD (1985-2025) are replaced by the nearest NLCD year, so a
+1973 removal still gets 1985 land cover.
 """
 
 from __future__ import annotations
@@ -51,7 +53,7 @@ from etl.common.config import default_case_study, load_config
 from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
 from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
-from etl.download_land_cover import FIRST_YEAR, LAST_YEAR, clip_path
+from etl.download_land_cover import FIRST_YEAR, LAST_YEAR, clip_path, window_years
 
 SOURCE = "annual_nlcd_c1v2"
 PIXEL_KM2 = 30 * 30 / 1e6
@@ -94,9 +96,11 @@ CODES_SCHEMA = {"class_code": "int16", "class_label": "string", "class_group": "
 # Inputs
 # --------------------------------------------------
 
-def read_inputs(db_path, years_before, years_after, first_year=FIRST_YEAR, last_year=LAST_YEAR):
+def read_inputs(db_path, years_before, years_after, first_year=FIRST_YEAR, last_year=LAST_YEAR,
+                nearest_if_outside=False):
     """station_catchment rows, and the years each station needs that the
-    source covers (NLCD by default)."""
+    source covers (NLCD by default; see window_years for
+    nearest_if_outside)."""
     with duckdb.connect(str(db_path), read_only=True) as con:
         membership = con.sql("SELECT station_id, catchment_id FROM station_catchment").df()
         removal = con.sql("""
@@ -106,9 +110,8 @@ def read_inputs(db_path, years_before, years_after, first_year=FIRST_YEAR, last_
     station_years = {
         (row.station_id, year)
         for row in removal.itertuples(index=False)
-        for year in range(int(row.removal_year) - years_before,
-                          int(row.removal_year) + years_after + 1)
-        if first_year <= year <= last_year
+        for year in window_years(int(row.removal_year), years_before, years_after,
+                                 first_year, last_year, nearest_if_outside)
     }
     station_years = pd.DataFrame(sorted(station_years), columns=["station_id", "year"])
     station_years = station_years[station_years["station_id"].isin(membership["station_id"])]
@@ -288,7 +291,8 @@ def main():
 
     wq_window = cfg.get("wq_window", {}) or {}
     membership, station_years = read_inputs(
-        db_path, int(wq_window.get("years_before", 3)), int(wq_window.get("years_after", 3))
+        db_path, int(wq_window.get("years_before", 3)), int(wq_window.get("years_after", 3)),
+        nearest_if_outside=True,
     )
     station_ids = np.array(sorted(membership["station_id"].unique()))
     station_area = pd.read_parquet(watershed_path, columns=["station_id", "area_km2"]) \

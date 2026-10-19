@@ -29,6 +29,7 @@ data/warehouse/<case_study>/
     land_cover.parquet
     land_cover_codes.parquet
     climate.parquet
+    analysis_measurement.parquet
 ```
 
 - One directory per case study (e.g. `pilot_random5_seed42`), so case studies never overwrite each other.
@@ -92,6 +93,7 @@ Nulls are joined as empty strings. Hash collisions or genuine duplicate rows are
 | `land_cover` | Step 5 | `load_land_cover.py` (after `download_nlcd`) | Annual NLCD clips + `station_catchment` |
 | `land_cover_codes` | Ready | static, written once | NLCD legend (section 3.9) |
 | `climate` | Step 5 | `load_climate.py` (after `download_climate`) | PRISM monthly clips + `station_catchment` |
+| `analysis_measurement` | Step 6 | `build_analysis_dataset.py` (last stage) | `warehouse.duckdb` views over all tables above (3.11) |
 
 The two new loader stages leave the existing ETL scripts untouched. They read the outputs those scripts already produce (gpkg, CSV) and write the curated tables, so the existing per-stage outputs remain the intermediate layer.
 
@@ -396,7 +398,7 @@ None currently.
 
 - **Grain:** one row per station × year × NLCD class.
 - **PK:** `(station_id, year, class_code)`.
-- **Rows:** for each station, the years inside some eligible pair's window (removal year ± `wq_window`, pairs with `has_both`) that NLCD has (1985–2025); all 16 classes per station-year, zeros included.
+- **Rows:** for each station, the years inside some eligible pair's window (removal year ± `wq_window`, pairs with `has_both`) that NLCD has (1985–2025); window years outside that range are replaced by the nearest NLCD year, so a 1973 removal still gets 1985 (flagged downstream by `analysis_measurement.land_cover_year`). All 16 classes per station-year, zeros included.
 
 | Column | Type | Meaning | Source | Rule / notes |
 |---|---|---|---|---|
@@ -457,6 +459,45 @@ Computed per catchment, then summed to each station through `station_catchment` 
 
 **How:** per NHDPlus package, the needed catchments are burned into a 30 m Albers grid and the PRISM grid is projected onto it once (nearest cell). Counting 30 m pixels per (catchment, PRISM cell) and summing through `station_catchment` gives each station's area in each cell; a month's value is the area-weighted mean over cells with data. Annual values are a `GROUP BY` away (mean temperature, summed precipitation).
 
+### 3.11 `analysis_measurement` (Step 6: modeling table)
+
+- **Grain:** one row per measurement × eligible dam-station pair.
+- **PK:** `(measurement_id, AR_ID)`. A station linked to several dams appears once per dam.
+- **Rows:** `measurement_window` rows with `period` `pre` or `post` whose dam × station × parameter × fraction has `has_both` in `eligibility_pairs`. The removal year and samples outside the window are left out.
+- **Status:** written by `etl/build_analysis_dataset.py` (SQL over the `warehouse.duckdb` views), plus an `analysis_measurement` view.
+
+**Design choices (2026-10-19):**
+1. **Values as cleaned.** Censored results are already half the detection limit (3.6.3) and flagged by `is_censored`. Duplicate same-day samples are kept; average them in modeling if needed.
+2. **Baseline land cover, not year by year:** the last NLCD year before removal, the same for all of a pair's rows. Removal changes land cover itself (the drained reservoir becomes grass or wetland), so a year-by-year covariate would absorb part of the effect. Without a year before removal (removals before 1986), the nearest year is used; `land_cover_year` ≥ `removal_year` marks those pairs.
+3. **Climate of the sample's month**, plus the previous month's precipitation (rain shortly before sampling drives turbidity and nutrients). The previous month is null for January of the first window year, which `climate` doesn't cover.
+4. **Missing context stays null.** Rows aren't dropped for missing context; models decide what to exclude.
+
+| Column | Type | Meaning | Source |
+|---|---|---|---|
+| `measurement_id` | BIGINT | The measurement | `wq_measurement` |
+| `AR_ID` | TEXT | The dam | `dam_station_link` |
+| `station_id` | TEXT | The station | `dam_station_link` |
+| `parameter_std`, `sample_fraction_std` | TEXT | What was measured | `wq_measurement` |
+| `removal_year` | SMALLINT | Year the dam was removed | `dam_removal.Year_Removed` |
+| `side` | TEXT | `upstream` / `downstream` of the dam (same-reach stations placed by snap position; null if tied) | `measurement_window` |
+| `relationship` | TEXT | Link type before placing same-reach stations | `dam_station_link` |
+| `network_distance_km` | DOUBLE | Distance along the river from the dam | `dam_station_link` |
+| `period` | TEXT | `pre` or `post` | `measurement_window` |
+| `years_from_removal` | SMALLINT | Sample year − removal year (−5…−1, 1…5) | derived |
+| `sample_date`, `year`, `month` | DATE / SMALLINT / TINYINT | When it was sampled | `wq_measurement` |
+| `season` | TEXT | `winter` (Dec–Feb), `spring`, `summer`, `fall` | derived |
+| `result_value_std`, `result_unit_std` | DOUBLE / TEXT | The outcome, in the standard unit | `wq_measurement` |
+| `is_censored`, `unit_basis_assumed` | BOOLEAN | Below detection; nutrient form guessed | `wq_measurement` |
+| `provider` | TEXT | `NWIS` or `STORET` (methods can differ) | `wq_measurement` |
+| `dam_name`, `river`, `state`, `original_use` | TEXT | Dam descriptors | `dam_removal` |
+| `dam_height_ft` | DOUBLE | Dam height | `dam_removal` |
+| `year_built`, `dam_age_at_removal` | SMALLINT | Year built; removal year − year built | `dam_removal` |
+| `upstream_area_km2`, `watershed_truncated` | DOUBLE / BOOLEAN | Station's upstream area, and whether it may be incomplete | `station_watershed` |
+| `air_temp_mean_c`, `precip_mm` | DOUBLE | Upstream climate in the sample's month | `climate` |
+| `precip_prev_month_mm` | DOUBLE | Upstream precipitation the month before | `climate` |
+| `land_cover_year` | SMALLINT | NLCD year used as the baseline | `land_cover` (choice 2) |
+| `pct_forest`, `pct_developed`, `pct_agriculture`, `pct_wetlands`, `pct_water`, `pct_other` | DOUBLE | Baseline land-cover groups (% of upstream area; `other` = shrub, grass, barren; sum to 100) | `land_cover` + `land_cover_codes.class_group` |
+
 ---
 
 ## 4. Validation checks
@@ -476,6 +517,7 @@ Run by each writer before the atomic rename; any failure aborts the write.
 | `station_catchment` | Unique `(station_id, catchment_id)` |
 | `land_cover` | `class_code` in `land_cover_codes`; `percent_area` sums to ~100 per (station, year); `valid_fraction` in [0, 1]; one row per needed station-year × class |
 | `climate` | `temperature_mean_c` in [−45, 45]; `precipitation_mm` in [0, 3000]; `valid_fraction` in [0, 1]; one row per needed station-year × month |
+| `analysis_measurement` | Row count equals the pre/post measurements of `has_both` pairs (no join dropped or duplicated rows); `period` in {pre, post}; no removal-year samples; land-cover groups sum to 100 |
 
 ---
 

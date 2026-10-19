@@ -37,6 +37,7 @@ STAGES=(
     load_land_cover
     download_climate
     load_climate
+    build_analysis_dataset
 )
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

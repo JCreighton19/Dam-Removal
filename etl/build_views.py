@@ -57,7 +57,7 @@ TABLES = [
 # Context tables built after this script (build_station_watershed.py, …).
 # They add their own view when written; a rebuild keeps any that exist.
 OPTIONAL_TABLES = ["station_watershed", "station_catchment", "land_cover", "land_cover_codes",
-                   "climate"]
+                   "climate", "analysis_measurement"]
 
 DEFAULT_MIN_SAMPLES = 3
 DEFAULT_MIN_YEARS = 2

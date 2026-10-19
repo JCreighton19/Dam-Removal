@@ -68,7 +68,20 @@ DOWNLOAD_RETRIES = 3
 # What to download
 # --------------------------------------------------
 
-def needed_years(db_path, years_before, years_after, first_year=FIRST_YEAR, last_year=LAST_YEAR):
+def window_years(removal_year, years_before, years_after, first_year, last_year,
+                 nearest_if_outside=False):
+    """Years of one removal's window that the source covers. With
+    nearest_if_outside, a year outside the source's range is replaced by the
+    nearest covered year, so a window wholly before 1985 still gets NLCD
+    1985 (land cover changes slowly; analysis rows flag the year used)."""
+    years = range(removal_year - years_before, removal_year + years_after + 1)
+    if nearest_if_outside:
+        years = [min(max(y, first_year), last_year) for y in years]
+    return {y for y in years if first_year <= y <= last_year}
+
+
+def needed_years(db_path, years_before, years_after, first_year=FIRST_YEAR, last_year=LAST_YEAR,
+                 nearest_if_outside=False):
     """Years in some eligible pair's window that the source covers
     (NLCD by default)."""
     with duckdb.connect(str(db_path), read_only=True) as con:
@@ -77,12 +90,11 @@ def needed_years(db_path, years_before, years_after, first_year=FIRST_YEAR, last
                 "SELECT DISTINCT removal_year FROM eligibility_pairs WHERE has_both"
             ).fetchall()
         ]
-    years = {
-        year
-        for removal in removal_years
-        for year in range(removal - years_before, removal + years_after + 1)
-    }
-    return sorted(y for y in years if first_year <= y <= last_year)
+    years = set()
+    for removal in removal_years:
+        years |= window_years(removal, years_before, years_after, first_year, last_year,
+                              nearest_if_outside)
+    return sorted(years)
 
 
 def needed_packages(db_path, gdb_paths):
@@ -232,7 +244,8 @@ def main():
 
     wq_window = cfg.get("wq_window", {}) or {}
     years = needed_years(
-        db_path, int(wq_window.get("years_before", 3)), int(wq_window.get("years_after", 3))
+        db_path, int(wq_window.get("years_before", 3)), int(wq_window.get("years_after", 3)),
+        nearest_if_outside=True,
     )
 
     nhd_dir = cfg.project_root / "data" / "processed" / "nhdplus_extracted"

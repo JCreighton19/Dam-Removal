@@ -64,6 +64,7 @@ The stages, in order:
 14. `load_land_cover`: land-cover percentages per station and year
 15. `download_climate`: monthly PRISM precipitation and temperature for the needed years, clipped per NHDPlus package
 16. `load_climate`: monthly climate per station, area-weighted over its upstream area
+17. `build_analysis_dataset`: the modeling table `analysis_measurement`, one row per pre/post measurement of each eligible dam-station pair with dam, watershed, climate and baseline land-cover columns (design choices in the spec, 3.11)
 
 ## Warehouse
 
@@ -77,6 +78,7 @@ Curated tables are written as Parquet (GeoParquet for geometry) to `data/warehou
 | `station_catchment` | `build_station_watershed.py` |
 | `land_cover`, `land_cover_codes` | `load_land_cover.py` |
 | `climate` | `load_climate.py` |
+| `analysis_measurement` | `build_analysis_dataset.py` |
 
 `build_views.py` writes `data/warehouse/<case_study>/warehouse.duckdb`, which holds views only (no data). Open it with `duckdb.connect(path, read_only=True)` and query e.g. `eligibility_summary`. Eligibility thresholds come from the config's optional `eligibility: {min_samples: 3, min_years: 2}` block.
 

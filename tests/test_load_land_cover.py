@@ -75,7 +75,7 @@ def _build_project(root):
         gpd.GeoDataFrame({"nhdplusid": [float(cid)], "areasqkm": [1.0]},
                          geometry=[geom], crs="EPSG:4269").to_file(
             gdb_dir / f"{_package(huc8)}.gdb", layer="NHDPlusCatchment", driver="OpenFileGDB")
-        for year in (2010, 2011):
+        for year in (1985, 2010, 2011):
             _write_clip(root / "data" / "raw" / "nlcd" / "annual_c1v2" / _package(huc8)
                         / f"LndCov_{year}.tif", year, huc8)
 
@@ -83,9 +83,10 @@ def _build_project(root):
             for cid, g in CATCHMENTS.values()}
     out = root / "data" / "warehouse" / "pilot_test"
     out.mkdir(parents=True)
-    pd.DataFrame({"station_id": ["S1", "S2"], "area_km2": [area[1] + area[2], area[2]]}) \
+    pd.DataFrame({"station_id": ["S1", "S2", "S3"],
+                  "area_km2": [area[1] + area[2], area[2], area[1]]}) \
         .to_parquet(out / "station_watershed.parquet")
-    # S3's window is before NLCD starts (1985), so it gets no rows.
+    # S3's window is before NLCD starts, so it gets the nearest year, 1985.
     members = pd.DataFrame({"station_id": ["S1", "S1", "S2", "S3"], "catchment_id": [1, 2, 2, 1]})
     pairs = pd.DataFrame({"station_id": ["S1", "S2", "S3"], "removal_year": [2010, 2010, 1970],
                           "has_both": [True, True, True]})
@@ -116,9 +117,9 @@ def test_land_cover_percentages():
         _run(root)
         table = pd.read_parquet(out / "land_cover.parquet")
 
-        # One row per station x year x class.
-        assert len(table) == 2 * 2 * 16
-        assert "S3" not in set(table["station_id"])
+        # One row per station x year x class; S3 only has 1985.
+        assert len(table) == 2 * 2 * 16 + 16
+        assert set(table.loc[table["station_id"] == "S3", "year"]) == {1985}
 
         # S2 only drains catchment 2: all crops, then all developed.
         assert _percent(table, "S2", 2010)[82] == 100
@@ -135,7 +136,7 @@ def test_land_cover_percentages():
         s1_2011 = table[(table["station_id"] == "S1") & (table["year"] == 2011)]
         assert abs(s1_2011["percent_area"].sum() - 100) < 1e-9
         assert 0.6 < s1_2011["valid_fraction"].iloc[0] < 0.9
-        valid = table[(table["station_id"] == "S2")]["valid_fraction"]
+        valid = table[table["station_id"] != "S1"]["valid_fraction"]
         assert (valid > 0.9).all()
 
         codes = pd.read_parquet(out / "land_cover_codes.parquet")
