@@ -26,12 +26,18 @@ def read_hucs(path):
     return list(dict.fromkeys(hucs))
 
 
+# Stop after this many failed HUC8s in a row (WQP rate limiting).
+MAX_CONSECUTIVE_FAILURES = 10
+
+
 def make_session():
     session = requests.Session()
 
+    # WQP answers 429 (too many requests) when busy; back off longer, as in
+    # download_wqp_results.py.
     retries = Retry(
-        total=4,
-        backoff_factor=2,
+        total=8,
+        backoff_factor=5,
         status_forcelist=[429, 500, 502, 503, 504],
         allowed_methods=["GET"],
         respect_retry_after_header=True,
@@ -144,6 +150,7 @@ def main():
 
     session = make_session()
     manifest = []
+    consecutive_failures = 0
 
     for i, huc in enumerate(hucs, start=1):
         print(
@@ -159,6 +166,7 @@ def main():
                 "path": path,
                 "error": "",
             })
+            consecutive_failures = 0
 
         except Exception as exc:
             print(f"FAILED {huc}: {exc}", flush=True)
@@ -168,6 +176,12 @@ def main():
                 "path": "",
                 "error": str(exc),
             })
+            consecutive_failures += 1
+            # Once WQP rate-limits, later requests fail too: stop and let a
+            # re-run (or the next attempt) pick up; finished HUC8s are skipped.
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                print(f"Stopping after {consecutive_failures} failures in a row.", flush=True)
+                break
 
         time.sleep(1)
 
@@ -178,6 +192,13 @@ def main():
         pd.DataFrame(manifest)["status"].value_counts().to_dict(),
         flush=True,
     )
+
+    failed = [row["huc8"] for row in manifest if row["status"] == "failed"]
+    not_attempted = len(hucs) - len(manifest)
+    if failed or not_attempted:
+        print(f"Failed: {len(failed)}; not attempted: {not_attempted}. "
+              "Re-run to retry them (downloaded HUC8s are skipped).", flush=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
