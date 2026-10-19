@@ -66,6 +66,27 @@ attempts_for() {
     esac
 }
 
+# sbatch sometimes fails with "Unexpected message received" even though the
+# job WAS queued. Each submission carries a unique --comment; on an error,
+# the queue is checked for it before retrying, so nothing is submitted twice.
+submit() {
+    local tag="run_pipeline_$$_$1_$2" attempt id
+    shift 2
+    for attempt in 1 2 3 4 5; do
+        if id=$(sbatch --parsable --comment="$tag" "$@" 2>/dev/null); then
+            echo "${id%%;*}"; return 0
+        fi
+        sleep 10
+        id=$(squeue -u "$USER" -h -o "%i %k" | awk -v t="$tag" '$2 == t {print $1; exit}')
+        if [[ -n "$id" ]]; then
+            echo "$id"; return 0
+        fi
+        echo "  (sbatch failed for $tag; retrying)" >&2
+    done
+    echo "sbatch kept failing for $tag; stopping. Jobs above are queued." >&2
+    return 1
+}
+
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
@@ -133,7 +154,7 @@ for stage in "${to_submit[@]}"; do
             dependency=(--dependency="$(IFS=,; echo "${deps[*]}")" --kill-on-invalid-dep=yes)
         fi
         # ${arr[@]+...} keeps an empty array safe under `set -u` on older bash.
-        attempt_job=$(sbatch --parsable ${dependency[@]+"${dependency[@]}"} "data/slurm/${stage}.slurm")
+        attempt_job=$(submit "$stage" "$attempt" ${dependency[@]+"${dependency[@]}"} "data/slurm/${stage}.slurm")
         jobs+=("$attempt_job")
     done
     previous="$attempt_job"
