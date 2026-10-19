@@ -2,7 +2,7 @@
 #SBATCH --job-name=load_land_cover
 #SBATCH --output=data/slurm/logs/load_land_cover_%j.out
 #SBATCH --error=data/slurm/logs/load_land_cover_%j.err
-#SBATCH --time=06:00:00
+#SBATCH --time=08:00:00
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=1
 

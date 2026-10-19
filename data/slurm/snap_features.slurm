@@ -2,7 +2,7 @@
 #SBATCH --job-name=snap_features
 #SBATCH --output=data/slurm/logs/snap_%j.out
 #SBATCH --error=data/slurm/logs/snap_%j.err
-#SBATCH --time=06:00:00
+#SBATCH --time=08:00:00
 #SBATCH --mem=8G
 #SBATCH --cpus-per-task=2
 

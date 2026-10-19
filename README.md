@@ -44,15 +44,22 @@ To run stages 3–11 as one chain of Slurm jobs (each waits for the previous one
 ```bash
 bash data/slurm/run_pipeline.sh                      # every stage
 bash data/slurm/run_pipeline.sh --from snap_features # resume from a stage
+bash data/slurm/run_pipeline.sh --to select_candidate_stations   # stop after a stage
 ```
+
+The case study is set in `data/slurm/case_study.env`: `PILOT_N_DAMS=all` runs every dam removal (`all_removals`); a number runs a random sample (`pilot_random<n>_seed<seed>`).
+
+**8-hour job limit.** Stages that resume where they stopped (downloads, unzipping, and the per-HUC8 snap/link stages) are submitted as several attempts; each extra attempt picks up after a time-out and finishes in minutes if there's nothing left (`--list` shows the counts). HUC8s with no NHDPlus HR coverage are skipped with a warning and left out of later stages.
+
+**Storage.** Intermediate data is deleted once used: NHDPlus zips after unzipping, all but the 4 NHDPlus layers the pipeline reads (`unzip_nhdplus` keeps a slim GeoPackage per package), all WBD layers but HUC8 (`slim_wbd.py`, run by `unzip_huc8`), and the NLCD/PRISM clips after `load_land_cover`/`load_climate` (`--keep-clips` keeps them). NLCD/PRISM clips cover only the catchments the stations need.
 
 The stages, in order:
 
 1. `download_huc8` → `unzip_huc8`: WBD boundaries
 2. `sample_random_pilot` (optional): generate a config from a random sample of dams
 3. `download_wqp_stations` → `select_candidate_stations`: WQP stations in the case-study HUC8s
-4. `download_streams` → `unzip_nhdplus`: NHDPlus HR geodatabases
-5. `build_stream_network`: network diagnostics
+4. `download_streams` → `unzip_nhdplus`: NHDPlus HR packages, kept as slim GeoPackages (4 layers)
+5. `build_stream_network`: network diagnostics (not in the chain; run separately if needed)
 6. `snap_features`: snap dams and stations to the nearest flowline
 7. `link_dams`: classify each station as upstream, downstream or unconnected relative to each dam
 8. `download_wqp_results`: measurements within each dam's analysis window

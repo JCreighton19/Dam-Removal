@@ -136,6 +136,9 @@ def test_monthly_area_weighted_means():
         with duckdb.connect(str(out / "warehouse.duckdb"), read_only=True) as con:
             assert con.sql("SELECT count(*) FROM climate").fetchone()[0] == len(table)
 
+        # The clips were an intermediate: deleted after the successful run.
+        assert not list((root / "data" / "raw" / "prism").rglob("*.tif"))
+
 
 def test_missing_clip_is_an_error():
     with tempfile.TemporaryDirectory() as tmp:

@@ -12,6 +12,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from etl.common.config import default_case_study, load_config
+from etl.unzip_nhdplus import process_zip
 
 
 # --------------------------------------------------
@@ -20,6 +21,8 @@ from etl.common.config import default_case_study, load_config
 
 ROOT = Path("/courses/DS5500.202710/teams/team4")
 OUTPUT_DIR = ROOT / "data/raw/nhdplus"
+# Where unzip_nhdplus.py keeps each package after deleting its zip.
+EXTRACTED_DIR = ROOT / "data/processed/nhdplus_extracted"
 MANIFEST_FILE = OUTPUT_DIR / "download_manifest.csv"
 BUCKET_URL = "https://prd-tnm.s3.amazonaws.com/"
 PREFIX = "StagedProducts/Hydrography/NHDPlusHR/VPU/Current/GDB/"
@@ -280,6 +283,16 @@ def download_package(session, item):
     destination = OUTPUT_DIR / item["filename"]
     partial = OUTPUT_DIR / (item["filename"] + ".part")
 
+    package = item["filename"].removesuffix(".zip")
+    extracted = [EXTRACTED_DIR / package / f"{package}{ext}" for ext in (".gpkg", ".gdb")]
+    if any(path.exists() for path in extracted):
+        print(f"Already extracted; skipping {item['filename']}", flush=True)
+        return {
+            **item,
+            "status": "skipped_existing",
+            "message": "Already extracted (zip deleted after unzipping)",
+        }
+
     if destination.exists() and zipfile.is_zipfile(destination):
         print(f"Already valid; skipping {item['filename']}", flush=True)
         return {
@@ -429,6 +442,16 @@ def main():
 
         for item in selected:
             result = download_package(session, item)
+            # Slim each package and delete its zip right away, so the zips
+            # never pile up on disk (unzip_nhdplus.py does the same for any
+            # zip left over).
+            zip_path = OUTPUT_DIR / item["filename"]
+            if result["status"] == "downloaded" or zip_path.exists():
+                try:
+                    print(f"  {process_zip(zip_path, EXTRACTED_DIR)}", flush=True)
+                except Exception as exc:
+                    result = {**result, "status": "failed", "message": f"unzip: {exc}"}
+                    print(f"FAILED unzipping {item['filename']}: {exc}", file=sys.stderr, flush=True)
             rows.append(result)
             write_manifest(rows)
 

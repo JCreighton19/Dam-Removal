@@ -2,7 +2,7 @@
 #SBATCH --job-name=select_candidates
 #SBATCH --output=data/slurm/logs/select_candidates_%j.out
 #SBATCH --error=data/slurm/logs/select_candidates_%j.err
-#SBATCH --time=00:30:00
+#SBATCH --time=01:00:00
 #SBATCH --mem=4G
 #SBATCH --cpus-per-task=1
 

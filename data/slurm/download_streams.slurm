@@ -2,8 +2,8 @@
 #SBATCH --job-name=download_nhdplus
 #SBATCH --output=data/slurm/logs/nhdplus_%j.out
 #SBATCH --error=data/slurm/logs/nhdplus_%j.err
-#SBATCH --time=06:00:00
-#SBATCH --mem=8G
+#SBATCH --time=08:00:00
+#SBATCH --mem=32G
 #SBATCH --cpus-per-task=2
 
 set -e

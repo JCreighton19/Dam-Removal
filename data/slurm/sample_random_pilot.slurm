@@ -2,8 +2,8 @@
 #SBATCH --job-name=sample_random_pilot
 #SBATCH --output=data/slurm/logs/sample_random_pilot_%j.out
 #SBATCH --error=data/slurm/logs/sample_random_pilot_%j.err
-#SBATCH --time=00:15:00
-#SBATCH --mem=4G
+#SBATCH --time=01:00:00
+#SBATCH --mem=16G
 #SBATCH --cpus-per-task=1
 
 set -e
@@ -21,6 +21,7 @@ echo "Start time: $(date)"
 
 # Sample size and seed come from case_study.env (PILOT_N_DAMS, PILOT_SEED).
 # run_pipeline.sh submits this job automatically when the config is missing.
-python -u etl/sample_random_pilot.py --n-dams "$PILOT_N_DAMS" --seed "$PILOT_SEED"
+python -u etl/sample_random_pilot.py --n-dams "$PILOT_N_DAMS" --seed "$PILOT_SEED" \
+    --name "$DAM_REMOVAL_CASE_STUDY"
 
 echo "Finished: $(date)"

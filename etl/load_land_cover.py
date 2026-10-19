@@ -25,6 +25,9 @@ For each NHDPlus package (all years of a package share one 30 m grid):
 Counts from different packages are summed, so a station whose upstream
 area spans packages is handled.
 
+After a successful write the clips are deleted (they're only an
+intermediate; --keep-clips keeps them).
+
 Rows: one per station x year x class (all 16 classes, zeros included),
 for the years inside some eligible pair's window for that station. Window
 years outside NLCD (1985-2025) are replaced by the nearest NLCD year, so a
@@ -34,6 +37,7 @@ years outside NLCD (1985-2025) are replaced by the nearest NLCD year, so a
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -238,6 +242,17 @@ def build_land_cover(totals, station_ids, station_years, station_area, nodata):
     return table[list(SCHEMA)].astype(SCHEMA)
 
 
+def delete_clip_folders(folders):
+    """Delete per-package clip folders once their data is in the warehouse.
+    Returns the GB freed."""
+    freed = 0
+    for folder in folders:
+        if folder.exists():
+            freed += sum(f.stat().st_size for f in folder.rglob("*") if f.is_file())
+            shutil.rmtree(folder)
+    return freed / 1e9
+
+
 def land_cover_codes():
     return pd.DataFrame(
         [(code, label, group) for code, (label, group) in sorted(LAND_COVER_CODES.items())],
@@ -279,6 +294,12 @@ def main():
         "--case-study",
         default=default_case_study(),
         help="Name of a config file under config/ (without the .yaml extension).",
+    )
+    parser.add_argument(
+        "--keep-clips",
+        action="store_true",
+        help="Keep the downloaded clips after a successful run (by default "
+        "they're deleted to save space; re-running needs a re-download).",
     )
     args = parser.parse_args()
 
@@ -330,6 +351,10 @@ def main():
 
     low = table.groupby(["station_id", "year"])["valid_fraction"].first()
     print(f"Station-years with valid_fraction < 0.9: {int((low < 0.9).sum()):,} of {len(low):,}")
+
+    if not args.keep_clips:
+        freed = delete_clip_folders([nlcd_dir / gdb.stem for gdb in packages])
+        print(f"Deleted the NLCD clips used ({freed:.1f} GB); --keep-clips keeps them")
 
 
 if __name__ == "__main__":

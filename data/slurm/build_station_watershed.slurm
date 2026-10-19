@@ -2,8 +2,8 @@
 #SBATCH --job-name=build_station_watershed
 #SBATCH --output=data/slurm/logs/build_station_watershed_%j.out
 #SBATCH --error=data/slurm/logs/build_station_watershed_%j.err
-#SBATCH --time=04:00:00
-#SBATCH --mem=32G
+#SBATCH --time=08:00:00
+#SBATCH --mem=64G
 #SBATCH --cpus-per-task=1
 
 set -euo pipefail

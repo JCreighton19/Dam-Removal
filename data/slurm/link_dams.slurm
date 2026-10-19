@@ -2,7 +2,7 @@
 #SBATCH --job-name=link_dams
 #SBATCH --output=data/slurm/logs/link_dams_%j.out
 #SBATCH --error=data/slurm/logs/link_dams_%j.err
-#SBATCH --time=06:00:00
+#SBATCH --time=08:00:00
 #SBATCH --mem=8G
 #SBATCH --cpus-per-task=2
 

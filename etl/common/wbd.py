@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import geopandas as gpd
 import pandas as pd
+import pyogrio
 
 from .io import find_column, require_file
 
@@ -20,34 +21,37 @@ def find_hu8_layer(wbd_path):
     return layer_name
 
 
-def load_huc8_watershed(wbd_path, huc8):
-    """Load a single HUC8 watershed polygon from the national WBD GeoPackage."""
+def load_huc8_watersheds(wbd_path, huc8s):
+    """Load several HUC8 watershed polygons as one GeoDataFrame (not dissolved).
+
+    Reads only the requested rows (an SQL filter), not the whole national
+    layer, so it stays fast for hundreds of HUC8s.
+    """
     wbd_path = require_file(wbd_path, "WBD GeoPackage")
     layer_name = find_hu8_layer(wbd_path)
-    wbd = gpd.read_file(wbd_path, layer=layer_name)
-    huc_col = find_column(wbd.columns, "HUC8")
+    fields = [str(f) for f in pyogrio.read_info(wbd_path, layer=layer_name)["fields"]]
+    huc_col = find_column(fields, "HUC8")
 
     if huc_col is None:
         raise ValueError(
-            f"No HUC8 column found in layer '{layer_name}'. "
-            f"Available columns: {wbd.columns.tolist()}"
+            f"No HUC8 column found in layer '{layer_name}'. Available columns: {fields}"
         )
 
-    watershed = wbd[
-        wbd[huc_col].astype(str).str.zfill(8) == str(huc8).zfill(8)
-    ].copy()
+    codes = sorted({str(h).zfill(8) for h in huc8s})
+    in_list = ", ".join(f"'{code}'" for code in codes)
+    wbd = gpd.read_file(wbd_path, layer=layer_name, where=f'"{huc_col}" IN ({in_list})')
+    wbd = wbd[wbd[huc_col].astype(str).str.zfill(8).isin(codes)]
 
-    if watershed.empty:
-        raise ValueError(f"HUC8 {huc8} was not found in {wbd_path}.")
+    missing = sorted(set(codes) - set(wbd[huc_col].astype(str).str.zfill(8)))
+    if missing:
+        raise ValueError(f"HUC8(s) {missing} not found in {wbd_path}.")
 
-    return watershed.to_crs("EPSG:4326")
+    return wbd.to_crs("EPSG:4326").reset_index(drop=True)
 
 
-def load_huc8_watersheds(wbd_path, huc8s):
-    """Load several HUC8 watershed polygons as one GeoDataFrame (not dissolved)."""
-    frames = [load_huc8_watershed(wbd_path, huc8) for huc8 in huc8s]
-    combined = pd.concat(frames, ignore_index=True)
-    return gpd.GeoDataFrame(combined, crs=frames[0].crs)
+def load_huc8_watershed(wbd_path, huc8):
+    """Load a single HUC8 watershed polygon from the national WBD GeoPackage."""
+    return load_huc8_watersheds(wbd_path, [huc8])
 
 
 def clip_to_watersheds(points, watersheds):

@@ -14,11 +14,12 @@ NLCD has.
 
 Which areas
 -----------
-Every case-study NHDPlus package (HU8 or HU4 geodatabase) holding at least
-one catchment in station_catchment.parquet (build_station_watershed.py).
-Each year's raster is clipped to that package's catchment extent, on the
-original NLCD 30 m grid (no reprojection), so every year lines up pixel
-for pixel.
+Every case-study NHDPlus package (HU8 or HU4) holding at least one
+catchment in station_catchment.parquet (build_station_watershed.py).
+Each year's raster is clipped to the extent of those catchments (not the
+whole package), on the original NLCD 30 m grid (no reprojection), so
+every year lines up pixel for pixel. load_land_cover.py deletes the clips
+once it has used them.
 
 Per year: download the zip, extract the GeoTIFF, write one small clip per
 package, then delete the zip and the full GeoTIFF. Clips are written to
@@ -41,6 +42,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import duckdb
+import pandas as pd
 import pyogrio
 import rasterio
 import requests
@@ -99,7 +101,8 @@ def needed_years(db_path, years_before, years_after, first_year=FIRST_YEAR, last
 
 def needed_packages(db_path, gdb_paths):
     """Packages holding at least one catchment upstream of an eligible
-    station, with their catchment-layer extent and CRS."""
+    station, with the extent of those catchments (not the whole package,
+    which can be far bigger) and their CRS."""
     with duckdb.connect(str(db_path), read_only=True) as con:
         catchment_ids = {
             int(c) for (c,) in con.sql(
@@ -113,12 +116,16 @@ def needed_packages(db_path, gdb_paths):
                   pyogrio.read_info(gdb_path, layer="NHDPlusCatchment")["fields"]}
         ids = pyogrio.read_dataframe(
             gdb_path, layer="NHDPlusCatchment", columns=[fields["nhdplusid"]],
-            read_geometry=False,
+            read_geometry=False, fid_as_index=True,
         ).iloc[:, 0]
-        if catchment_ids.isdisjoint(int(i) for i in ids.dropna()):
+        ids = pd.to_numeric(ids, errors="coerce")
+        needed = ids[ids.isin(catchment_ids)]
+        if needed.empty:
             continue
-        info = pyogrio.read_info(gdb_path, layer="NHDPlusCatchment", force_total_bounds=True)
-        packages[gdb_path.stem] = {"bounds": info["total_bounds"], "crs": info["crs"]}
+        shapes = pyogrio.read_dataframe(gdb_path, layer="NHDPlusCatchment",
+                                        fids=needed.index.tolist(), columns=[])
+        info = pyogrio.read_info(gdb_path, layer="NHDPlusCatchment")
+        packages[gdb_path.stem] = {"bounds": tuple(shapes.total_bounds), "crs": info["crs"]}
     return packages
 
 

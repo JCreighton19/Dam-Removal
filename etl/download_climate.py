@@ -23,12 +23,13 @@ months are all final (PRISM revises a month for 6 months).
 Which areas
 -----------
 Every case-study NHDPlus package holding a catchment in station_catchment,
-as for land cover. Clips stay on the PRISM grid and are written to
+clipped to the extent of those catchments, as for land cover. Clips stay
+on the PRISM grid and are written to
 
     data/raw/prism/<variable>/<package>/<variable>_<yyyymm>.tif
 
 and shared across case studies. A re-run skips months whose clips all
-exist.
+exist. load_climate.py deletes the clips once it has used them.
 """
 
 from __future__ import annotations

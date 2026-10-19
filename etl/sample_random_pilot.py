@@ -1,7 +1,8 @@
 """
 Create a new case-study config scoped to N randomly sampled dam removals.
 
-Samples N dams (default 5) from the dam-removal source CSV, resolves each
+Samples N dams (default 5; "all" for every dam, named all_removals) from
+the dam-removal source CSV, resolves each
 to its containing HUC8 watershed via the national WBD, and writes a new
 config/<name>.yaml with those HUC8s as the scope -- reusing the exact same
 huc8s-based scoping mechanism every other script already reads. Nothing
@@ -84,37 +85,50 @@ def main():
         help="Existing config to copy dam_source/wbd_source/station_types/"
         "wq_window/wq_characteristics from.",
     )
-    parser.add_argument("--n-dams", type=int, default=5)
+    parser.add_argument(
+        "--n-dams",
+        default="5",
+        help="Number of dams to sample, or 'all' for every dam with valid coordinates.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--name",
         default=None,
-        help="Output case-study name; defaults to pilot_random<n>_seed<seed>.",
+        help="Output case-study name; defaults to pilot_random<n>_seed<seed> "
+        "(all_removals with --n-dams all).",
     )
     args = parser.parse_args()
 
     base_cfg = load_config(args.base_case_study)
-    case_study_name = args.name or f"pilot_random{args.n_dams}_seed{args.seed}"
+    take_all = str(args.n_dams).lower() == "all"
+    default_name = "all_removals" if take_all else f"pilot_random{args.n_dams}_seed{args.seed}"
+    case_study_name = args.name or default_name
 
     print(f"Loading dams from: {base_cfg.path('dam_source')}")
     dams = load_dams(base_cfg.path("dam_source"))
     print(f"Dams with valid coordinates: {len(dams):,}")
 
-    sampled = sample_dams(dams, args.n_dams, args.seed)
-    print(f"Sampled {len(sampled)} dams (seed={args.seed})")
+    n_dams = len(dams) if take_all else int(args.n_dams)
+    sampled = sample_dams(dams, n_dams, args.seed)
+    print(f"Sampled {len(sampled)} dams" + ("" if take_all else f" (seed={args.seed})"))
 
     resolved = resolve_huc8_for_points(sampled, base_cfg.path("wbd_source"))
 
     unresolved = resolved[resolved["resolved_huc8"].isna()]
     if not unresolved.empty:
-        raise ValueError(
+        message = (
             f"{len(unresolved)} sampled dam(s) could not be resolved to a "
             f"HUC8 watershed (outside WBD coverage?): "
-            f"{unresolved['AR_ID'].tolist()}"
+            f"{unresolved['AR_ID'].tolist()[:20]}"
         )
+        if not take_all:
+            raise ValueError(message)
+        # With every dam, a few offshore/foreign points are expected.
+        print(f"Skipping {message}")
+        resolved = resolved[resolved["resolved_huc8"].notna()]
 
     config_dict = build_config_dict(
-        case_study_name, base_cfg, resolved, args.seed, args.n_dams, args.base_case_study
+        case_study_name, base_cfg, resolved, args.seed, n_dams, args.base_case_study
     )
 
     output_path = base_cfg.project_root / "config" / f"{case_study_name}.yaml"

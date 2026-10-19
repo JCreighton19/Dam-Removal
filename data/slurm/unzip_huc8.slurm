@@ -27,5 +27,13 @@ ls -lh WBD_National_GPKG.gpkg
 echo "Output file size:"
 du -h WBD_National_GPKG.gpkg
 
+# Keep only the HUC8 layer (the only one the pipeline reads) and delete
+# the zip, to save space.
+cd "$PROJECT_DIR"
+module load anaconda3/2024.06
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate dam-removal
+python -u etl/slim_wbd.py
+
 echo "Finished."
 echo "Date: $(date)"

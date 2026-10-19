@@ -7,14 +7,26 @@
 # Run on the login node, from anywhere:
 #     bash data/slurm/run_pipeline.sh                    # every stage
 #     bash data/slurm/run_pipeline.sh --from snap_features
+#     bash data/slurm/run_pipeline.sh --to select_candidate_stations
+#     bash data/slurm/run_pipeline.sh --from snap_features --to link_dams
 #     bash data/slurm/run_pipeline.sh --list             # show stages
 #
 # The case study comes from case_study.env. If its config doesn't exist yet
-# and it's a random sample (PILOT_N_DAMS / PILOT_SEED), sample_random_pilot
-# is submitted first to generate it.
+# and it's a sample (PILOT_N_DAMS / PILOT_SEED, or PILOT_N_DAMS=all),
+# sample_random_pilot is submitted first to generate it.
+#
+# 8-hour job limit: stages that resume where they stopped (skipping
+# finished files or HUC8s) are submitted as several attempts (ATTEMPTS
+# below). Each extra attempt starts when the previous one ends, even if it
+# hit the time limit, and finishes in minutes once everything is done. The
+# next stage waits for the last attempt to succeed. A stage's HUC8 progress
+# markers (data/processed/_progress/<case_study>/<stage>) are cleared when
+# the stage is submitted, so a new submission recomputes it.
 #
 # Not included (run separately):
 #   create_env, download_huc8, unzip_huc8   one-time setup
+#   build_stream_network                    diagnostics only; nothing reads
+#                                           its output
 #   report_pilot_eligibility                replaced by build_views; kept until
 #                                           the views are checked against it
 
@@ -25,7 +37,6 @@ STAGES=(
     select_candidate_stations
     download_streams
     unzip_nhdplus
-    build_stream_network
     snap_features
     link_dams
     download_wqp_results
@@ -40,31 +51,58 @@ STAGES=(
     build_analysis_dataset
 )
 
+# Attempts per stage (1 if not listed). Only for stages that resume.
+attempts_for() {
+    case "$1" in
+        download_wqp_stations) echo 2 ;;
+        download_streams)      echo 3 ;;
+        unzip_nhdplus)         echo 3 ;;
+        snap_features)         echo 3 ;;
+        link_dams)             echo 3 ;;
+        download_wqp_results)  echo 8 ;;
+        download_nlcd)         echo 4 ;;
+        download_climate)      echo 5 ;;
+        *)                     echo 1 ;;
+    esac
+}
+
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 from_stage="${STAGES[0]}"
-case "${1:-}" in
-    --list) printf '%s\n' "${STAGES[@]}"; exit 0 ;;
-    --from) from_stage="${2:?--from needs a stage name (see --list)}" ;;
-    "") ;;
-    *) echo "Unknown argument: $1 (use --from <stage> or --list)"; exit 1 ;;
-esac
-
-start=-1
-for i in "${!STAGES[@]}"; do
-    [[ "${STAGES[$i]}" == "$from_stage" ]] && start=$i
+to_stage="${STAGES[${#STAGES[@]}-1]}"
+while (( $# )); do
+    case "$1" in
+        --list)
+            for stage in "${STAGES[@]}"; do
+                printf '%-28s attempts: %s\n' "$stage" "$(attempts_for "$stage")"
+            done
+            exit 0 ;;
+        --from) from_stage="${2:?--from needs a stage name (see --list)}"; shift 2 ;;
+        --to)   to_stage="${2:?--to needs a stage name (see --list)}"; shift 2 ;;
+        *) echo "Unknown argument: $1 (use --from <stage>, --to <stage> or --list)"; exit 1 ;;
+    esac
 done
-if (( start < 0 )); then
-    echo "Unknown stage '$from_stage'. Stages:"; printf '  %s\n' "${STAGES[@]}"; exit 1
+
+stage_index() {
+    local i
+    for i in "${!STAGES[@]}"; do
+        [[ "${STAGES[$i]}" == "$1" ]] && { echo "$i"; return; }
+    done
+    echo "Unknown stage '$1'. Stages:" >&2; printf '  %s\n' "${STAGES[@]}" >&2; exit 1
+}
+start=$(stage_index "$from_stage")
+end=$(stage_index "$to_stage")
+if (( end < start )); then
+    echo "--to $to_stage comes before --from $from_stage"; exit 1
 fi
 
 source data/slurm/case_study.env
-to_submit=("${STAGES[@]:$start}")
+to_submit=("${STAGES[@]:$start:$((end - start + 1))}")
 
 if [[ ! -f "config/${DAM_REMOVAL_CASE_STUDY}.yaml" ]]; then
-    if [[ -n "${PILOT_N_DAMS:-}" && -n "${PILOT_SEED:-}" \
-          && "$DAM_REMOVAL_CASE_STUDY" == "pilot_random${PILOT_N_DAMS}_seed${PILOT_SEED}" ]]; then
+    if [[ "$PILOT_N_DAMS" == "all" && "$DAM_REMOVAL_CASE_STUDY" == "all_removals" ]] \
+       || [[ "$DAM_REMOVAL_CASE_STUDY" == "pilot_random${PILOT_N_DAMS}_seed${PILOT_SEED}" ]]; then
         echo "config/${DAM_REMOVAL_CASE_STUDY}.yaml not found; it will be generated first."
         to_submit=(sample_random_pilot "${to_submit[@]}")
     else
@@ -76,15 +114,30 @@ fi
 mkdir -p data/slurm/logs
 echo "Started:    $(date)"
 echo "Case study: $DAM_REMOVAL_CASE_STUDY"
-echo "Submitting from: $from_stage"
+echo "Submitting: $from_stage -> $to_stage"
 
-previous=""
+previous=""   # last job of the previous stage
 for stage in "${to_submit[@]}"; do
-    dependency=()
-    [[ -n "$previous" ]] && dependency=(--dependency="afterok:$previous" --kill-on-invalid-dep=yes)
-    # ${arr[@]+...} keeps an empty array safe under `set -u` on older bash.
-    previous=$(sbatch --parsable ${dependency[@]+"${dependency[@]}"} "data/slurm/${stage}.slurm")
-    printf '  %-28s job %s\n' "$stage" "$previous"
+    rm -rf "data/processed/_progress/${DAM_REMOVAL_CASE_STUDY}/${stage}"
+    n=$(attempts_for "$stage")
+    jobs=()
+    attempt_job=""
+    for (( attempt = 1; attempt <= n; attempt++ )); do
+        # Attempt 1 waits for the previous stage to succeed; later attempts
+        # also wait for the previous attempt to end, however it ended.
+        dependency=()
+        deps=()
+        [[ -n "$previous" ]] && deps+=("afterok:$previous")
+        [[ -n "$attempt_job" ]] && deps+=("afterany:$attempt_job")
+        if (( ${#deps[@]} )); then
+            dependency=(--dependency="$(IFS=,; echo "${deps[*]}")" --kill-on-invalid-dep=yes)
+        fi
+        # ${arr[@]+...} keeps an empty array safe under `set -u` on older bash.
+        attempt_job=$(sbatch --parsable ${dependency[@]+"${dependency[@]}"} "data/slurm/${stage}.slurm")
+        jobs+=("$attempt_job")
+    done
+    previous="$attempt_job"
+    printf '  %-28s job(s) %s\n' "$stage" "${jobs[*]}"
 done
 
 echo

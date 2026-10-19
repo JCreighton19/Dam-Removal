@@ -98,8 +98,8 @@ def _build_project(root):
     return out
 
 
-def _run(root):
-    argv = ["load_land_cover.py", "--case-study", "pilot_test"]
+def _run(root, *extra):
+    argv = ["load_land_cover.py", "--case-study", "pilot_test", *extra]
     with mock.patch.dict(os.environ, {PROJECT_ROOT_ENV_VAR: str(root)}), \
             mock.patch.object(sys, "argv", argv):
         llc.main()
@@ -144,6 +144,18 @@ def test_land_cover_percentages():
 
         with duckdb.connect(str(out / "warehouse.duckdb"), read_only=True) as con:
             assert con.sql("SELECT count(*) FROM land_cover").fetchone()[0] == len(table)
+
+        # The clips were an intermediate: deleted after the successful run.
+        nlcd_dir = root / "data" / "raw" / "nlcd" / "annual_c1v2"
+        assert not list(nlcd_dir.glob("*/*.tif"))
+
+
+def test_keep_clips():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _build_project(root)
+        _run(root, "--keep-clips")
+        assert len(list((root / "data" / "raw" / "nlcd" / "annual_c1v2").glob("*/*.tif"))) == 6
 
 
 def test_missing_clip_is_an_error():

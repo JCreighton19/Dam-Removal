@@ -16,6 +16,7 @@ from etl.common.nhdplus import (
     is_hu4_fallback,
     read_nhdplus_layer,
 )
+from etl.common.progress import HucProgress
 from etl.common.wbd import clip_to_watersheds, load_huc8_watershed
 
 # --------------------------------------------------
@@ -370,10 +371,22 @@ def main():
 
     results = []
 
+    # Finished HUC8s are skipped, so a run stopped by the time limit resumes.
+    progress = HucProgress(cfg, "snap_features")
     for huc8 in huc8_list:
+        if progress.done(huc8):
+            results.append((huc8, "skipped (done earlier in this run)"))
+            continue
         try:
             process_huc8(cfg, huc8, all_stations, all_dams)
+            progress.mark(huc8)
             results.append((huc8, "ok"))
+        except FileNotFoundError as exc:
+            # E.g. no NHDPlus HR package covers this HUC8. At national scale
+            # a few are expected, so the stage carries on without them.
+            print(f"SKIPPED HUC8 {huc8} (missing input): {exc}", file=sys.stderr)
+            progress.skip(huc8, exc)
+            results.append((huc8, f"skipped (missing input): {exc}"))
         except Exception as exc:
             print(f"FAILED HUC8 {huc8}: {exc}", file=sys.stderr)
             results.append((huc8, f"failed: {exc}"))
@@ -383,7 +396,7 @@ def main():
         for huc8, status in results:
             print(f"  {huc8}: {status}")
 
-    if any(status != "ok" for _, status in results):
+    if any(status.startswith("failed") for _, status in results):
         raise RuntimeError("One or more HUC8s failed; see log above.")
 
 

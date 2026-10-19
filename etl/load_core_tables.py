@@ -44,6 +44,7 @@ from etl.common.io import find_column
 from etl.common.links import CONNECTED_RELATIONSHIPS, connected_only, load_links
 from etl.common.network import build_reach_graph
 from etl.common.nhdplus import find_huc8_geodatabase, read_nhdplus_layer
+from etl.common.progress import HucProgress
 from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
 from etl.common.wbd import find_hu8_layer
 
@@ -644,6 +645,15 @@ def main():
 
     cfg = load_config(args.case_study)
     huc8s = [huc8.zfill(8) for huc8 in cfg.huc8s]
+
+    # HUC8s snap_features / link_dams skipped on purpose (e.g. no NHDPlus HR
+    # package) have no outputs; leave them out rather than fail.
+    skipped = set(HucProgress(cfg, "snap_features").skipped()) | set(
+        HucProgress(cfg, "link_dams").skipped())
+    if skipped:
+        print(f"Leaving out {len(skipped)} HUC8(s) skipped by snap_features/link_dams: "
+              f"{sorted(skipped)}")
+        huc8s = [huc8 for huc8 in huc8s if huc8 not in skipped]
 
     print(f"Case study: {cfg.name}")
     print(f"HUC8 scope: {huc8s}")

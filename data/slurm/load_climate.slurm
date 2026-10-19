@@ -2,7 +2,7 @@
 #SBATCH --job-name=load_climate
 #SBATCH --output=data/slurm/logs/load_climate_%j.out
 #SBATCH --error=data/slurm/logs/load_climate_%j.err
-#SBATCH --time=06:00:00
+#SBATCH --time=08:00:00
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=1
 

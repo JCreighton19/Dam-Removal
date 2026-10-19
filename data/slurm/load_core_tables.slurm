@@ -2,7 +2,7 @@
 #SBATCH --job-name=load_core_tables
 #SBATCH --output=data/slurm/logs/load_core_tables_%j.out
 #SBATCH --error=data/slurm/logs/load_core_tables_%j.err
-#SBATCH --time=02:00:00
+#SBATCH --time=04:00:00
 #SBATCH --mem=16G
 #SBATCH --cpus-per-task=2
 

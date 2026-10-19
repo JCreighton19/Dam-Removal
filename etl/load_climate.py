@@ -29,6 +29,9 @@ package:
    values (one sparse matrix product), skipping nodata cells.
 Packages are summed, so an upstream area spanning packages is handled.
 
+After a successful write the clips are deleted (they're only an
+intermediate; --keep-clips keeps them).
+
 Rows: one per station x year x month, for the years inside some eligible
 pair's window for that station (1895 onward).
 """
@@ -57,7 +60,8 @@ from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
 from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
 from etl.download_climate import FIRST_YEAR, VARIABLES, clip_path, last_stable_year
-from etl.load_land_cover import BLOCK_ROWS, PIXEL_KM2, package_catchments, read_inputs
+from etl.load_land_cover import (BLOCK_ROWS, PIXEL_KM2, delete_clip_folders, package_catchments,
+                                 read_inputs)
 
 SOURCE = "prism_an_800m_monthly"
 ALBERS = "EPSG:5070"
@@ -237,6 +241,12 @@ def main():
         default=default_case_study(),
         help="Name of a config file under config/ (without the .yaml extension).",
     )
+    parser.add_argument(
+        "--keep-clips",
+        action="store_true",
+        help="Keep the downloaded clips after a successful run (by default "
+        "they're deleted to save space; re-running needs a re-download).",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
@@ -281,6 +291,11 @@ def main():
     print(f"Station-months with no data: {int(table['temperature_mean_c'].isna().sum()):,}")
     print(f"Station-months with valid_fraction < 0.9: "
           f"{int((table['valid_fraction'] < 0.9).sum()):,} of {len(table):,}")
+
+    if not args.keep_clips:
+        freed = delete_clip_folders(
+            [prism_dir / variable / gdb.stem for variable in VARIABLES for gdb in packages])
+        print(f"Deleted the PRISM clips used ({freed:.1f} GB); --keep-clips keeps them")
 
 
 if __name__ == "__main__":

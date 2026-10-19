@@ -2,7 +2,7 @@
 #SBATCH --job-name=clean_wq_results
 #SBATCH --output=data/slurm/logs/clean_wq_results_%j.out
 #SBATCH --error=data/slurm/logs/clean_wq_results_%j.err
-#SBATCH --time=02:00:00
+#SBATCH --time=04:00:00
 #SBATCH --mem=8G
 #SBATCH --cpus-per-task=2
 

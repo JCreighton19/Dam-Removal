@@ -12,7 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import geopandas as gpd
 from shapely.geometry import box
 
-from etl.common.wbd import resolve_huc8_for_points
+import pyogrio
+
+from etl.common.wbd import load_huc8_watersheds, resolve_huc8_for_points
+from etl.slim_wbd import slim_wbd
 
 
 def _write_wbd(path):
@@ -61,6 +64,32 @@ def test_resolve_huc8_for_points_leaves_unmatched_points_null():
         assert resolved.iloc[0]["resolved_huc8"] is None or (
             resolved.iloc[0]["resolved_huc8"] != resolved.iloc[0]["resolved_huc8"]  # NaN
         )
+
+
+def test_load_huc8_watersheds_reads_only_requested():
+    with tempfile.TemporaryDirectory() as tmp:
+        wbd_path = Path(tmp) / "wbd.gpkg"
+        _write_wbd(wbd_path)
+        loaded = load_huc8_watersheds(wbd_path, ["22222222"])
+        assert loaded["huc8"].tolist() == ["22222222"]
+        try:
+            load_huc8_watersheds(wbd_path, ["33333333"])
+        except ValueError as exc:
+            assert "33333333" in str(exc)
+        else:
+            raise AssertionError("expected a missing-HUC8 error")
+
+
+def test_slim_wbd_keeps_only_hu8():
+    with tempfile.TemporaryDirectory() as tmp:
+        wbd_path = Path(tmp) / "wbd.gpkg"
+        _write_wbd(wbd_path)
+        gpd.GeoDataFrame({"huc12": ["111111110101"]}, geometry=[box(-72, 42, -71.5, 42.5)],
+                         crs="EPSG:4326").to_file(wbd_path, layer="WBDHU12", driver="GPKG")
+        slim_wbd(wbd_path)
+        assert [name for name, _ in pyogrio.list_layers(wbd_path)] == ["WBDHU8"]
+        assert len(load_huc8_watersheds(wbd_path, ["11111111", "22222222"])) == 2
+        assert slim_wbd(wbd_path) == "already slim"
 
 
 if __name__ == "__main__":
