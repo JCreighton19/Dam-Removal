@@ -258,7 +258,9 @@ def process_huc8(root, huc8):
                 "station_snap_fraction": station_fraction,
             })
 
-    links = pd.DataFrame(rows)
+    # Explicit columns so a HUC8 with no dams or no stations still writes a
+    # header-only CSV instead of failing on the empty frame below.
+    links = pd.DataFrame(rows, columns=LINK_COLUMNS)
     output_dir.mkdir(parents=True, exist_ok=True)
     links.to_csv(output_path, index=False)
 
@@ -266,6 +268,15 @@ def process_huc8(root, huc8):
     print(links["relationship"].value_counts(dropna=False).to_string())
     print(f"\nOutput rows: {len(links):,}")
     print(f"Saved: {output_path}")
+
+
+LINK_COLUMNS = [
+    "huc8", "dam_id", "dam_name", "station_id", "dam_reach_id",
+    "year_removed", "river", "station_reach_id", "relationship",
+    "distance_to_dam_km", "network_distance_km", "distance_method",
+    "dam_snap_distance_m", "station_snap_distance_m",
+    "dam_snap_fraction", "station_snap_fraction",
+]
 
 
 def main():
