@@ -59,6 +59,7 @@ from etl.common.config import default_case_study, load_config
 from etl.common.io import require_file
 from etl.common.network import build_reach_graph
 from etl.common.nhdplus import find_huc8_geodatabase, read_nhdplus_layer
+from etl.common.progress import huc8s_with_outputs
 from etl.build_views import add_view
 from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
 
@@ -327,7 +328,7 @@ def main():
     print(f"Eligible stations (has_both for any parameter): {len(stations):,}")
 
     nhd_dir = cfg.project_root / "data" / "processed" / "nhdplus_extracted"
-    gdb_paths = sorted({find_huc8_geodatabase(nhd_dir, huc8.zfill(8)) for huc8 in cfg.huc8s})
+    gdb_paths = sorted({find_huc8_geodatabase(nhd_dir, huc8) for huc8 in huc8s_with_outputs(cfg)})
     reaches, flow, catchments, total_area = read_network(gdb_paths)
 
     table, membership = build_station_watershed(

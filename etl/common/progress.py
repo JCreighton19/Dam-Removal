@@ -33,3 +33,16 @@ class HucProgress:
     def skipped(self):
         folder = self.folder / "skipped"
         return sorted(p.name for p in folder.iterdir()) if folder.exists() else []
+
+
+def huc8s_with_outputs(cfg):
+    """The case study's HUC8s, minus any snap_features / link_dams skipped on
+    purpose (e.g. no NHDPlus HR package): those have no outputs, so later
+    stages leave them out rather than fail."""
+    huc8s = [huc8.zfill(8) for huc8 in cfg.huc8s]
+    skipped = set(HucProgress(cfg, "snap_features").skipped()) | set(
+        HucProgress(cfg, "link_dams").skipped())
+    if skipped:
+        print(f"Leaving out {len(skipped)} HUC8(s) skipped by snap_features/link_dams: "
+              f"{sorted(skipped)}")
+    return [huc8 for huc8 in huc8s if huc8 not in skipped]

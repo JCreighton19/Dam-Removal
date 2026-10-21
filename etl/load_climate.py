@@ -58,6 +58,7 @@ from etl.build_views import add_view
 from etl.common.config import default_case_study, load_config
 from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
+from etl.common.progress import huc8s_with_outputs
 from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
 from etl.download_climate import FIRST_YEAR, VARIABLES, clip_path, last_stable_year
 from etl.load_land_cover import (BLOCK_ROWS, PIXEL_KM2, delete_clip_folders, package_catchments,
@@ -266,7 +267,7 @@ def main():
         .set_index("station_id")["area_km2"]
 
     nhd_dir = cfg.project_root / "data" / "processed" / "nhdplus_extracted"
-    gdb_paths = sorted({find_huc8_geodatabase(nhd_dir, h.zfill(8)) for h in cfg.huc8s})
+    gdb_paths = sorted({find_huc8_geodatabase(nhd_dir, h) for h in huc8s_with_outputs(cfg)})
     packages, not_found = package_catchments(gdb_paths, membership["catchment_id"].unique())
 
     print(f"Case study: {cfg.name}")

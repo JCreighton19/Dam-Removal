@@ -52,6 +52,7 @@ from rasterio.windows import Window, from_bounds
 from etl.common.config import default_case_study, load_config
 from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
+from etl.common.progress import huc8s_with_outputs
 from etl.common.warehouse import warehouse_dir
 
 URL_TEMPLATE = (
@@ -256,7 +257,7 @@ def main():
     )
 
     nhd_dir = cfg.project_root / "data" / "processed" / "nhdplus_extracted"
-    gdb_paths = sorted({find_huc8_geodatabase(nhd_dir, h.zfill(8)) for h in cfg.huc8s})
+    gdb_paths = sorted({find_huc8_geodatabase(nhd_dir, h) for h in huc8s_with_outputs(cfg)})
     packages = needed_packages(db_path, gdb_paths)
 
     nlcd_dir = cfg.project_root / "data" / "raw" / "nlcd" / "annual_c1v2"
