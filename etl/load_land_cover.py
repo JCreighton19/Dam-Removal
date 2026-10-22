@@ -342,6 +342,13 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
+    # A later attempt queued by run_pipeline.sh after this stage already
+    # succeeded has nothing to do (and the clips may already be deleted).
+    done_dir = HucProgress(cfg, "load_land_cover").folder
+    if (done_dir / "complete").exists():
+        print("land_cover already written earlier in this run; nothing to do.")
+        return
+
     output_dir = warehouse_dir(cfg)
     db_path = require_file(output_dir / "warehouse.duckdb",
                            "warehouse.duckdb (run build_views.py first)")
@@ -367,7 +374,6 @@ def main():
           flush=True)
 
     nlcd_dir = cfg.project_root / "data" / "raw" / "nlcd" / "annual_c1v2"
-    done_dir = HucProgress(cfg, "load_land_cover").folder
     totals = station_counts(membership, station_ids, nlcd_dir, packages, station_years,
                             done_dir)
 
@@ -388,6 +394,7 @@ def main():
         write_parquet_atomic(frame, path)
         add_view(db_path, name, path)
         print(f"Wrote {len(frame):,} rows to {path}")
+    (done_dir / "complete").touch()
 
     low = table.groupby(["station_id", "year"])["valid_fraction"].first()
     print(f"Station-years with valid_fraction < 0.9: {int((low < 0.9).sum()):,} of {len(low):,}")
