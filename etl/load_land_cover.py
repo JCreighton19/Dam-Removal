@@ -56,9 +56,10 @@ from etl.build_views import add_view
 from etl.common.config import default_case_study, load_config
 from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
-from etl.common.progress import huc8s_with_outputs
+from etl.common.progress import HucProgress, huc8s_with_outputs
 from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
-from etl.download_land_cover import FIRST_YEAR, LAST_YEAR, clip_path, window_years
+from etl.download_land_cover import (FIRST_YEAR, LAST_YEAR, clip_path, indexed_bounds,
+                                     window_years)
 
 SOURCE = "annual_nlcd_c1v2"
 PIXEL_KM2 = 30 * 30 / 1e6
@@ -151,11 +152,23 @@ def package_catchments(gdb_paths, catchment_ids):
 # Counting
 # --------------------------------------------------
 
+def read_catchments(gdb_path, fids):
+    """Catchment polygons for these FIDs, in the order given. Reads the area
+    they cover in one pass via the spatial index: fetching one FID at a
+    time is a random read each, which took hours per package on the shared
+    filesystem at national scale."""
+    bounds = indexed_bounds(gdb_path, fids)
+    if bounds is None:
+        return pyogrio.read_dataframe(gdb_path, layer="NHDPlusCatchment",
+                                      fids=fids.tolist(), columns=[])
+    polygons = pyogrio.read_dataframe(gdb_path, layer="NHDPlusCatchment", bbox=bounds,
+                                      columns=[], fid_as_index=True)
+    return polygons.loc[fids.to_numpy()].reset_index(drop=True)
+
+
 def burn_catchments(gdb_path, fids, src):
     """Grid of catchment numbers (1..n, 0 = none) on the clip's grid."""
-    polygons = pyogrio.read_dataframe(gdb_path, layer="NHDPlusCatchment",
-                                      fids=fids.tolist(), columns=[])
-    polygons = polygons.to_crs(src.crs)
+    polygons = read_catchments(gdb_path, fids).to_crs(src.crs)
     shapes = zip(polygons.geometry.values, range(1, len(polygons) + 1))
     return rasterize(shapes, out_shape=(src.height, src.width), transform=src.transform,
                      fill=0, dtype="int32")
@@ -177,13 +190,28 @@ def count_classes(zones, raster_path, n_zones):
     return counts.reshape(n_zones + 1, 256)
 
 
-def station_counts(membership, station_ids, nlcd_dir, packages, station_years):
-    """{year: stations x 256 pixel counts}, summed over packages."""
+def station_counts(membership, station_ids, nlcd_dir, packages, station_years, done_dir):
+    """{year: stations x 256 pixel counts}, summed over packages. Each
+    package's counts are saved to done_dir, so a run stopped by the time
+    limit resumes after the last finished package."""
     station_index = {s: i for i, s in enumerate(station_ids)}
     totals = {}
 
+    def add(year, rows, counts):
+        full = np.zeros((len(station_ids), 256))
+        full[rows] = counts
+        totals[year] = totals.get(year, 0) + full
+
     for gdb_path, catchments in packages.items():
         package = gdb_path.stem
+        saved = done_dir / f"{package}.npz"
+        if saved.exists():
+            with np.load(saved) as done:
+                for year, counts in zip(done["years"], done["counts"]):
+                    add(int(year), done["rows"], counts)
+            print(f"{package}: done earlier in this run, skipped", flush=True)
+            continue
+
         # Stations x catchments-in-this-package membership matrix.
         position = pd.Series(np.arange(len(catchments)), index=catchments.index)
         rows = membership[membership["catchment_id"].isin(catchments.index)]
@@ -204,10 +232,19 @@ def station_counts(membership, station_ids, nlcd_dir, packages, station_years):
         with rasterio.open(clip_path(nlcd_dir, package, years[0])) as src:
             zones = burn_catchments(gdb_path, catchments, src)
 
+        stations = np.unique(rows["station_id"].map(station_index).to_numpy())
+        package_counts = []
         for year in years:
             counts = count_classes(zones, clip_path(nlcd_dir, package, year), len(catchments))
             by_station = matrix @ counts[1:]  # drop zone 0 (outside every catchment)
-            totals[year] = totals.get(year, 0) + by_station
+            package_counts.append(by_station[stations].astype(np.int64))
+            add(year, stations, package_counts[-1])
+
+        tmp = saved.with_name(saved.name + ".tmp")
+        with open(tmp, "wb") as f:
+            np.savez_compressed(f, years=np.array(years), rows=stations,
+                                counts=np.stack(package_counts))
+        tmp.replace(saved)
     return totals
 
 
@@ -330,7 +367,9 @@ def main():
           flush=True)
 
     nlcd_dir = cfg.project_root / "data" / "raw" / "nlcd" / "annual_c1v2"
-    totals = station_counts(membership, station_ids, nlcd_dir, packages, station_years)
+    done_dir = HucProgress(cfg, "load_land_cover").folder
+    totals = station_counts(membership, station_ids, nlcd_dir, packages, station_years,
+                            done_dir)
 
     first_clip = next(nlcd_dir.glob("*/LndCov_*.tif"))
     with rasterio.open(first_clip) as src:

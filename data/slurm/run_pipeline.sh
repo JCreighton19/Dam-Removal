@@ -61,6 +61,7 @@ attempts_for() {
         link_dams)             echo 3 ;;
         download_wqp_results)  echo 8 ;;
         download_nlcd)         echo 4 ;;
+        load_land_cover)       echo 3 ;;
         download_climate)      echo 5 ;;
         *)                     echo 1 ;;
     esac

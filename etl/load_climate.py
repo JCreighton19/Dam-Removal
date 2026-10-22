@@ -62,7 +62,7 @@ from etl.common.progress import huc8s_with_outputs
 from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
 from etl.download_climate import FIRST_YEAR, VARIABLES, clip_path, last_stable_year
 from etl.load_land_cover import (BLOCK_ROWS, PIXEL_KM2, delete_clip_folders, package_catchments,
-                                 read_inputs)
+                                 read_catchments, read_inputs)
 
 SOURCE = "prism_an_800m_monthly"
 ALBERS = "EPSG:5070"
@@ -92,8 +92,7 @@ SCHEMA = {
 def catchment_zones(gdb_path, fids):
     """30 m Albers grid of catchment numbers (1..n, 0 = none) covering the
     package's needed catchments, and its transform."""
-    polygons = pyogrio.read_dataframe(gdb_path, layer="NHDPlusCatchment",
-                                      fids=fids.tolist(), columns=[]).to_crs(ALBERS)
+    polygons = read_catchments(gdb_path, fids).to_crs(ALBERS)
     left, bottom, right, top = polygons.total_bounds
     left, bottom = math.floor(left / GRID_M) * GRID_M, math.floor(bottom / GRID_M) * GRID_M
     right, top = math.ceil(right / GRID_M) * GRID_M, math.ceil(top / GRID_M) * GRID_M
