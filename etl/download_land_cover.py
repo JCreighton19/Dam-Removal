@@ -34,9 +34,11 @@ from __future__ import annotations
 
 import argparse
 import math
+import sqlite3
 import sys
 import time
 import zipfile
+from contextlib import closing
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -121,13 +123,44 @@ def needed_packages(db_path, gdb_paths):
         ).iloc[:, 0]
         ids = pd.to_numeric(ids, errors="coerce")
         needed = ids[ids.isin(catchment_ids)]
+        print(f"  {gdb_path.stem}: {len(needed):,} needed catchments", flush=True)
         if needed.empty:
             continue
-        shapes = pyogrio.read_dataframe(gdb_path, layer="NHDPlusCatchment",
-                                        fids=needed.index.tolist(), columns=[])
+        bounds = indexed_bounds(gdb_path, needed.index)
+        if bounds is None:
+            shapes = pyogrio.read_dataframe(gdb_path, layer="NHDPlusCatchment",
+                                            fids=needed.index.tolist(), columns=[])
+            bounds = tuple(shapes.total_bounds)
         info = pyogrio.read_info(gdb_path, layer="NHDPlusCatchment")
-        packages[gdb_path.stem] = {"bounds": tuple(shapes.total_bounds), "crs": info["crs"]}
+        packages[gdb_path.stem] = {"bounds": bounds, "crs": info["crs"]}
     return packages
+
+
+def indexed_bounds(gdb_path, fids):
+    """Combined extent of these catchment FIDs from the GeoPackage's spatial
+    index, which holds each feature's bounding box. Reading polygons one FID
+    at a time is a random read each, which on the shared filesystem took
+    hours at national scale. None if there is no index (e.g. a .gdb)."""
+    if gdb_path.suffix != ".gpkg":
+        return None
+    # immutable=1: read-only with no file locking, which can stall on NFS.
+    with closing(sqlite3.connect(f"file:{gdb_path}?mode=ro&immutable=1", uri=True)) as con:
+        row = con.execute(
+            "SELECT table_name, column_name FROM gpkg_geometry_columns "
+            "WHERE lower(table_name) = 'nhdpluscatchment'"
+        ).fetchone()
+        if row is None:
+            return None
+        rtree = f"rtree_{row[0]}_{row[1]}"
+        if con.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (rtree,)).fetchone() is None:
+            return None
+        con.execute("CREATE TEMP TABLE wanted (id INTEGER PRIMARY KEY)")
+        con.executemany("INSERT INTO wanted VALUES (?)", ((int(f),) for f in fids))
+        bounds = con.execute(
+            f'SELECT min(minx), min(miny), max(maxx), max(maxy) '
+            f'FROM "{rtree}" JOIN wanted ON "{rtree}".id = wanted.id'
+        ).fetchone()
+    return None if bounds[0] is None else tuple(bounds)
 
 
 def clip_path(nlcd_dir, package, year):
