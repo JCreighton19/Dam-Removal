@@ -9,6 +9,7 @@ Inputs
 warehouse.duckdb views, so every rule lives in one place:
 - measurement_window, eligibility_pairs (build_views.py)
 - wq_measurement, dam_removal (core tables)
+- wq_measurement_daily (build_daily_measurements.py), for daily_id
 - station_watershed (build_station_watershed.py)
 - land_cover, land_cover_codes (load_land_cover.py)
 - climate (load_climate.py)
@@ -22,7 +23,9 @@ Design choices (agreed 2026-10-19)
    measurement_window), so the key is (measurement_id, AR_ID).
 3. Values are kept as cleaned: censored results are already half the
    detection limit (spec 3.6.3) and flagged by is_censored. Duplicate
-   same-day samples are all kept; average them in modeling if needed.
+   same-day samples are all kept; daily_id (added 2026-10-24) names the
+   wq_measurement_daily row each one belongs to, so a model can group
+   repeats exactly as the daily table does.
 4. Land cover is a fixed baseline per dam-station pair, not year by year:
    the last NLCD year before removal. Removal itself changes land cover
    (the drained reservoir becomes grass or wetland), so a year-by-year
@@ -61,6 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import duckdb
 
+from etl.build_daily_measurements import daily_ids
 from etl.build_views import add_view
 from etl.common.config import default_case_study, load_config
 from etl.common.io import require_file
@@ -77,6 +81,7 @@ EXPOSURE_STATUSES = [
 SCHEMA = {
     # Keys
     "measurement_id": "int64",
+    "daily_id": "int64",
     "AR_ID": "string",
     "station_id": "string",
     "parameter_std": "string",
@@ -283,18 +288,33 @@ WHERE p.has_both AND w.period IN ('pre', 'post')
 """
 
 
+def sql_path(path):
+    return str(path.resolve()).replace("'", "''")
+
+
 def build_table(db_path):
+    """The analysis rows, the expected row count and the daily_ids in
+    wq_measurement_daily (to check daily_id against)."""
+    output_dir = db_path.parent
     with duckdb.connect(str(db_path), read_only=True) as con:
         table = con.sql(ANALYSIS_SQL).df()
         expected = con.sql(EXPECTED_ROWS_SQL).fetchone()[0]
+    with duckdb.connect() as con:
+        ids = daily_ids(con, sql_path(output_dir / "wq_measurement.parquet"))
+        daily = con.sql("SELECT daily_id FROM read_parquet('{}')".format(
+            sql_path(output_dir / "wq_measurement_daily.parquet"))).df()["daily_id"]
+    table = table.merge(ids, on="measurement_id", how="left", validate="many_to_one")
     table["sample_date"] = table["sample_date"].astype("datetime64[us]")
-    return table.astype(SCHEMA), expected
+    return table[list(SCHEMA)].astype(SCHEMA), expected, set(daily)
 
 
-def validate(table, expected_rows):
+def validate(table, expected_rows, daily_ids_written):
     errors = schema_errors("analysis_measurement", table, SCHEMA, PRIMARY_KEY)
     if errors:
         return errors
+    if not table["daily_id"].isin(daily_ids_written).all():
+        errors.append("daily_id not in wq_measurement_daily (re-run build_daily_measurements.py "
+                      "after clean_wq_results.py)")
     if len(table) != expected_rows:
         errors.append(f"{len(table):,} rows, expected {expected_rows:,} "
                       "(pre/post measurements of has_both pairs)")
@@ -358,9 +378,11 @@ def main():
                            "warehouse.duckdb (run build_views.py first)")
     for table in REQUIRED_TABLES:
         require_file(output_dir / f"{table}.parquet", f"{table} table (run the step 5 stages first)")
+    require_file(output_dir / "wq_measurement_daily.parquet",
+                 "wq_measurement_daily table (run build_daily_measurements.py first)")
 
-    table, expected = build_table(db_path)
-    errors = validate(table, expected)
+    table, expected, daily_ids_written = build_table(db_path)
+    errors = validate(table, expected, daily_ids_written)
     if errors:
         raise ValueError("Validation failed; no warehouse files were written:\n  - "
                          + "\n  - ".join(errors))
@@ -373,6 +395,8 @@ def main():
     print(f"Wrote {len(table):,} rows to {path}")
     print(f"Dams: {table['AR_ID'].nunique()}; stations: {table['station_id'].nunique()}; "
           f"parameters: {table['parameter_std'].nunique()}")
+    print(f"Distinct measurements: {table['measurement_id'].nunique():,}; "
+          f"distinct daily values (daily_id): {table['daily_id'].nunique():,}")
     print("\nRows per parameter and period:")
     counts = (table.assign(fraction=table["sample_fraction_std"].fillna("-"))
               .groupby(["parameter_std", "fraction", "period"]).size()

@@ -525,7 +525,7 @@ Computed per catchment, then summed to each station through `station_catchment` 
 - **Status:** written by `etl/build_analysis_dataset.py` (SQL over the `warehouse.duckdb` views), plus an `analysis_measurement` view.
 
 **Design choices (2026-10-19):**
-1. **Values as cleaned.** Censored results are already half the detection limit (3.6.3) and flagged by `is_censored`. Duplicate same-day samples are kept; average them in modeling if needed.
+1. **Values as cleaned.** Censored results are already half the detection limit (3.6.3) and flagged by `is_censored`. Duplicate same-day samples are kept; `daily_id` (2026-10-24) names the `wq_measurement_daily` row (3.6a) each belongs to, so a model can group repeats with the same key and rule as the daily table instead of giving busy days extra weight.
 2. **Baseline land cover, not year by year:** the last NLCD year before removal, the same for all of a pair's rows. Removal changes land cover itself (the drained reservoir becomes grass or wetland), so a year-by-year covariate would absorb part of the effect. Without a year before removal (removals before 1986), the nearest year is used; `land_cover_year` ≥ `removal_year` marks those pairs.
 3. **Climate of the sample's month**, plus the previous month's precipitation (rain shortly before sampling drives turbidity and nutrients). The previous month is null for January of the first window year, which `climate` doesn't cover.
 4. **Missing context stays null.** Rows aren't dropped for missing context; models decide what to exclude. `missing_upstream_area`, `missing_climate` and `missing_land_cover` say which is absent.
@@ -537,6 +537,7 @@ Computed per catchment, then summed to each station through `station_catchment` 
 | Column | Type | Meaning | Source |
 |---|---|---|---|
 | `measurement_id` | BIGINT | The measurement | `wq_measurement` |
+| `daily_id` | BIGINT | Its `wq_measurement_daily` row: same station, day, depth, sample type and method (3.6a). Rows sharing it are same-day repeats | `build_daily_measurements.DAILY_ID_SQL` |
 | `AR_ID` | TEXT | The dam | `dam_station_link` |
 | `station_id` | TEXT | The station | `dam_station_link` |
 | `parameter_std`, `sample_fraction_std` | TEXT | What was measured | `wq_measurement` |
@@ -629,7 +630,7 @@ Run by each writer before the atomic rename; any failure aborts the write.
 | `station_catchment` | Unique `(station_id, catchment_id)` |
 | `land_cover` | `class_code` in `land_cover_codes`; `percent_area` sums to ~100 per (station, year); `valid_fraction` in [0, 1]; one row per needed station-year × class (kept and new rows together); `catchment_hash` non-null |
 | `climate` | `temperature_mean_c` in [−45, 45]; `precipitation_mm` in [0, 3000]; `valid_fraction` in [0, 1]; one row per needed station-year × month (kept and new rows together); `catchment_hash` non-null |
-| `analysis_measurement` | Row count equals the pre/post measurements of `has_both` pairs (no join dropped or duplicated rows); `period` in {pre, post}; no removal-year samples; land-cover groups sum to 100; `exposure_status` non-null and in the allowed set; assigned rows' `assigned_AR_ID` = `AR_ID`; at most one assigned row per measurement; no `upstream_area_km2` unless `drainage_area_flag = 'ok'` |
+| `analysis_measurement` | Row count equals the pre/post measurements of `has_both` pairs (no join dropped or duplicated rows); `period` in {pre, post}; no removal-year samples; land-cover groups sum to 100; `exposure_status` non-null and in the allowed set; assigned rows' `assigned_AR_ID` = `AR_ID`; at most one assigned row per measurement; no `upstream_area_km2` unless `drainage_area_flag = 'ok'`; every `daily_id` present in `wq_measurement_daily` (else that table is stale) |
 
 ---
 

@@ -120,6 +120,14 @@ FROM grouped
 ORDER BY station_id, parameter_std, sample_fraction_std, sample_date, daily_id
 """
 
+# measurement_id -> daily_id (its group's smallest measurement_id), with the
+# same key, so tables kept at the measurement grain (build_analysis_dataset)
+# can be grouped exactly as wq_measurement_daily is.
+DAILY_ID_SQL = f"""
+SELECT measurement_id, min(measurement_id) OVER (PARTITION BY {KEY}) AS daily_id
+FROM ({KEYED})
+"""
+
 UNITS_SQL = """
 SELECT parameter_std, result_unit_std, result_unit_raw, count(*) AS rows
 FROM read_parquet('{path}')
@@ -180,6 +188,11 @@ def inspect(con, path):
     print("\n=== Readings sharing a station-day, by parameter ===")
     print(con.sql(STRUCTURE_SQL.format(path=path)).df().to_string(index=False))
     return units
+
+
+def daily_ids(con, path):
+    """measurement_id and daily_id for every row of wq_measurement."""
+    return con.sql(DAILY_ID_SQL.format(path=path)).df()
 
 
 def build_table(con, path):

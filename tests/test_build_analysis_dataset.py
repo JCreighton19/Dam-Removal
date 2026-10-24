@@ -5,6 +5,7 @@ tables), runs the real `main()`, and checks the row selection and each
 context join:
 
     D1 (removed 2015): station DOWN has 3 pre / 3 post samples (eligible),
+        one post day read twice (two rows, one daily_id),
         plus a removal-year and an outside-window sample (left out);
         station UP has post samples only (not eligible).
         Land cover for DOWN in 2013, 2014 and 2016: the baseline is 2014.
@@ -27,6 +28,7 @@ import duckdb
 import pandas as pd
 
 from etl import build_analysis_dataset as bad
+from etl import build_daily_measurements as bdm
 from etl import build_views as bv
 from etl.build_views import add_view
 from etl.common.config import PROJECT_ROOT_ENV_VAR
@@ -34,7 +36,7 @@ from etl.load_land_cover import land_cover_codes
 
 SAMPLES = {
     "DOWN": ["2005-06-01", "2012-01-15", "2013-06-01", "2013-07-01", "2015-06-01",
-             "2016-06-01", "2017-06-01", "2018-03-01"],
+             "2016-06-01", "2016-06-01", "2017-06-01", "2018-03-01"],
     "UP": ["2016-06-01", "2017-06-01", "2018-06-01"],
     "OLD": ["1970-05-01", "1970-06-01", "1971-05-01", "1975-05-01", "1975-06-01", "1976-05-01"],
 }
@@ -66,6 +68,10 @@ def _core_tables(directory):
     measurements["is_censored"] = False
     measurements["unit_basis_assumed"] = False
     measurements["provider"] = "NWIS"
+    measurements["depth_m"] = None
+    measurements["activity_type"] = "Field Msr/Obs"
+    for column in ["method_id", "method_context", "result_unit_raw"]:
+        measurements[column] = pd.array([None] * len(measurements), dtype="string")
     tables = {
         "dam_removal": dams, "wq_station": stations, "dam_station_link": links,
         "huc8_watershed": pd.DataFrame({"huc8": ["01010101"]}),
@@ -74,6 +80,9 @@ def _core_tables(directory):
     }
     for name, frame in tables.items():
         frame.to_parquet(directory / f"{name}.parquet", index=False)
+    with duckdb.connect() as con:
+        daily = bdm.build_table(con, str(directory / "wq_measurement.parquet"))
+    daily.to_parquet(directory / "wq_measurement_daily.parquet", index=False)
 
 
 def _context_tables(directory):
@@ -126,12 +135,20 @@ def test_rows_and_context_joins():
             bad.main()
 
         table = pd.read_parquet(out / "analysis_measurement.parquet")
-        # 3 pre + 3 post for DOWN and OLD; UP, the removal year and 2005 are out.
-        assert len(table) == 12
+        # 3 pre + 3 post for DOWN (one post day twice) and OLD; UP, the
+        # removal year and 2005 are out.
+        assert len(table) == 13
         assert set(table["station_id"]) == {"DOWN", "OLD"}
         assert set(table["period"]) == {"pre", "post"}
 
-        down = table[table["station_id"] == "DOWN"].set_index("sample_date")
+        # Same-day repeats share a daily_id; every other row has its own.
+        down_rows = table[table["station_id"] == "DOWN"]
+        repeat = down_rows[down_rows["sample_date"] == pd.Timestamp("2016-06-01")]
+        assert len(repeat) == 2 and repeat["daily_id"].nunique() == 1
+        assert repeat["daily_id"].iloc[0] == repeat["measurement_id"].min()
+        assert table["daily_id"].nunique() == 12
+
+        down = down_rows.drop_duplicates("sample_date").set_index("sample_date")
         jan = down.loc[pd.Timestamp("2012-01-15")]
         assert jan["season"] == "winter" and jan["years_from_removal"] == -3
         assert jan["air_temp_mean_c"] == 1 and jan["precip_mm"] == 10
@@ -161,7 +178,17 @@ def test_rows_and_context_joins():
         assert not table["missing_land_cover"].any()
 
         with duckdb.connect(str(out / "warehouse.duckdb"), read_only=True) as con:
-            assert con.sql("SELECT count(*) FROM analysis_measurement").fetchone()[0] == 12
+            assert con.sql("SELECT count(*) FROM analysis_measurement").fetchone()[0] == 13
+
+
+def test_stale_daily_table_is_refused():
+    with tempfile.TemporaryDirectory() as tmp:
+        out = _build(Path(tmp))
+        table, expected, written = bad.build_table(out / "warehouse.duckdb")
+        assert bad.validate(table, expected, written) == []
+        # wq_measurement_daily from an older clean_wq_results run.
+        errors = bad.validate(table, expected, written - {table["daily_id"].iloc[0]})
+        assert any("re-run build_daily_measurements" in e for e in errors)
 
 
 if __name__ == "__main__":
