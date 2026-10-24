@@ -11,3 +11,4 @@
 #   station,EXAMPLE-STATION-1,reject,,on a tidal marsh channel; no river reach fits (audit map),jc,2026-10-23
 #   dam,99999,accept,10000100012345,dam is on Mill River; nearest flowline is a tributary,jc,2026-10-23
 feature_kind,feature_id,action,nhdplus_id,reason,reviewed_by,reviewed_on
+station,WIDNR_WQX-10040927,reject,,confirmed on the wrong reach on the audit map; still accepted as wide_water_far_snap in snap validation,jc,2026-10-24

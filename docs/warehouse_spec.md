@@ -585,10 +585,11 @@ Computed per catchment, then summed to each station through `station_catchment` 
 | rejected | `only_unsuitable_flowline` | Only canals, connectors, coastline, … within it |
 | rejected | `datum_unsupported` | The reported datum has no transformation |
 | ambiguous | `drainage_area_mismatch` | The station reports a drainage area and no stream candidate's `TotDASqKm` is within 0.5–2× of it |
+| ambiguous | `drainage_area_far` | The reported area agrees only with reaches farther than the review distance, and not with the nearest reach (added 2026-10-24: validation showed 247 stations moved > 300 m this way, 156 of them from < 25 m; a small reach's `TotDASqKm` is taken at its outlet, so a point on it can disagree 2× and still be right) |
 | ambiguous | `named_reach_far` | No nearby reach has the name, but a reach named like the station (or the dam's `River`) is farther than the review distance |
 | ambiguous | `confluence_ambiguous` | Another reach is about as close (within 25 m) but ≥ 5× bigger or smaller, and neither name nor drainage area supports the choice |
 | ambiguous | `far_without_support` | Farther than the review distance (dams 150 m, stations 300 m) on a StreamRiver reach, with no name or area support |
-| accepted | `drainage_area_match` | Nearest reach whose drainage area agrees with the reported one |
+| accepted | `drainage_area_match` | Nearest reach whose drainage area agrees with the reported one, within the review distance (or the nearest reach itself) |
 | accepted | `named_reach_preferred` | A reach named like the point, within the review distance, chosen over a nearer unnamed or differently named one |
 | accepted | `name_match` | The nearest reach has the point's river name |
 | accepted | `wide_water_far_snap` | Farther than the review distance on an ArtificialPath (wide river, lake, estuary): kept with `qc_far_snap`, since such sites are legitimate unless other evidence says otherwise |

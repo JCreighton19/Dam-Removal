@@ -125,6 +125,21 @@ def test_reported_area_picks_the_matching_reach():
     assert _chosen(result, candidates) == 2
 
 
+def test_reported_area_matching_only_a_far_reach_is_ambiguous():
+    # On a small reach (5 m), area matches only a reach 700 m away: not moved.
+    candidates = _candidates([(1, 5, None, 460, 3.0), (2, 700, None, 460, 410.0)])
+    result = sn.decide_reach(candidates, "SITE", 400.0, RULES)
+    assert result["status"] == sn.AMBIGUOUS and result["reason"] == "drainage_area_far"
+    assert _chosen(result, candidates) == 1
+
+
+def test_far_nearest_reach_with_matching_area_is_accepted():
+    # The nearest reach itself agrees, so its distance doesn't block it.
+    candidates = _candidates([(1, 450, None, 460, 410.0)])
+    result = sn.decide_reach(candidates, "SITE", 400.0, RULES)
+    assert result["status"] == sn.ACCEPTED and result["reason"] == "drainage_area_match"
+
+
 def test_reported_area_matching_no_reach_is_ambiguous():
     candidates = _candidates([(1, 15, None, 460, 3.0), (2, 60, None, 460, 8.0)])
     result = sn.decide_reach(candidates, "SITE", 400.0, RULES)

@@ -383,9 +383,20 @@ def decide_reach(candidates, name, reported_area, rules):
     if not pd.isna(reported_area) and reported_area > 0:
         ratio = eligible["totdasqkm"] / reported_area
         agrees = ratio.between(*rules.area_agree)
-        if agrees.any():
-            pool = eligible[agrees]
+        # As for names: area can move a point to another reach only within
+        # the review distance. A small reach's TotDASqKm is taken at its
+        # outlet, so a point on it can disagree 2x and still be right.
+        reachable = (eligible["distance_m"] <= rules.review_distance_m) | (
+            eligible.index == nearest.name)
+        if (agrees & reachable).any():
+            pool = eligible[agrees & reachable]
             evidence.append("area_agrees")
+        elif agrees.any():
+            result.update(status=AMBIGUOUS, reason="drainage_area_far",
+                          stream_index=nearest["stream_index"],
+                          area_ratio=float(ratio.loc[nearest.name]))
+            result["evidence"] = ["area_mismatch", "area_agrees_far"]
+            return _with_runner_up(result, eligible, nearest)
         elif ratio.notna().any():
             result.update(status=AMBIGUOUS, reason="drainage_area_mismatch",
                           stream_index=nearest["stream_index"],
