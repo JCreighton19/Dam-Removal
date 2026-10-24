@@ -4,6 +4,7 @@
 #SBATCH --error=data/slurm/logs/tests_%j.err
 #SBATCH --time=00:30:00
 #SBATCH --mem=4G
+#SBATCH --cpus-per-task=1
 
 # Runs every tests/test_*.py. Passing tests print "ok"; a failing test's
 # output goes to the .err file. Exits non-zero if any test fails.
