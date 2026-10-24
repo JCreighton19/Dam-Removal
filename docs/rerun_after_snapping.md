@@ -22,8 +22,7 @@ Stages to re-run: everything from `snap_features` on. `select_candidate_stations
 ```bash
 cd /courses/DS5500.202710/teams/team4
 git pull
-module load anaconda3/2024.06 && conda activate dam-removal
-for t in tests/test_*.py; do python "$t" > /dev/null && echo "ok   $t" || echo "FAIL $t"; done
+sbatch data/slurm/run_tests.slurm      # results in data/slurm/logs/tests_<jobid>.out
 ```
 
 ## 2. Validate the snapping (nothing is replaced)
