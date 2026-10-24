@@ -176,6 +176,31 @@ def test_schema_matches_spec():
                                  ["station_id", "catchment_id"]) == []
 
 
+def test_placeholder_areas_are_flagged_not_stored():
+    # 1 -> 2 -> 3. Reach 2's published total area is -9999; catchment 4
+    # (upstream of 5) has a -9999 area.
+    reaches = pd.DataFrame({"NHDPlusID": pd.array([1, 2, 3, 4, 5], dtype="Int64"),
+                            "LengthKM": 1.0})
+    flow = pd.DataFrame({"FromNHDPID": pd.array([1, 2, 4], dtype="Int64"),
+                         "ToNHDPID": pd.array([2, 3, 5], dtype="Int64")})
+    catchments = pd.DataFrame({"areasqkm": [1.0, 2.0, 3.0, -9999.0, 5.0], "fid": range(5),
+                               "gdb_path": "x"}, index=pd.Index([1, 2, 3, 4, 5], dtype="Int64"))
+    total_area = pd.Series(
+        [1.0, -9999.0, 6.0, -9999.0, 5.0], index=pd.Index([1, 2, 3, 4, 5], dtype="Int64"))
+    total_area = total_area.where(total_area > 0)  # as read_network does
+    stations = pd.DataFrame({"station_id": ["S2", "S3", "S5"], "NHDPlusID": [2, 3, 5]})
+    table, membership = bsw.build_station_watershed(stations, reaches, flow, catchments,
+                                                    total_area)
+    table = table.set_index("station_id")
+    assert table.loc["S3", "drainage_area_flag"] == "ok" and table.loc["S3", "area_km2"] == 6.0
+    assert table.loc["S2", "drainage_area_flag"] == "nhdplus_area_missing"
+    assert pd.isna(table.loc["S2", "nhdplus_total_area_km2"])  # not -9999
+    assert table.loc["S5", "drainage_area_flag"] == "invalid_catchment_area"
+    assert table.loc["S5", "area_km2"] == 5.0  # the placeholder isn't summed
+    assert table["catchment_hash"].notna().all()
+    assert table.loc["S2", "catchment_hash"] != table.loc["S3", "catchment_hash"]
+
+
 if __name__ == "__main__":
     tests = [
         obj for name, obj in list(globals().items())

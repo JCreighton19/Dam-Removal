@@ -56,6 +56,8 @@ ROWS = {
         "ProviderName": "NWIS", "CharacteristicName": "Nitrate", "USGSPCode": "618.0",
         "ResultSampleFractionText": "Dissolved", "ResultMeasureValue": "1.2",
         "ResultMeasure/MeasureUnitCode": "mg/l as N",
+        "ResultAnalyticalMethod/MethodIdentifier": " I-2545-90 ",
+        "ResultAnalyticalMethod/MethodIdentifierContext": "USGS",
     },
     "keep_nitrate_bare": {
         "CharacteristicName": "Nitrate", "ResultSampleFractionText": "Total",
@@ -146,7 +148,7 @@ KEPT = sorted(label for label in ROWS if label.startswith("keep_"))
 
 
 def _frame(labels):
-    columns = sorted(cwr.REQUIRED_COLUMNS | {"MethodSpeciationName"})
+    columns = sorted(cwr.REQUIRED_COLUMNS | {"MethodSpeciationName", cwr.METHOD_CONTEXT})
     rows = []
     for label in labels:
         row = {col: None for col in columns}
@@ -216,6 +218,9 @@ def test_main_applies_every_rule():
         assert str(row.loc["keep_temp", "sample_time"]) == "10:34:00"
 
         assert row.loc["keep_nitrate_as_n", "usgs_pcode"] == "00618"
+        assert row.loc["keep_nitrate_as_n", "method_id"] == "I-2545-90"
+        assert row.loc["keep_nitrate_as_n", "method_context"] == "USGS"
+        assert pd.isna(row.loc["keep_temp", "method_id"])
         assert not row.loc["keep_nitrate_as_n", "unit_basis_assumed"]
         assert row.loc["keep_nitrate_bare", "unit_basis_assumed"]
         assert row.loc["keep_nitrate_bare", "result_unit_std"] == "mg/L as N"

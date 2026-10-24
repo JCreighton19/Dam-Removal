@@ -38,6 +38,25 @@ REACHES = {
 FLOW = [(9, 1), (1, 2), (2, 3)]
 
 
+def _snap_attrs(n, **overrides):
+    """The match/reach columns snap_features.py writes, for n rows."""
+    attrs = {
+        "match_method": ["scored_candidates"] * n,
+        "snap_reason": ["name_match"] * n,
+        "snap_evidence": ["name_match"] * n,
+        "reach_ftype": [460] * n,
+        "reach_gnis_name": ["Test River"] * n,
+        "reach_totdasqkm": [120.5] * n,
+        "reach_slope": [0.002] * n,
+        "datum_epsg": [4269] * n,
+        "datum_assumed": [False] * n,
+        "qc_far_snap": [False] * n,
+        "qc_near_unsuitable_flowline": [False] * n,
+    }
+    attrs.update(overrides)
+    return attrs
+
+
 def _dams_snapped():
     """Dam D1 snapped twice (equidistant to reaches 2 and 3); D2 on reach 5."""
     rows = [
@@ -69,6 +88,8 @@ def _dams_snapped():
             "NHDPlusID": [float(r[3]) for r in rows],
             "snap_distance_m": [r[4] for r in rows],
             "snap_fraction": [r[5] for r in rows],
+            **_snap_attrs(len(rows), datum_epsg=[4326] * 3, datum_assumed=[True] * 3,
+                          reach_slope=[0.002, 0.002, None]),
         },
         geometry=[Point(r[6]) for r in rows],
         crs="EPSG:4326",
@@ -98,6 +119,9 @@ def _stations_snapped():
             "NHDPlusID": [float(r[1]) for r in rows],
             "snap_distance_m": [5.0, 6.0, 7.0],
             "snap_fraction": [r[2] for r in rows],
+            **_snap_attrs(len(rows), qc_far_snap=[False, True, False]),
+            "reported_area_km2": [None, 50.0, None],
+            "qc_non_riverine_name": [False, False, True],
         },
         geometry=[Point(r[3]) for r in rows],
         crs="EPSG:4326",
@@ -220,6 +244,13 @@ def test_main_writes_all_tables_matching_the_spec():
         assert set(stations["station_id"]) == {"S1", "S2", "S3"}
         assert set(stations["state_code"]) == {"23"}
         assert set(stations["county_code"]) == {"005"}
+        s2 = stations.set_index("station_id").loc["S2"]
+        assert s2["reach_gnis_name"] == "Test River" and s2["reach_feature_type"] == 460
+        assert s2["reach_totdasqkm"] == 120.5 and s2["qc_far_snap"]
+        assert s2["reported_drainage_area_km2"] == 50.0 and s2["match_method"] == "scored_candidates"
+        assert stations.set_index("station_id").loc["S3", "qc_non_riverine_name"]
+        assert d1["datum_assumed"] and d1["datum_epsg"] == 4326
+        assert pd.isna(d2["reach_slope"])
 
         watersheds = gpd.read_parquet(out / "huc8_watershed.parquet")
         assert list(watersheds["huc8"]) == [HUC8]

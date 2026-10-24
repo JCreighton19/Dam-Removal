@@ -12,7 +12,6 @@ Nothing here writes to the warehouse:
 from __future__ import annotations
 
 import math
-import re
 import sqlite3
 import time
 from contextlib import closing
@@ -22,7 +21,8 @@ import duckdb
 import pandas as pd
 import pyogrio
 
-from etl.build_views import ELIGIBILITY_VIEWS, OPTIONAL_TABLES, TABLES, table_view_sql
+from etl.build_views import (ELIGIBILITY_VIEWS, EXPOSURE_QC_VIEWS, OPTIONAL_TABLES, TABLES,
+                              settings_sql, table_view_sql)
 
 # Tables the audit can't run without; the rest are optional.
 CORE_TABLES = ["dam_removal", "wq_station", "dam_station_link", "wq_measurement"]
@@ -57,14 +57,14 @@ def connect(parquet_dir, years_before, years_after, min_samples, min_years,
             con.execute(table_view_sql(table, path))
             views.append(table)
 
-    con.execute(f"""
-        CREATE VIEW eligibility_settings AS SELECT
-            {int(years_before)} AS years_before,
-            {int(years_after)} AS years_after,
-            {int(min_samples)} AS min_samples,
-            {int(min_years)} AS min_years
-    """)
+    con.execute(settings_sql(years_before, years_after, min_samples, min_years))
     con.execute(ELIGIBILITY_VIEWS)
+    try:
+        con.execute(EXPOSURE_QC_VIEWS)
+        views += ["measurement_exposure", "station_qc"]
+    except duckdb.BinderException as exc:
+        # A warehouse from before the 2026-10-23 snapping lacks the columns.
+        print(f"Exposure / station QC views not built (older warehouse): {exc}")
     return con, views
 
 
@@ -243,28 +243,8 @@ def nearest_factor(ratio, tolerance=0.15, factors=UNIT_FACTORS):
 # Names
 # --------------------------------------------------
 
-# Words that say what kind of water body or where on it, not which one.
-GENERIC_NAME_WORDS = {
-    "river", "r", "riv", "creek", "cr", "crk", "ck", "brook", "bk", "br", "stream", "str",
-    "run", "the", "of", "at", "near", "nr", "above", "abv", "ab", "below", "blw", "bl",
-    "upstream", "downstream", "us", "ds", "and", "trib", "tributary", "to", "site", "station",
-}
-
-
-def name_tokens(name):
-    """Lowercase alphanumeric tokens of a name, minus GENERIC_NAME_WORDS."""
-    if name is None or (isinstance(name, float) and math.isnan(name)) or pd.isna(name):
-        return set()
-    return {t for t in re.findall(r"[a-z0-9]+", str(name).lower()) if t not in GENERIC_NAME_WORDS}
-
-
-def name_matches(station_name, reach_name):
-    """True if every distinctive word of the reach's GNIS name appears in the
-    station name; None when the reach has no name to compare."""
-    reach = name_tokens(reach_name)
-    if not reach:
-        return None
-    return reach <= name_tokens(station_name)
+# Shared with snap_features.py, which uses the same name rule.
+from etl.common.snapping import GENERIC_NAME_WORDS, name_matches, name_tokens  # noqa: E402,F401
 
 
 # --------------------------------------------------

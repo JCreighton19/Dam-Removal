@@ -5,19 +5,24 @@ not the raw candidate list).
 Run directly: `python tests/test_download_wqp_results.py`
 """
 
+import os
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pandas as pd
 
-from etl.common.config import load_config
+from etl import download_wqp_results as dwr
+from etl.common.config import PROJECT_ROOT_ENV_VAR, load_config
 from etl.download_wqp_results import (
     build_batches,
+    covered_ranges,
     load_confirmed_stations,
     merge_windows,
+    uncovered,
 )
 
 
@@ -165,6 +170,65 @@ def test_batches_never_mix_date_ranges():
         (2005, 2015, ["C"]),
         (2010, 2020, ["D"]),
     ]
+
+
+def test_uncovered_keeps_only_ranges_not_downloaded():
+    entries = {
+        1: {"start_year": 2005, "end_year": 2015, "stations": "A;B"},
+        2: {"start_year": 2016, "end_year": 2020, "stations": "B"},
+    }
+    covered = covered_ranges(entries)
+    assert covered["B"] == [(2005, 2020)]  # adjacent ranges merge
+    needed = pd.DataFrame({
+        "station_id": ["A", "A", "B", "C"],
+        "start_year": [2006, 2010, 2008, 2005],
+        "end_year": [2014, 2018, 2019, 2015],
+    })
+    todo = uncovered(needed, covered)
+    # A 2010-2018 is only partly covered; C is new.
+    assert list(zip(todo["station_id"], todo["start_year"])) == [("A", 2010), ("C", 2005)]
+
+
+def test_rerun_requests_only_new_or_failed_station_ranges():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _write_config(root, ["11111111"])
+        processed_dir = root / "data" / "processed"
+        processed_dir.mkdir(parents=True)
+        # Window 3/3 (the default) around 2010: 2007-2013.
+        _write_links(processed_dir / "dam_station_links_11111111.csv", [
+            ("D1", "Dam One", s, 2010, "downstream") for s in ["S1", "S2", "S3", "S4"]
+        ])
+        download = root / "data" / "raw" / "wqp" / "results" / "test" / "pilot_download"
+        download.mkdir(parents=True)
+        pd.DataFrame({"MonitoringLocationIdentifier": ["S1"]}).to_csv(
+            download / "results_batch_001.csv", index=False)
+        pd.DataFrame([
+            {"batch": 1, "start_year": 2007, "end_year": 2013, "station_count": 2,
+             "stations": "S1;S2", "data_profile": dwr.DATA_PROFILE, "status": "success",
+             "file": "results_batch_001.csv", "rows": 1, "error": None},
+            {"batch": 2, "start_year": 2007, "end_year": 2013, "station_count": 1,
+             "stations": "S3", "data_profile": dwr.DATA_PROFILE, "status": "failed",
+             "file": None, "rows": None, "error": "429"},
+        ]).to_csv(download / "download_manifest.csv", index=False)
+
+        requested = []
+
+        def fake_fetch(batch, start_year, end_year):
+            requested.append((tuple(batch), start_year, end_year))
+            return pd.DataFrame({"MonitoringLocationIdentifier": batch})
+
+        argv = ["download_wqp_results.py", "--case-study", "test"]
+        with mock.patch.dict(os.environ, {PROJECT_ROOT_ENV_VAR: str(root)}), \
+                mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(dwr, "fetch_batch", fake_fetch):
+            dwr.main()
+
+        assert requested == [(("S3", "S4"), 2007, 2013)]  # S1, S2 reused; S3 failed before
+        manifest = pd.read_csv(download / "download_manifest.csv")
+        assert manifest["batch"].tolist() == [1, 2]
+        assert manifest["status"].tolist() == ["success", "success"]
+        assert manifest.loc[1, "stations"] == "S3;S4"
 
 
 if __name__ == "__main__":

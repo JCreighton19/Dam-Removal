@@ -171,6 +171,56 @@ def test_missing_clip_is_an_error():
             raise AssertionError("expected a missing-clip error")
 
 
+def _clear_done_marker(root):
+    """run_pipeline.sh clears a stage's markers when it submits the stage."""
+    marker = root / "data" / "processed" / "_progress" / "pilot_test" / "load_land_cover"
+    for path in marker.glob("*"):
+        path.unlink()
+
+
+def test_rerun_keeps_unchanged_stations_and_recomputes_changed_ones():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        out = _build_project(root)
+        _run(root)  # deletes the clips
+        first = pd.read_parquet(out / "land_cover.parquet")
+        assert first["catchment_hash"].notna().all()
+
+        # Same upstream areas: every row is kept, no clips needed.
+        _clear_done_marker(root)
+        _run(root)
+        second = pd.read_parquet(out / "land_cover.parquet")
+        pd.testing.assert_frame_equal(first, second)
+
+        # S2 now also drains catchment 1: only S2 is recomputed, which
+        # needs clips again (they were deleted).
+        with duckdb.connect(str(out / "warehouse.duckdb")) as con:
+            con.execute("INSERT INTO station_catchment VALUES ('S2', 1)")
+        _clear_done_marker(root)
+        try:
+            _run(root)
+        except FileNotFoundError as exc:
+            assert "NLCD clips missing" in str(exc)
+        else:
+            raise AssertionError("expected S2 to need clips")
+
+
+def test_legacy_table_is_matched_through_previous_membership():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        out = _build_project(root)
+        _run(root)
+        # A table from before catchment_hash, plus the membership it used.
+        legacy = pd.read_parquet(out / "land_cover.parquet").drop(columns="catchment_hash")
+        legacy.to_parquet(out / "land_cover.parquet", index=False)
+        with duckdb.connect(str(out / "warehouse.duckdb"), read_only=True) as con:
+            con.sql("SELECT * FROM station_catchment").df().to_parquet(
+                out / "station_catchment.prev.parquet", index=False)
+        _clear_done_marker(root)
+        _run(root)  # no clips left: works only if every station is kept
+        assert pd.read_parquet(out / "land_cover.parquet")["catchment_hash"].notna().all()
+
+
 if __name__ == "__main__":
     tests = [
         obj for name, obj in list(globals().items())

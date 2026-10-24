@@ -53,7 +53,6 @@ from etl.common.wbd import find_hu8_layer
 # --------------------------------------------------
 
 WGS84 = "EPSG:4326"
-MATCH_METHOD = "nearest_flowline"
 
 # Flowlines are simplified for map rendering only; graph logic always
 # reads the raw geodatabase (spec section 3.5).
@@ -94,6 +93,16 @@ SCHEMAS = {
         "snap_distance_m": "float64",
         "snap_fraction": "float64",
         "match_method": "string",
+        "snap_reason": "string",
+        "snap_evidence": "string",
+        "reach_feature_type": "Int16",
+        "reach_gnis_name": "string",
+        "reach_totdasqkm": "float64",
+        "reach_slope": "float64",
+        "datum_epsg": "Int32",
+        "datum_assumed": "bool",
+        "qc_far_snap": "bool",
+        "qc_near_unsuitable_flowline": "bool",
         "geometry": "geometry",
     },
     "wq_station": {
@@ -113,6 +122,18 @@ SCHEMAS = {
         "snap_distance_m": "float64",
         "snap_fraction": "float64",
         "match_method": "string",
+        "snap_reason": "string",
+        "snap_evidence": "string",
+        "reach_feature_type": "Int16",
+        "reach_gnis_name": "string",
+        "reach_totdasqkm": "float64",
+        "reach_slope": "float64",
+        "datum_epsg": "Int32",
+        "datum_assumed": "bool",
+        "qc_far_snap": "bool",
+        "qc_near_unsuitable_flowline": "bool",
+        "reported_drainage_area_km2": "float64",
+        "qc_non_riverine_name": "bool",
         "geometry": "geometry",
     },
     "dam_station_link": {
@@ -232,6 +253,36 @@ def to_code(series, width):
     return padded.where(numeric.notna(), to_text(series))
 
 
+def to_flag(series):
+    """Booleans as written to the gpkg (bool or 0/1); missing -> False."""
+    return pd.to_numeric(series.astype("object").replace({True: 1, False: 0}),
+                         errors="coerce").fillna(0).astype(bool)
+
+
+def snap_columns(frame, label):
+    """The match and reach columns snap_features.py adds (spec 3.12), typed.
+    A file from the older nearest-flowline snapping lacks them: re-run
+    snap_features."""
+    def src(name):
+        return _source(frame, name, f"{label} (re-run snap_features if this file predates "
+                       "reach metadata)")
+
+    return {
+        "match_method": to_text(src("match_method")),
+        "snap_reason": to_text(src("snap_reason")),
+        "snap_evidence": to_text(src("snap_evidence")),
+        "reach_feature_type": pd.to_numeric(src("reach_ftype"), errors="coerce").astype("Int16"),
+        "reach_gnis_name": to_text(src("reach_gnis_name")),
+        # NHDPlus placeholders (-9999, -9998) are already null; any left are dropped here.
+        "reach_totdasqkm": to_float(src("reach_totdasqkm")).where(lambda v: v > 0),
+        "reach_slope": to_float(src("reach_slope")).where(lambda v: v >= 0),
+        "datum_epsg": pd.to_numeric(src("datum_epsg"), errors="coerce").astype("Int32"),
+        "datum_assumed": to_flag(src("datum_assumed")),
+        "qc_far_snap": to_flag(src("qc_far_snap")),
+        "qc_near_unsuitable_flowline": to_flag(src("qc_near_unsuitable_flowline")),
+    }
+
+
 # --------------------------------------------------
 # Loading intermediate outputs
 # --------------------------------------------------
@@ -330,7 +381,7 @@ def build_dam_removal(dams_snapped):
         "NHDPlusID": dams["NHDPlusID"].astype("int64"),
         "snap_distance_m": to_float(dams["snap_distance_m"]),
         "snap_fraction": to_float(dams["snap_fraction"]),
-        "match_method": pd.Series(MATCH_METHOD, index=dams.index, dtype="string"),
+        **snap_columns(dams, "dams_snapped layer"),
     })
     return gpd.GeoDataFrame(table, geometry=dams.geometry, crs=WGS84)
 
@@ -411,7 +462,11 @@ def build_wq_station(stations, dam_station_link):
         "NHDPlusID": linked["NHDPlusID"].astype("int64"),
         "snap_distance_m": to_float(linked["snap_distance_m"]),
         "snap_fraction": to_float(linked["snap_fraction"]),
-        "match_method": pd.Series(MATCH_METHOD, index=linked.index, dtype="string"),
+        **snap_columns(linked, "stations_snapped layer"),
+        "reported_drainage_area_km2": to_float(
+            _source(linked, "reported_area_km2", "stations_snapped layer")),
+        "qc_non_riverine_name": to_flag(
+            _source(linked, "qc_non_riverine_name", "stations_snapped layer")),
     })
     return gpd.GeoDataFrame(table, geometry=linked.geometry, crs=WGS84)
 
@@ -579,6 +634,12 @@ def validate_tables(tables, current_year=None):
     for name, frame in [("dam_removal", dams), ("wq_station", stations)]:
         if not frame["snap_fraction"].between(0, 1).all():
             errors.append(f"{name}.snap_fraction outside [0, 1]")
+        if (frame["reach_totdasqkm"].dropna() <= 0).any():
+            errors.append(f"{name}.reach_totdasqkm has non-positive values")
+        if (frame["reach_slope"].dropna() < 0).any():
+            errors.append(f"{name}.reach_slope has negative values")
+        if frame["match_method"].isna().any():
+            errors.append(f"{name}.match_method is null")
 
     years = dams["Year_Removed"].dropna()
     if not years.between(1800, current_year).all():

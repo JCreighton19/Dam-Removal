@@ -18,11 +18,14 @@ Which months
 ------------
 All 12 months of every year in removal_year +/- wq_window for the
 dam-station pairs with `has_both`, from 1895 up to the last year whose
-months are all final (PRISM revises a month for 6 months).
+months are all final (PRISM revises a month for 6 months). Station-years
+the existing climate table already holds for an unchanged upstream area are
+not downloaded again (etl/common/covariates.py).
 
 Which areas
 -----------
-Every case-study NHDPlus package holding a catchment in station_catchment,
+Every case-study NHDPlus package holding a catchment, in station_catchment,
+of a station still to compute,
 clipped to the extent of those catchments, as for land cover. Clips stay
 on the PRISM grid and are written to
 
@@ -51,7 +54,7 @@ from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
 from etl.common.progress import huc8s_with_outputs
 from etl.common.warehouse import warehouse_dir
-from etl.download_land_cover import clip_window, needed_packages, needed_years, write_clip
+from etl.download_land_cover import clip_window, needed_packages, pending_work, write_clip
 
 URL_TEMPLATE = "https://services.nacse.org/prism/data/get/us/800m/{variable}/{year}{month:02d}"
 VARIABLES = ("ppt", "tmean")
@@ -165,16 +168,13 @@ def main():
         "station_catchment table (run build_station_watershed.py first)",
     )
 
-    wq_window = cfg.get("wq_window", {}) or {}
     last_year = last_stable_year()
-    years = needed_years(
-        db_path, int(wq_window.get("years_before", 3)), int(wq_window.get("years_after", 3)),
-        first_year=FIRST_YEAR, last_year=last_year,
-    )
+    years, catchment_ids = pending_work(cfg, db_path, "climate", FIRST_YEAR, last_year,
+                                        rows_per_year=12)
 
     nhd_dir = cfg.project_root / "data" / "processed" / "nhdplus_extracted"
     gdb_paths = sorted({find_huc8_geodatabase(nhd_dir, h) for h in huc8s_with_outputs(cfg)})
-    packages = needed_packages(db_path, gdb_paths)
+    packages = needed_packages(catchment_ids, gdb_paths) if years else {}
 
     prism_dir = cfg.project_root / "data" / "raw" / "prism"
     print(f"Case study: {cfg.name}")

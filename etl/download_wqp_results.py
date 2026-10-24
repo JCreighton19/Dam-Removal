@@ -31,9 +31,18 @@ excludes them anyway. Stations sharing a date range are batched together,
 because WQP applies one date range per request.
 
 Batches that return no results are recorded in the manifest but not
-saved as CSVs. On a re-run, a batch is skipped only if the manifest shows
-it was already downloaded (or came back empty) for the same stations and
-date range, so changing wq_window or the station set re-requests it.
+saved as CSVs.
+
+Re-runs reuse earlier downloads by content, not by batch number: every
+finished batch in the manifest (its CSV still on disk, or confirmed empty)
+is kept, and a station's date range is requested again only if the kept
+batches don't already cover it. New batches are numbered after the kept
+ones. So re-snapping, which adds and removes a few stations, downloads only
+the new or widened station windows instead of shifting every batch. Kept
+batches for stations no longer linked stay listed; clean_wq_results.py
+drops their rows (station not in wq_station). Failed batches, and batches
+whose CSV is gone, are dropped from the manifest and requested again if
+still needed.
 """
 
 from pathlib import Path
@@ -43,6 +52,7 @@ import argparse
 import sys
 import threading
 import time
+from collections import defaultdict
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -148,6 +158,47 @@ def merge_windows(windows):
     return merged
 
 
+def reusable_entries(previous, output_dir):
+    """Earlier manifest entries whose data can be reused: finished with the
+    current data profile, and (with data) their CSV still on disk."""
+    kept = {}
+    for batch_num, entry in previous.items():
+        if entry.get("data_profile") != DATA_PROFILE:
+            continue
+        if entry.get("status") == "zero_rows":
+            kept[batch_num] = entry
+        elif entry.get("status") == "success" and entry.get("file"):
+            path = output_dir / str(entry["file"])
+            if path.exists() and path.stat().st_size > 0:
+                kept[batch_num] = entry
+    return kept
+
+
+def covered_ranges(entries):
+    """station_id -> year ranges already downloaded (merged)."""
+    ranges = defaultdict(list)
+    for entry in entries.values():
+        try:
+            start, end = int(entry["start_year"]), int(entry["end_year"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        for station in str(entry.get("stations") or "").split(";"):
+            if station:
+                ranges[station].append((start, end))
+    return {station: merge_windows(sorted(r)) for station, r in ranges.items()}
+
+
+def uncovered(stations, covered):
+    """Rows of `stations` (station_id, start_year, end_year) whose whole
+    range isn't inside one already-downloaded range for that station."""
+    keep = [
+        not any(start <= row.start_year and row.end_year <= end
+                for start, end in covered.get(row.station_id, []))
+        for row in stations.itertuples(index=False)
+    ]
+    return stations[keep].reset_index(drop=True)
+
+
 def build_batches(stations, batch_size):
     """Group stations sharing a date range, then split into batches of
     (start_year, end_year, [station_id, ...])."""
@@ -210,7 +261,13 @@ def main():
         keep = stations["station_id"].drop_duplicates().head(args.max_stations)
         stations = stations[stations["station_id"].isin(keep)]
 
-    batches = build_batches(stations, args.batch_size)
+    # Earlier finished batches are kept; only uncovered station ranges are
+    # requested, as new batches numbered after them.
+    previous = load_previous_manifest(manifest_file)
+    manifest = reusable_entries(previous, output_dir)
+    todo = uncovered(stations, covered_ranges(manifest))
+    first_batch = max(manifest, default=0) + 1
+    batches = build_batches(todo, args.batch_size)
 
     print("=" * 70)
     print(f"Case study: {cfg.name}")
@@ -218,24 +275,24 @@ def main():
     print(f"Window: {years_before} years before / {years_after} years after removal")
     print(
         f"Stations: {stations['station_id'].nunique():,} "
-        f"({len(stations):,} station date ranges) in {len(batches):,} batches "
-        f"of up to {args.batch_size}"
+        f"({len(stations):,} station date ranges)"
+    )
+    print(
+        f"Already downloaded: {len(stations) - len(todo):,} station date ranges "
+        f"(kept {len(manifest):,} earlier batches; dropped "
+        f"{len(previous) - len(manifest):,} failed or missing ones)"
+    )
+    print(
+        f"To request: {len(todo):,} station date ranges in {len(batches):,} batches "
+        f"of up to {args.batch_size}, numbered from {first_batch}"
     )
     print(f"Output: {output_dir}")
     print("=" * 70, flush=True)
 
-    warn_about_orphaned_batch_files(output_dir, len(batches))
+    write_manifest(manifest, manifest_file)
+    warn_about_unlisted_batch_files(output_dir, manifest)
 
-    # Keyed by batch number; earlier-run entries are kept until each batch
-    # is revisited, so an interrupted run doesn't forget finished batches.
-    manifest = {
-        batch_num: entry
-        for batch_num, entry in load_previous_manifest(manifest_file).items()
-        if batch_num <= len(batches)
-    }
-    previous = dict(manifest)
-
-    counts = {"data": 0, "empty": 0, "skipped": 0, "failed": 0}
+    counts = {"data": 0, "empty": 0, "skipped": len(stations) - len(todo), "failed": 0}
     consecutive_failures = 0
     aborted = False
     total_rows = 0
@@ -253,11 +310,11 @@ def main():
         if completed % PROGRESS_EVERY == 0 or completed == len(batches):
             print_progress(completed, len(batches), counts, total_rows, started)
 
-    for batch_num, (start_year, end_year, batch) in enumerate(batches, start=1):
+    for batch_num, (start_year, end_year, batch) in enumerate(batches, start=first_batch):
         output_file = output_dir / f"results_batch_{batch_num:03d}.csv"
         stations_key = ";".join(batch)
         prefix = (
-            f"[{batch_num:>{width}}/{len(batches)}] "
+            f"[{batch_num - first_batch + 1:>{width}}/{len(batches)}] batch {batch_num}, "
             f"{start_year}-{end_year}, {len(batch)} stations:"
         )
 
@@ -274,15 +331,7 @@ def main():
             "error": None,
         }
 
-        prior = previous.get(batch_num)
-
-        if already_done(prior, start_year, end_year, stations_key, output_file):
-            entry.update(status=prior["status"], file=prior["file"], rows=prior["rows"])
-            counts["skipped"] += 1
-            print(f"{prefix} skipped (done in an earlier run)", flush=True)
-            record(batch_num, entry)
-        else:
-            pending.append((batch_num, start_year, end_year, batch, output_file, prefix, entry))
+        pending.append((batch_num, start_year, end_year, batch, output_file, prefix, entry))
 
     # Requests run in worker threads; saving files, the manifest and all
     # printing stay on the main thread as each batch completes.
@@ -340,7 +389,7 @@ def main():
     print("Download finished")
     print(f"  Batches with data:  {counts['data']:,} ({total_rows:,} rows)")
     print(f"  Batches empty:      {counts['empty']:,} (not saved)")
-    print(f"  Skipped (earlier):  {counts['skipped']:,}")
+    print(f"  Already downloaded: {counts['skipped']:,} station date ranges")
     print(f"  Failed:             {counts['failed']:,}")
     if aborted:
         print(f"  Not attempted:      {len(batches) - completed:,} (run stopped early)")
@@ -426,48 +475,20 @@ def load_previous_manifest(manifest_file):
     return {int(row["batch"]): row for row in previous.to_dict("records")}
 
 
-def already_done(prior, start_year, end_year, stations_key, output_file):
-    """True if an earlier run finished this exact batch (same stations, date
-    range and data profile) and, for batches with data, its CSV is still on disk."""
-    if prior is None or prior.get("status") not in ("success", "zero_rows"):
-        return False
-
-    try:
-        same_batch = (
-            int(prior["start_year"]) == start_year
-            and int(prior["end_year"]) == end_year
-            and prior.get("stations") == stations_key
-            and prior.get("data_profile") == DATA_PROFILE
-        )
-    except (KeyError, TypeError, ValueError):
-        return False  # manifest from an older version of this script
-
-    if not same_batch:
-        return False
-
-    if prior["status"] == "success":
-        return output_file.exists() and output_file.stat().st_size > 0
-
-    return True
-
-
 def write_manifest(manifest, manifest_file):
     pd.DataFrame([manifest[b] for b in sorted(manifest)]).to_csv(
         manifest_file, index=False
     )
 
 
-def warn_about_orphaned_batch_files(output_dir, batch_count):
-    orphaned = [
-        path.name
-        for path in sorted(output_dir.glob("results_batch_*.csv"))
-        if int(path.stem.rsplit("_", 1)[-1]) > batch_count
-    ]
-    if orphaned:
+def warn_about_unlisted_batch_files(output_dir, manifest):
+    listed = {str(entry.get("file")) for entry in manifest.values() if entry.get("file")}
+    unlisted = sorted(p.name for p in output_dir.glob("results_batch_*.csv") if p.name not in listed)
+    if unlisted:
         print(
-            f"WARNING: {len(orphaned)} batch file(s) numbered above {batch_count} "
-            f"are left over from an earlier run (e.g. {orphaned[0]}) and will be "
-            "read by report_pilot_eligibility.py. Delete them if they're stale.",
+            f"Note: {len(unlisted)} batch file(s) are not in the manifest (e.g. "
+            f"{unlisted[0]}); clean_wq_results.py ignores them, and a new batch with "
+            "the same number replaces it.",
             flush=True,
         )
 

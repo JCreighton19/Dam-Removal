@@ -32,6 +32,10 @@ Packages are summed, so an upstream area spanning packages is handled.
 After a successful write the clips are deleted (they're only an
 intermediate; --keep-clips keeps them).
 
+Reuse: rows of the existing climate table are kept for stations whose
+upstream catchments (catchment_hash) are unchanged; only new or changed
+stations are computed (etl/common/covariates.py).
+
 Rows: one per station x year x month, for the years inside some eligible
 pair's window for that station (1895 onward).
 """
@@ -56,13 +60,14 @@ from scipy import sparse
 
 from etl.build_views import add_view
 from etl.common.config import default_case_study, load_config
+from etl.common.covariates import catchment_hashes, split_reusable
 from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
 from etl.common.progress import huc8s_with_outputs
 from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
 from etl.download_climate import FIRST_YEAR, VARIABLES, clip_path, last_stable_year
-from etl.load_land_cover import (BLOCK_ROWS, PIXEL_KM2, delete_clip_folders, package_catchments,
-                                 read_catchments, read_inputs)
+from etl.load_land_cover import (BLOCK_ROWS, PIXEL_KM2, combine, delete_clip_folders,
+                                 package_catchments, read_catchments, read_inputs)
 
 SOURCE = "prism_an_800m_monthly"
 ALBERS = "EPSG:5070"
@@ -82,6 +87,7 @@ SCHEMA = {
     "precipitation_mm": "float64",
     "valid_fraction": "float64",
     "source": "string",
+    "catchment_hash": "string",
 }
 
 
@@ -203,8 +209,7 @@ def build_climate(totals, station_ids, station_years, station_area):
         table["valid_pixels"] * PIXEL_KM2 / table["station_id"].map(station_area)
     ).clip(upper=1.0)
     table["source"] = SOURCE
-    table = table.sort_values(["station_id", "year", "month"]).reset_index(drop=True)
-    return table[list(SCHEMA)].astype(SCHEMA)
+    return table
 
 
 # --------------------------------------------------
@@ -225,6 +230,8 @@ def validate(table, station_years):
     if len(table) != len(station_years) * 12:
         errors.append(f"{len(table):,} rows, expected {len(station_years) * 12:,} "
                       "(one per needed station-year and month)")
+    if table["catchment_hash"].isna().any():
+        errors.append("catchment_hash is null")
     return errors
 
 
@@ -261,22 +268,30 @@ def main():
         db_path, int(wq_window.get("years_before", 3)), int(wq_window.get("years_after", 3)),
         first_year=FIRST_YEAR, last_year=last_stable_year(),
     )
-    station_ids = np.array(sorted(membership["station_id"].unique()))
+    hashes = catchment_hashes(membership)
+    kept, pending = split_reusable(output_dir, "climate", membership, station_years, 12)
+    todo = membership[membership["station_id"].isin(pending["station_id"])]
+    station_ids = np.array(sorted(todo["station_id"].unique()))
     station_area = pd.read_parquet(watershed_path, columns=["station_id", "area_km2"]) \
         .set_index("station_id")["area_km2"]
 
     nhd_dir = cfg.project_root / "data" / "processed" / "nhdplus_extracted"
     gdb_paths = sorted({find_huc8_geodatabase(nhd_dir, h) for h in huc8s_with_outputs(cfg)})
-    packages, not_found = package_catchments(gdb_paths, membership["catchment_id"].unique())
+    packages, not_found = package_catchments(gdb_paths, todo["catchment_id"].unique())
 
     print(f"Case study: {cfg.name}")
-    print(f"Stations: {len(station_ids):,}; station-years: {len(station_years):,}")
+    print(f"Stations: {membership['station_id'].nunique():,}; station-years: "
+          f"{len(station_years):,}; to compute: {len(station_ids):,} stations, "
+          f"{len(pending):,} station-years")
     print(f"Packages: {len(packages)}; catchments not found in any package: {len(not_found):,}",
           flush=True)
 
     prism_dir = cfg.project_root / "data" / "raw" / "prism"
-    totals = station_sums(membership, station_ids, prism_dir, packages, station_years)
-    table = build_climate(totals, station_ids, station_years, station_area)
+    new = None
+    if len(pending):
+        totals = station_sums(todo, station_ids, prism_dir, packages, pending)
+        new = build_climate(totals, station_ids, pending, station_area)
+    table = combine(kept, new, hashes, SCHEMA)
 
     errors = validate(table, station_years)
     if errors:

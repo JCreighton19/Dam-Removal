@@ -32,6 +32,8 @@ CANONICAL_COLUMNS = (
     "FType",
     "FCode",
     "FlowDir",
+    "TotDASqKm",
+    "Slope",
 )
 
 

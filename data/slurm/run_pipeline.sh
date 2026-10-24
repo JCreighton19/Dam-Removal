@@ -29,6 +29,8 @@
 #                                           its output
 #   report_pilot_eligibility                replaced by build_views; kept until
 #                                           the views are checked against it
+#   snapping validation (snap_features --output-dir ..., compare_snapping)
+#                                           see docs/rerun_after_snapping.md
 
 set -euo pipefail
 
@@ -42,6 +44,7 @@ STAGES=(
     download_wqp_results
     load_core_tables
     clean_wq_results
+    build_daily_measurements
     build_views
     build_station_watershed
     download_nlcd

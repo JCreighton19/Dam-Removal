@@ -10,12 +10,14 @@ Which years
 -----------
 Every year in removal_year +/- wq_window for the dam-station pairs with
 `has_both` (eligibility_pairs in warehouse.duckdb), limited to the years
-NLCD has.
+NLCD has. Station-years the existing land_cover table already holds for an
+unchanged upstream area are not downloaded again (etl/common/covariates.py).
 
 Which areas
 -----------
 Every case-study NHDPlus package (HU8 or HU4) holding at least one
-catchment in station_catchment.parquet (build_station_watershed.py).
+catchment, in station_catchment.parquet (build_station_watershed.py), of a
+station still to compute.
 Each year's raster is clipped to the extent of those catchments (not the
 whole package), on the original NLCD 30 m grid (no reprojection), so
 every year lines up pixel for pixel. load_land_cover.py deletes the clips
@@ -43,7 +45,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import duckdb
 import pandas as pd
 import pyogrio
 import rasterio
@@ -52,6 +53,7 @@ from rasterio.warp import transform_bounds
 from rasterio.windows import Window, from_bounds
 
 from etl.common.config import default_case_study, load_config
+from etl.common.covariates import eligible_station_years, split_reusable, window_years  # noqa: F401
 from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
 from etl.common.progress import huc8s_with_outputs
@@ -73,46 +75,26 @@ DOWNLOAD_RETRIES = 3
 # What to download
 # --------------------------------------------------
 
-def window_years(removal_year, years_before, years_after, first_year, last_year,
+def pending_work(cfg, db_path, table, first_year, last_year, rows_per_year,
                  nearest_if_outside=False):
-    """Years of one removal's window that the source covers. With
-    nearest_if_outside, a year outside the source's range is replaced by the
-    nearest covered year, so a window wholly before 1985 still gets NLCD
-    1985 (land cover changes slowly; analysis rows flag the year used)."""
-    years = range(removal_year - years_before, removal_year + years_after + 1)
-    if nearest_if_outside:
-        years = [min(max(y, first_year), last_year) for y in years]
-    return {y for y in years if first_year <= y <= last_year}
+    """(years to download, catchment IDs to clip) for the stations whose
+    `table` rows can't be kept from the existing table."""
+    wq_window = cfg.get("wq_window", {}) or {}
+    membership, station_years = eligible_station_years(
+        db_path, int(wq_window.get("years_before", 3)), int(wq_window.get("years_after", 3)),
+        first_year, last_year, nearest_if_outside,
+    )
+    _, pending = split_reusable(warehouse_dir(cfg), table, membership, station_years,
+                                rows_per_year)
+    catchments = membership.loc[membership["station_id"].isin(pending["station_id"]),
+                                "catchment_id"]
+    return sorted(int(y) for y in pending["year"].unique()), {int(c) for c in catchments}
 
 
-def needed_years(db_path, years_before, years_after, first_year=FIRST_YEAR, last_year=LAST_YEAR,
-                 nearest_if_outside=False):
-    """Years in some eligible pair's window that the source covers
-    (NLCD by default)."""
-    with duckdb.connect(str(db_path), read_only=True) as con:
-        removal_years = [
-            int(y) for (y,) in con.sql(
-                "SELECT DISTINCT removal_year FROM eligibility_pairs WHERE has_both"
-            ).fetchall()
-        ]
-    years = set()
-    for removal in removal_years:
-        years |= window_years(removal, years_before, years_after, first_year, last_year,
-                              nearest_if_outside)
-    return sorted(years)
-
-
-def needed_packages(db_path, gdb_paths):
-    """Packages holding at least one catchment upstream of an eligible
-    station, with the extent of those catchments (not the whole package,
-    which can be far bigger) and their CRS."""
-    with duckdb.connect(str(db_path), read_only=True) as con:
-        catchment_ids = {
-            int(c) for (c,) in con.sql(
-                "SELECT DISTINCT catchment_id FROM station_catchment"
-            ).fetchall()
-        }
-
+def needed_packages(catchment_ids, gdb_paths):
+    """Packages holding at least one of the catchments, with the extent of
+    those catchments (not the whole package, which can be far bigger) and
+    their CRS."""
     packages = {}
     for gdb_path in gdb_paths:
         fields = {str(f).lower(): str(f) for f in
@@ -283,15 +265,12 @@ def main():
         "station_catchment table (run build_station_watershed.py first)",
     )
 
-    wq_window = cfg.get("wq_window", {}) or {}
-    years = needed_years(
-        db_path, int(wq_window.get("years_before", 3)), int(wq_window.get("years_after", 3)),
-        nearest_if_outside=True,
-    )
+    years, catchment_ids = pending_work(cfg, db_path, "land_cover", FIRST_YEAR, LAST_YEAR,
+                                        rows_per_year=16, nearest_if_outside=True)
 
     nhd_dir = cfg.project_root / "data" / "processed" / "nhdplus_extracted"
     gdb_paths = sorted({find_huc8_geodatabase(nhd_dir, h) for h in huc8s_with_outputs(cfg)})
-    packages = needed_packages(db_path, gdb_paths)
+    packages = needed_packages(catchment_ids, gdb_paths) if years else {}
 
     nlcd_dir = cfg.project_root / "data" / "raw" / "nlcd" / "annual_c1v2"
     print(f"Case study: {cfg.name}")

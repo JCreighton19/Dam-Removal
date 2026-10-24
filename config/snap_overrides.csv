@@ -1,0 +1,13 @@
+# Manual snap overrides, read by etl/snap_features.py (spec section 3.12).
+# One row per reviewed dam or station. Lines starting with # are ignored.
+#   feature_kind  dam | station
+#   feature_id    AR_ID for dams, MonitoringLocationIdentifier for stations
+#   action        accept (use reach nhdplus_id) | reject (keep out of the analysis)
+#   nhdplus_id    the reach to use; required for accept, empty for reject.
+#                 Checked when applied: it must be in the HUC8's NHDPlus package
+#                 and within 2,000 m of the point.
+#   reason        required: what the review found (map, reported drainage area, ...)
+# Example rows:
+#   station,EXAMPLE-STATION-1,reject,,on a tidal marsh channel; no river reach fits (audit map),jc,2026-10-23
+#   dam,99999,accept,10000100012345,dam is on Mill River; nearest flowline is a tributary,jc,2026-10-23
+feature_kind,feature_id,action,nhdplus_id,reason,reviewed_by,reviewed_on

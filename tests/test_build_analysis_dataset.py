@@ -47,7 +47,9 @@ def _core_tables(directory):
         "River": ["R1", "R2"], "State": ["ME", "NY"], "Dam_Height_ft": [10.0, None],
         "Year_built": pd.array([1900, None], dtype="Int16"), "Original_Use": ["Mill", None],
     })
-    stations = pd.DataFrame({"station_id": ["DOWN", "UP", "OLD"], "snap_fraction": [0.5] * 3})
+    stations = pd.DataFrame({"station_id": ["DOWN", "UP", "OLD"], "snap_fraction": [0.5] * 3,
+                             "qc_far_snap": [False, False, True],
+                             "qc_near_unsuitable_flowline": False, "qc_non_riverine_name": False})
     links = pd.DataFrame({
         "AR_ID": ["D1", "D1", "D2"], "station_id": ["DOWN", "UP", "OLD"],
         "relationship": ["downstream", "upstream", "downstream"],
@@ -88,7 +90,8 @@ def _context_tables(directory):
     tables = {
         "station_watershed": pd.DataFrame({"station_id": ["DOWN", "UP", "OLD"],
                                            "area_km2": [50.0, 40.0, 30.0],
-                                           "truncated": [False, False, True]}),
+                                           "truncated": [False, False, True],
+                                           "drainage_area_flag": ["ok", "ok", "truncated"]}),
         "land_cover": pd.DataFrame(land),
         "land_cover_codes": codes,
         "climate": climate,
@@ -144,6 +147,18 @@ def test_rows_and_context_joins():
         assert (old["land_cover_year"] == 1985).all() and (old["pct_agriculture"] == 100).all()
         assert old["air_temp_mean_c"].isna().all()
         assert old["watershed_truncated"].all() and old["year_built"].isna().all()
+
+        # Exposure: each station is below one removal only.
+        assert (down["exposure_status"] == "assigned_sole").all() and (down["assigned_AR_ID"] == "D1").all()
+        assert (old["assigned_AR_ID"] == "D2").all() and (old["n_other_removals_in_window"] == 0).all()
+
+        # Flags carried, not applied; a truncated area never enters as a value.
+        assert old["qc_far_snap"].all() and not down["qc_far_snap"].any()
+        assert table["qc_saline"].isna().all()  # no conductance measured: unknown
+        assert old["upstream_area_km2"].isna().all() and old["missing_upstream_area"].all()
+        assert (down["upstream_area_km2"] == 50.0).all() and not down["missing_upstream_area"].any()
+        assert old["missing_climate"].all() and not down["missing_climate"].any()
+        assert not table["missing_land_cover"].any()
 
         with duckdb.connect(str(out / "warehouse.duckdb"), read_only=True) as con:
             assert con.sql("SELECT count(*) FROM analysis_measurement").fetchone()[0] == 12

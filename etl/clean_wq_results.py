@@ -62,6 +62,10 @@ MEASUREMENT_ID_FIELDS = [
     "ResultAnalyticalMethod/MethodIdentifier",
 ]
 
+# Read when present (kept as null otherwise): the agency namespace of the
+# method ID, e.g. USGS vs EPA.
+METHOD_CONTEXT = "ResultAnalyticalMethod/MethodIdentifierContext"
+
 # WQP columns the cleaning rules read.
 REQUIRED_COLUMNS = set(MEASUREMENT_ID_FIELDS) | {
     "MonitoringLocationIdentifier",
@@ -99,6 +103,8 @@ SCHEMA = {
     "parameter": "string",
     "parameter_std": "string",
     "usgs_pcode": "string",
+    "method_id": "string",
+    "method_context": "string",
     "result_value_raw": "string",
     "result_value_std": "float64",
     "result_unit_raw": "string",
@@ -416,6 +422,9 @@ def build_table(df):
         "parameter": df["CharacteristicName"],
         "parameter_std": df["parameter_std"],
         "usgs_pcode": df["usgs_pcode"],
+        "method_id": df["ResultAnalyticalMethod/MethodIdentifier"].str.strip(),
+        "method_context": (df[METHOD_CONTEXT].str.strip() if METHOD_CONTEXT in df.columns
+                           else pd.Series(pd.NA, index=df.index, dtype="string")),
         "result_value_raw": df["ResultMeasureValue"],
         "result_value_std": df["result_value_std"].astype("float64"),
         "result_unit_raw": df["ResultMeasure/MeasureUnitCode"],

@@ -39,7 +39,7 @@ Choose the case study in `data/slurm/case_study.env`, the one file every job rea
 
 ## Pipeline
 
-To run stages 3–11 as one chain of Slurm jobs (each waits for the previous one to succeed), run from the login node:
+To run stages 3–18 as one chain of Slurm jobs (each waits for the previous one to succeed), run from the login node:
 
 ```bash
 bash data/slurm/run_pipeline.sh                      # every stage
@@ -60,18 +60,21 @@ The stages, in order:
 3. `download_wqp_stations` → `select_candidate_stations`: WQP stations in the case-study HUC8s
 4. `download_streams` → `unzip_nhdplus`: NHDPlus HR packages, kept as slim GeoPackages (4 layers)
 5. `build_stream_network`: network diagnostics (not in the chain; run separately if needed)
-6. `snap_features`: snap dams and stations to the nearest flowline
+6. `snap_features`: match dams and stations to an NHDPlus reach (datum transformation, stream types only, distance limits, name and drainage-area checks, manual overrides in `config/snap_overrides.csv`); each point is accepted, ambiguous or rejected, and only accepted ones go on (spec 3.12)
 7. `link_dams`: classify each station as upstream, downstream or unconnected relative to each dam
-8. `download_wqp_results`: measurements within each dam's analysis window
+8. `download_wqp_results`: measurements within each dam's analysis window (re-runs download only station windows not already downloaded)
 9. `load_core_tables`: write the core warehouse tables (see below)
 10. `clean_wq_results`: clean the downloaded results into `wq_measurement`
-11. `build_views`: `warehouse.duckdb` views, including which dams have enough before/after data
-12. `build_station_watershed`: upstream drainage area of each eligible station (context data, step 1 of 3)
-13. `download_nlcd`: Annual NLCD land cover for the needed years, clipped per NHDPlus package
-14. `load_land_cover`: land-cover percentages per station and year
-15. `download_climate`: monthly PRISM precipitation and temperature for the needed years, clipped per NHDPlus package
-16. `load_climate`: monthly climate per station, area-weighted over its upstream area
-17. `build_analysis_dataset`: the modeling table `analysis_measurement`, one row per pre/post measurement of each eligible dam-station pair with dam, watershed, climate and baseline land-cover columns (design choices in the spec, 3.11)
+11. `build_daily_measurements`: one value per station, day, depth, sample type and method (`wq_measurement_daily`)
+12. `build_views`: `warehouse.duckdb` views, including which dams have enough before/after data, each measurement's nearest upstream removal, and station quality flags
+13. `build_station_watershed`: upstream drainage area of each eligible station (context data, step 1 of 3), with placeholder and truncation flags
+14. `download_nlcd`: Annual NLCD land cover for the needed years, clipped per NHDPlus package
+15. `load_land_cover`: land-cover percentages per station and year
+16. `download_climate`: monthly PRISM precipitation and temperature for the needed years, clipped per NHDPlus package
+17. `load_climate`: monthly climate per station, area-weighted over its upstream area
+18. `build_analysis_dataset`: the modeling table `analysis_measurement`, one row per pre/post measurement of each eligible dam-station pair with dam, watershed, climate and baseline land-cover columns, exposure status and quality flags (design choices in the spec, 3.11)
+
+Stages 14–17 keep existing rows for stations whose upstream area hasn't changed and compute only new or changed ones. To re-run after a snapping change, validate first: see [`docs/rerun_after_snapping.md`](docs/rerun_after_snapping.md).
 
 ## Warehouse
 
@@ -81,13 +84,14 @@ Curated tables are written as Parquet (GeoParquet for geometry) to `data/warehou
 |---|---|
 | `dam_removal`, `wq_station`, `dam_station_link`, `huc8_watershed`, `streams` | `load_core_tables.py` |
 | `wq_measurement`, `wq_measurement_raw` | `clean_wq_results.py` (rules in `etl/common/wq_rules.py`) |
+| `wq_measurement_daily` | `build_daily_measurements.py` |
 | `station_watershed` | `build_station_watershed.py` |
 | `station_catchment` | `build_station_watershed.py` |
 | `land_cover`, `land_cover_codes` | `load_land_cover.py` |
 | `climate` | `load_climate.py` |
 | `analysis_measurement` | `build_analysis_dataset.py` |
 
-`build_views.py` writes `data/warehouse/<case_study>/warehouse.duckdb`, which holds views only (no data). Open it with `duckdb.connect(path, read_only=True)` and query e.g. `eligibility_summary`. Eligibility thresholds come from the config's optional `eligibility: {min_samples: 3, min_years: 2}` block.
+`build_views.py` writes `data/warehouse/<case_study>/warehouse.duckdb`, which holds views only (no data). Open it with `duckdb.connect(path, read_only=True)` and query e.g. `eligibility_summary`. Eligibility thresholds come from the config's optional `eligibility: {min_samples: 3, min_years: 2}` block; the saline threshold from `qc: {saline_sc_us_cm: 3000}`, the exposure distance ratio from `exposure: {min_distance_ratio: 2}`, and snapping limits from `snapping: {dams: {...}, stations: {...}}`.
 
 ## Current status
 

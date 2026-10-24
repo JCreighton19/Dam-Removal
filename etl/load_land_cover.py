@@ -28,6 +28,11 @@ area spans packages is handled.
 After a successful write the clips are deleted (they're only an
 intermediate; --keep-clips keeps them).
 
+Reuse: rows of the existing land_cover table are kept for stations whose
+upstream catchments (catchment_hash) are unchanged; only new or changed
+stations are computed, from clips download_land_cover.py fetched for them
+(etl/common/covariates.py).
+
 Rows: one per station x year x class (all 16 classes, zeros included),
 for the years inside some eligible pair's window for that station. Window
 years outside NLCD (1985-2025) are replaced by the nearest NLCD year, so a
@@ -43,7 +48,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import duckdb
 import numpy as np
 import pandas as pd
 import pyogrio
@@ -54,12 +58,12 @@ from scipy import sparse
 
 from etl.build_views import add_view
 from etl.common.config import default_case_study, load_config
+from etl.common.covariates import catchment_hashes, eligible_station_years, split_reusable
 from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
 from etl.common.progress import HucProgress, huc8s_with_outputs
 from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
-from etl.download_land_cover import (FIRST_YEAR, LAST_YEAR, clip_path, indexed_bounds,
-                                     window_years)
+from etl.download_land_cover import FIRST_YEAR, LAST_YEAR, clip_path, indexed_bounds
 
 SOURCE = "annual_nlcd_c1v2"
 PIXEL_KM2 = 30 * 30 / 1e6
@@ -94,6 +98,7 @@ SCHEMA = {
     "percent_area": "float64",
     "valid_fraction": "float64",
     "source": "string",
+    "catchment_hash": "string",
 }
 CODES_SCHEMA = {"class_code": "int16", "class_label": "string", "class_group": "string"}
 
@@ -105,25 +110,23 @@ CODES_SCHEMA = {"class_code": "int16", "class_label": "string", "class_group": "
 def read_inputs(db_path, years_before, years_after, first_year=FIRST_YEAR, last_year=LAST_YEAR,
                 nearest_if_outside=False):
     """station_catchment rows, and the years each station needs that the
-    source covers (NLCD by default; see window_years for
+    source covers (NLCD by default; see covariates.window_years for
     nearest_if_outside)."""
-    with duckdb.connect(str(db_path), read_only=True) as con:
-        membership = con.sql("SELECT station_id, catchment_id FROM station_catchment").df()
-        removal = con.sql("""
-            SELECT DISTINCT station_id, removal_year FROM eligibility_pairs WHERE has_both
-        """).df()
+    return eligible_station_years(db_path, years_before, years_after, first_year, last_year,
+                                  nearest_if_outside)
 
-    station_years = {
-        (row.station_id, year)
-        for row in removal.itertuples(index=False)
-        for year in window_years(int(row.removal_year), years_before, years_after,
-                                 first_year, last_year, nearest_if_outside)
-    }
-    station_years = pd.DataFrame(sorted(station_years), columns=["station_id", "year"])
-    station_years = station_years[station_years["station_id"].isin(membership["station_id"])]
-    # Stations whose whole window is outside the source's years get no rows.
-    membership = membership[membership["station_id"].isin(station_years["station_id"])]
-    return membership, station_years
+
+def combine(kept, new, hashes, schema):
+    """Kept rows plus newly computed ones, every row tagged with its
+    station's current catchment_hash, typed to `schema`."""
+    frames = [f for f in (kept, new) if f is not None and len(f)]
+    if not frames:
+        return pd.DataFrame({c: pd.Series(dtype=t) for c, t in schema.items()})
+    table = pd.concat([f[[c for c in schema if c != "catchment_hash"]] for f in frames],
+                      ignore_index=True)
+    table["catchment_hash"] = table["station_id"].map(hashes)
+    keys = [c for c in ["station_id", "year", "month", "class_code"] if c in schema]
+    return table.sort_values(keys).reset_index(drop=True)[list(schema)].astype(schema)
 
 
 def package_catchments(gdb_paths, catchment_ids):
@@ -264,6 +267,8 @@ def build_land_cover(totals, station_ids, station_years, station_area, nodata):
         })
         frames.append(frame)
 
+    if not frames:
+        return None
     table = pd.concat(frames, ignore_index=True).merge(station_years, on=["station_id", "year"])
     table["area_km2"] = table["pixels"] * PIXEL_KM2
     # Null when a station-year has no valid pixels at all.
@@ -275,9 +280,7 @@ def build_land_cover(totals, station_ids, station_years, station_area, nodata):
         table["valid_pixels"] * PIXEL_KM2 / table["station_id"].map(station_area)
     ).clip(upper=1.0)
     table["source"] = SOURCE
-
-    table = table.sort_values(["station_id", "year", "class_code"]).reset_index(drop=True)
-    return table[list(SCHEMA)].astype(SCHEMA)
+    return table
 
 
 def delete_clip_folders(folders):
@@ -317,6 +320,8 @@ def validate(table, codes, station_years):
     if len(table) != len(station_years) * len(CLASS_CODES):
         errors.append(f"{len(table):,} rows, expected {len(station_years) * len(CLASS_CODES):,} "
                       "(one per needed station-year and class)")
+    if table["catchment_hash"].isna().any():
+        errors.append("catchment_hash is null")
     return errors
 
 
@@ -360,28 +365,35 @@ def main():
         db_path, int(wq_window.get("years_before", 3)), int(wq_window.get("years_after", 3)),
         nearest_if_outside=True,
     )
-    station_ids = np.array(sorted(membership["station_id"].unique()))
+    hashes = catchment_hashes(membership)
+    kept, pending = split_reusable(output_dir, "land_cover", membership, station_years,
+                                   len(CLASS_CODES))
+    todo = membership[membership["station_id"].isin(pending["station_id"])]
+    station_ids = np.array(sorted(todo["station_id"].unique()))
     station_area = pd.read_parquet(watershed_path, columns=["station_id", "area_km2"]) \
         .set_index("station_id")["area_km2"]
 
     nhd_dir = cfg.project_root / "data" / "processed" / "nhdplus_extracted"
     gdb_paths = sorted({find_huc8_geodatabase(nhd_dir, h) for h in huc8s_with_outputs(cfg)})
-    packages, not_found = package_catchments(gdb_paths, membership["catchment_id"].unique())
+    packages, not_found = package_catchments(gdb_paths, todo["catchment_id"].unique())
 
     print(f"Case study: {cfg.name}")
-    print(f"Stations: {len(station_ids):,}; station-years: {len(station_years):,}")
+    print(f"Stations: {membership['station_id'].nunique():,}; station-years: "
+          f"{len(station_years):,}; to compute: {len(station_ids):,} stations, "
+          f"{len(pending):,} station-years")
     print(f"Packages: {len(packages)}; catchments not found in any package: {len(not_found):,}",
           flush=True)
 
     nlcd_dir = cfg.project_root / "data" / "raw" / "nlcd" / "annual_c1v2"
-    totals = station_counts(membership, station_ids, nlcd_dir, packages, station_years,
-                            done_dir)
+    new = None
+    if len(pending):
+        totals = station_counts(todo, station_ids, nlcd_dir, packages, pending, done_dir)
+        first_clip = next(nlcd_dir.glob("*/LndCov_*.tif"))
+        with rasterio.open(first_clip) as src:
+            nodata = int(src.nodata) if src.nodata is not None else None
+        new = build_land_cover(totals, station_ids, pending, station_area, nodata)
 
-    first_clip = next(nlcd_dir.glob("*/LndCov_*.tif"))
-    with rasterio.open(first_clip) as src:
-        nodata = int(src.nodata) if src.nodata is not None else None
-
-    table = build_land_cover(totals, station_ids, station_years, station_area, nodata)
+    table = combine(kept, new, hashes, SCHEMA)
     codes = land_cover_codes()
 
     errors = validate(table, codes, station_years)
