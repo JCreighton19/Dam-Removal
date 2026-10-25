@@ -12,18 +12,26 @@ The pipeline links each dam removal to the water-quality monitoring stations on 
 | USGS Watershed Boundary Dataset (WBD), national GeoPackage | HUC8 watershed boundaries |
 | NHDPlus High Resolution | Stream flowlines and the flow network |
 | Water Quality Portal (WQP) | Monitoring stations and measurements |
-| NLCD | Land cover (in progress) |
+| Annual NLCD (Collection 1 v2, 30 m) | Land cover of each station's upstream area |
+| PRISM (monthly) | Precipitation and temperature over each station's upstream area |
+
+![ETL pipeline](docs/etl_pipeline_flowchart.png)
 
 ## Repository layout
 
 ```
-config/          Case-study configs: which HUC8s and dams are in scope
+config/          Case-study configs (which HUC8s and dams are in scope) and
+                 snap_overrides.csv (reviewed manual snapping decisions)
 etl/             Pipeline scripts (one per stage) and shared helpers in etl/common/
+analysis/        Helpers for the preprocessing audit notebook (audit_utils.py)
 data/slurm/      One Slurm job per pipeline stage; case_study.env selects the config
-docs/            Warehouse table spec (docs/warehouse_spec.md)
-notebooks/       Exploration and QA notebooks
+docs/            Warehouse spec (warehouse_spec.md), re-run runbook
+                 (rerun_after_snapping.md), pipeline flowchart
+notebooks/       Exploration, QA and audit notebooks
 tests/           Lightweight tests, runnable with `python tests/<file>.py` or pytest
 ```
+
+Generated configs (`pilot_random<n>_seed<seed>.yaml`, `all_removals.yaml`) are created on the cluster by `sample_random_pilot` and may not be in your local checkout.
 
 Data (`data/raw/`, `data/processed/`, `data/warehouse/`) is not tracked in git. WQP station selections and result downloads are stored per case study under `data/raw/wqp/results/<case_study>/`. It lives on the Explorer cluster at `/courses/DS5500.202710/teams/team4`.
 
@@ -37,6 +45,12 @@ sbatch create_env.slurm        # creates or updates the `dam-removal` conda env
 
 Choose the case study in `data/slurm/case_study.env`, the one file every job reads. For a random sample of dams, set `PILOT_N_DAMS` and `PILOT_SEED`; `run_pipeline.sh` generates `config/pilot_random<N>_seed<SEED>.yaml` on its first run.
 
+Run the tests after pulling changes (results in `data/slurm/logs/`):
+
+```bash
+sbatch data/slurm/run_tests.slurm
+```
+
 ## Pipeline
 
 To run stages 3–18 as one chain of Slurm jobs (each waits for the previous one to succeed), run from the login node:
@@ -49,7 +63,11 @@ bash data/slurm/run_pipeline.sh --to select_candidate_stations   # stop after a 
 
 The case study is set in `data/slurm/case_study.env`: `PILOT_N_DAMS=all` runs every dam removal (`all_removals`); a number runs a random sample (`pilot_random<n>_seed<seed>`).
 
-**8-hour job limit.** Stages that resume where they stopped (downloads, unzipping, and the per-HUC8 snap/link stages) are submitted as several attempts; each extra attempt picks up after a time-out and finishes in minutes if there's nothing left (`--list` shows the counts). HUC8s with no NHDPlus HR coverage are skipped with a warning and left out of later stages.
+**8-hour job limit.** Stages that resume where they stopped (downloads, unzipping, and the per-HUC8 snap/link stages) are submitted as several attempts; each extra attempt picks up after a time-out and finishes in minutes if there's nothing left (`--list` shows the counts). HUC8s with no NHDPlus HR coverage are skipped with a warning and left out of later stages. If a stage fails, every later job in the chain is cancelled.
+
+**Re-runs overwrite, downloads are reused.** Submitting a stage clears its progress markers, so it recomputes every HUC8 and replaces its outputs in place (snapped features, links, warehouse tables), with no automatic backup; back up first (see the runbook below). The download stages are the exception: `download_wqp_results`, `download_nlcd` and `download_climate` fetch only what isn't already on disk.
+
+**Don't hold `warehouse.duckdb` open while the chain runs.** Several stages (`build_views`, `build_station_watershed`, the land-cover and climate loads) write to it, and DuckDB refuses the write if another process, such as a notebook, has the file open, even read-only. In notebooks, read the Parquet files directly or open the database only inside a `with` block.
 
 **Storage.** Intermediate data is deleted once used: NHDPlus zips after unzipping, all but the 4 NHDPlus layers the pipeline reads (`unzip_nhdplus` keeps a slim GeoPackage per package), all WBD layers but HUC8 (`slim_wbd.py`, run by `unzip_huc8`), and the NLCD/PRISM clips after `load_land_cover`/`load_climate` (`--keep-clips` keeps them). NLCD/PRISM clips cover only the catchments the stations need.
 
@@ -74,7 +92,18 @@ The stages, in order:
 17. `load_climate`: monthly climate per station, area-weighted over its upstream area
 18. `build_analysis_dataset`: the modeling table `analysis_measurement`, one row per pre/post measurement of each eligible dam-station pair with dam, watershed, climate and baseline land-cover columns, exposure status and quality flags (design choices in the spec, 3.11)
 
-Stages 14–17 keep existing rows for stations whose upstream area hasn't changed and compute only new or changed ones. To re-run after a snapping change, validate first: see [`docs/rerun_after_snapping.md`](docs/rerun_after_snapping.md).
+Stages 14–17 keep existing rows for stations whose upstream area hasn't changed and compute only new or changed ones.
+
+**Snapping changes.** Validate before re-running; these jobs write to `data/processed/snap_validation/` and leave current outputs untouched:
+
+```bash
+sbatch data/slurm/snap_validation.slurm   # known-failure HUC8s + a random sample, then etl/compare_snapping.py
+sbatch data/slurm/snap_recheck.slurm      # re-snap a few HUC8s after a rule change and re-compare
+```
+
+The full procedure (validate, back up, `run_pipeline.sh --from snap_features`, what to check in each log) is in [`docs/rerun_after_snapping.md`](docs/rerun_after_snapping.md).
+
+**Checking a run.** `notebooks/warehouse_qa.ipynb` checks the core and cleaned tables (row counts, key integrity, maps). `notebooks/preprocessing_audit.ipynb` audits `analysis_measurement` for duplicates, misplaced stations, outliers and competing removals; it needs the full chain to have finished, about 32 GB of memory, and it writes its flag tables to `data/processed/preprocessing_audit/<case_study>/`. Set `CASE_STUDY` at the top of each notebook.
 
 ## Warehouse
 
@@ -95,4 +124,6 @@ Curated tables are written as Parquet (GeoParquet for geometry) to `data/warehou
 
 ## Current status
 
-Pilot case study: `pilot_random5_seed42` (5 randomly sampled dams, seed 42). Next: run `clean_wq_results` on the pilot, then replace the eligibility report with DuckDB views.
+Case study: `all_removals` (every dam removal in the list). The smaller pilots (`pilot_random5_seed42`, and `pilot_random50_seed7` kept as a benchmark) were used to develop the pipeline.
+
+As of 2026-10-25: after the preprocessing audit, the pipeline gained scored snapping, the daily measurement table, exposure assignment and station QC flags (see the runbook). The full `all_removals` chain is being re-run with these changes. Next: re-run `warehouse_qa` and `preprocessing_audit` on the new outputs and compare with the pre-change audit. `report_pilot_eligibility` is kept only until the `build_views` eligibility views have been checked against it.
