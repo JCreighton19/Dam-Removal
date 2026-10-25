@@ -15,7 +15,9 @@ The pipeline links each dam removal to the water-quality monitoring stations on 
 | Annual NLCD (Collection 1 v2, 30 m) | Land cover of each station's upstream area |
 | PRISM (monthly) | Precipitation and temperature over each station's upstream area |
 
-![ETL pipeline](docs/etl_pipeline_flowchart.png)
+![ETL pipeline](docs/pipeline_flowchart.svg)
+
+The flowchart is drawn by `docs/pipeline_flowchart.py` (writes the SVG and a PNG for reports); edit the content there and re-run it.
 
 ## Repository layout
 

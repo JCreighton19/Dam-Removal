@@ -1,0 +1,238 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="1600" height="2036" viewBox="0 0 1600 2036">
+<defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#4A5A70"/></marker></defs>
+<rect width="1600" height="2036" fill="#FFFFFF"/>
+<rect x="40" y="24.0" width="1520" height="306.0" rx="12" fill="#FFFFFF" stroke="#D3DDEA" stroke-width="1.4"/>
+<circle cx="66" cy="44.0" r="10.5" fill="#4F6D93"/>
+<text x="66" y="48.5" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="bold" fill="#FFFFFF" text-anchor="middle">1</text>
+<text x="85" y="49.5" font-family="Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#4F6D93">Scope</text>
+<rect x="40" y="348.0" width="1520" height="231.0" rx="12" fill="#FFFFFF" stroke="#D2E6D6" stroke-width="1.4"/>
+<circle cx="66" cy="368.0" r="10.5" fill="#4E8C5A"/>
+<text x="66" y="372.5" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="bold" fill="#FFFFFF" text-anchor="middle">2</text>
+<text x="85" y="373.5" font-family="Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#4E8C5A">Stations &amp; streams</text>
+<rect x="40" y="597.0" width="1520" height="308.0" rx="12" fill="#FFFFFF" stroke="#EFE1C8" stroke-width="1.4"/>
+<circle cx="66" cy="617.0" r="10.5" fill="#B7832F"/>
+<text x="66" y="621.5" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="bold" fill="#FFFFFF" text-anchor="middle">3</text>
+<text x="85" y="622.5" font-family="Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#B7832F">Network placement</text>
+<rect x="40" y="923.0" width="1520" height="543.0" rx="12" fill="#FFFFFF" stroke="#D0E0F0" stroke-width="1.4"/>
+<circle cx="66" cy="943.0" r="10.5" fill="#3C76B0"/>
+<text x="66" y="947.5" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="bold" fill="#FFFFFF" text-anchor="middle">4</text>
+<text x="85" y="948.5" font-family="Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#3C76B0">Measurements → warehouse<tspan font-weight="normal" fill="#5B6678">  Parquet + DuckDB</tspan></text>
+<rect x="40" y="1484.0" width="1520" height="272.0" rx="12" fill="#FFFFFF" stroke="#E0D7EE" stroke-width="1.4"/>
+<circle cx="66" cy="1504.0" r="10.5" fill="#7B5EA7"/>
+<text x="66" y="1508.5" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="bold" fill="#FFFFFF" text-anchor="middle">5</text>
+<text x="85" y="1509.5" font-family="Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#7B5EA7">Watershed covariates<tspan font-weight="normal" fill="#5B6678">  eligible stations only</tspan></text>
+<rect x="40" y="1774.0" width="1520" height="212.0" rx="12" fill="#FFFFFF" stroke="#C9E5E1" stroke-width="1.4"/>
+<circle cx="66" cy="1794.0" r="10.5" fill="#2D8A80"/>
+<text x="66" y="1798.5" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="bold" fill="#FFFFFF" text-anchor="middle">6</text>
+<text x="85" y="1799.5" font-family="Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#2D8A80">Analysis table</text>
+<path d="M425.0,140.0 L425.0,154.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1175.0,140.0 L1175.0,154.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M760.0,102.0 L800.0,102.0" fill="none" stroke="#4A5A70" stroke-width="1.6"/>
+<path d="M840.0,102.0 L800.0,102.0" fill="none" stroke="#4A5A70" stroke-width="1.6"/>
+<path d="M800.0,102.0 L800.0,198.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M425.0,490.0 L425.0,504.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1175.0,490.0 L1175.0,504.0" fill="none" stroke="#4A5A70" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#head)"/>
+<path d="M800.0,314.0 L800.0,378.0 L425.0,378.0 L425.0,394.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M800.0,378.0 L1175.0,378.0 L1175.0,394.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M430.0,705.0 L470.0,705.0" fill="none" stroke="#4A5A70" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#head)"/>
+<path d="M1130.0,705.0 L1152.0,705.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1152.0,705.0 L1164.0,705.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1130.0,841.0 L1152.0,841.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1152.0,841.0 L1164.0,841.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M760.0,442.0 L800.0,442.0" fill="none" stroke="#4A5A70" stroke-width="1.6"/>
+<path d="M840.0,442.0 L800.0,442.0" fill="none" stroke="#4A5A70" stroke-width="1.6"/>
+<path d="M800.0,442.0 L800.0,637.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M800.0,773.0 L800.0,793.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M800.0,889.0 L800.0,963.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M1130.0,992.5 L1152.0,992.5" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1152.0,992.5 L1164.0,992.5" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1130.0,1079.0 L1152.0,1079.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1152.0,1064.0 L1152.0,1094.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1152.0,1064.0 L1164.0,1064.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1152.0,1094.0 L1164.0,1094.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M800.0,1022.0 L800.0,1042.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M1130.0,1175.5 L1152.0,1175.5" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1152.0,1160.5 L1152.0,1190.5" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1152.0,1160.5 L1164.0,1160.5" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1152.0,1190.5 L1164.0,1190.5" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M800.0,1116.0 L800.0,1136.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M1130.0,1274.5 L1152.0,1274.5" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1152.0,1274.5 L1164.0,1274.5" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M800.0,1215.0 L800.0,1235.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M1130.0,1392.0 L1152.0,1392.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1152.0,1392.0 L1164.0,1392.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M800.0,1314.0 L800.0,1334.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M1130.0,1563.5 L1152.0,1563.5" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1152.0,1563.5 L1164.0,1563.5" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M425.0,1702.0 L425.0,1716.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1175.0,1702.0 L1175.0,1716.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M800.0,1450.0 L800.0,1524.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M800.0,1603.0 L800.0,1623.0 L425.0,1623.0 L425.0,1643.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M800.0,1623.0 L1175.0,1623.0 L1175.0,1643.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M1130.0,1892.0 L1152.0,1892.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M1152.0,1892.0 L1164.0,1892.0" fill="none" stroke="#BCC7D3" stroke-width="1.3"/>
+<path d="M760.0,1672.5 L800.0,1672.5" fill="none" stroke="#4A5A70" stroke-width="1.6"/>
+<path d="M840.0,1672.5 L800.0,1672.5" fill="none" stroke="#4A5A70" stroke-width="1.6"/>
+<path d="M800.0,1672.5 L800.0,1814.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M1060.0,2014.0 L1096.0,2014.0" fill="none" stroke="#4A5A70" stroke-width="1.6" marker-end="url(#head)"/>
+<path d="M1200.0,2014.0 L1236.0,2014.0" fill="none" stroke="#4A5A70" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#head)"/>
+<rect x="90" y="64.0" width="670" height="76.0" rx="9" fill="#FFFFFF" stroke="#4F6D93" stroke-width="1.4" stroke-dasharray="6 5"/>
+<text x="105" y="88.0" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="bold" fill="#1F2A44">American Rivers dam removal list</text>
+<text x="105.0" y="110.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>One-time</tspan><tspan> manual</tspan><tspan> download</tspan><tspan> from</tspan><tspan> Figshare</tspan><tspan> (March</tspan><tspan> 2026):</tspan><tspan> location,</tspan><tspan> river</tspan><tspan> and</tspan><tspan> removal</tspan><tspan> year</tspan><tspan> of</tspan><tspan> every</tspan><tspan> dam</tspan></text>
+<text x="105.0" y="127.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>removal</tspan><tspan> in</tspan><tspan> the</tspan><tspan> US.</tspan></text>
+<rect x="840" y="64.0" width="670" height="76.0" rx="9" fill="#FFFFFF" stroke="#4F6D93" stroke-width="1.4" stroke-dasharray="6 5"/>
+<text x="855" y="88.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">download_huc8 → unzip_huc8</text>
+<text x="855.0" y="110.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>One-time</tspan><tspan> download</tspan><tspan> of</tspan><tspan> the</tspan><tspan> national</tspan><tspan> Watershed</tspan><tspan> Boundary</tspan><tspan> Dataset;</tspan><tspan> keep</tspan><tspan> only</tspan><tspan> the</tspan><tspan> HUC8</tspan><tspan> layer.</tspan></text>
+<rect x="470" y="198.0" width="660" height="116.0" rx="9" fill="#EDF2F8" stroke="#A9BBD2" stroke-width="1.4"/>
+<text x="485" y="222.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">case_study.env + sample_random_pilot</text>
+<circle cx="489" cy="239.5" r="2.1" fill="#4F6D93"/>
+<text x="498.0" y="244.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Choose</tspan><tspan> the</tspan><tspan> case</tspan><tspan> study:</tspan><tspan> every</tspan><tspan> dam</tspan><tspan> removal</tspan><tspan> (</tspan><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="12">all_removals</tspan><tspan>)</tspan><tspan> or</tspan><tspan> a</tspan><tspan> random</tspan><tspan> sample.</tspan></text>
+<circle cx="489" cy="259.5" r="2.1" fill="#4F6D93"/>
+<text x="498.0" y="264.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Place</tspan><tspan> each</tspan><tspan> dam</tspan><tspan> in</tspan><tspan> the</tspan><tspan> HUC8</tspan><tspan> polygon</tspan><tspan> that</tspan><tspan> contains</tspan><tspan> it;</tspan><tspan> those</tspan><tspan> HUC8s</tspan><tspan> are</tspan><tspan> the</tspan><tspan> study</tspan><tspan> area</tspan><tspan> for</tspan><tspan> stations</tspan><tspan> and</tspan></text>
+<text x="498.0" y="281.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>streams.</tspan></text>
+<circle cx="489" cy="296.5" r="2.1" fill="#4F6D93"/>
+<text x="498.0" y="301.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Set</tspan><tspan> the</tspan><tspan> before/after</tspan><tspan> window</tspan><tspan> around</tspan><tspan> each</tspan><tspan> removal</tspan><tspan> year</tspan><tspan> (±5</tspan><tspan> years).</tspan></text>
+<rect x="283.5" y="154.0" width="283.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="295.5" y="170.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">ARDamRemovalList_Figshare_Mar2026.csv</tspan></text>
+<rect x="1086.0" y="154.0" width="178.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1098.0" y="170.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">WBD_National_GPKG.gpkg</tspan></text>
+<rect x="90" y="394.0" width="670" height="96.0" rx="9" fill="#EDF6EF" stroke="#A8CDB0" stroke-width="1.4"/>
+<text x="105" y="418.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">download_wqp_stations → select_candidate_stations</text>
+<g transform="translate(727.0,405.0) scale(0.900)" fill="none" stroke="#4E8C5A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 18.5C10 18.5 4 12 4 7.8a6 6 0 0 1 12 0C16 12 10 18.5 10 18.5Z"/><circle cx="10" cy="7.8" r="2.2"/></g>
+<circle cx="109" cy="435.5" r="2.1" fill="#4E8C5A"/>
+<text x="118.0" y="440.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>All</tspan><tspan> Water</tspan><tspan> Quality</tspan><tspan> Portal</tspan><tspan> stations</tspan><tspan> in</tspan><tspan> the</tspan><tspan> study</tspan><tspan> HUC8s;</tspan><tspan> keep</tspan><tspan> only</tspan><tspan> Stream</tspan><tspan> and</tspan><tspan> River/Stream</tspan><tspan> sites</tspan><tspan> with</tspan><tspan> valid</tspan></text>
+<text x="118.0" y="457.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>coordinates.</tspan></text>
+<circle cx="109" cy="472.5" r="2.1" fill="#4E8C5A"/>
+<text x="118.0" y="477.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>No</tspan><tspan> straight-line</tspan><tspan> distance</tspan><tspan> filter:</tspan><tspan> the</tspan><tspan> river</tspan><tspan> network</tspan><tspan> decides</tspan><tspan> relevance.</tspan></text>
+<rect x="840" y="394.0" width="670" height="96.0" rx="9" fill="#EDF6EF" stroke="#A8CDB0" stroke-width="1.4"/>
+<text x="855" y="418.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">download_streams → unzip_nhdplus</text>
+<g transform="translate(1477.0,405.0) scale(0.900)" fill="none" stroke="#4E8C5A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5c2.2-2 4.4-2 6.6 0s4.4 2 6.6 0 2.8-1.4 2.8-1.4"/><path d="M2 11c2.2-2 4.4-2 6.6 0s4.4 2 6.6 0 2.8-1.4 2.8-1.4"/><path d="M2 15.5c2.2-2 4.4-2 6.6 0s4.4 2 6.6 0 2.8-1.4 2.8-1.4"/></g>
+<circle cx="859" cy="435.5" r="2.1" fill="#4E8C5A"/>
+<text x="868.0" y="440.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>NHDPlus</tspan><tspan> High</tspan><tspan> Resolution</tspan><tspan> packages</tspan><tspan> (the</tspan><tspan> HU4</tspan><tspan> package</tspan><tspan> where</tspan><tspan> no</tspan><tspan> HUC8</tspan><tspan> package</tspan><tspan> exists).</tspan></text>
+<circle cx="859" cy="455.5" r="2.1" fill="#4E8C5A"/>
+<text x="868.0" y="460.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Keep</tspan><tspan> only</tspan><tspan> 4</tspan><tspan> layers</tspan><tspan> (flowlines,</tspan><tspan> flow</tspan><tspan> table,</tspan><tspan> catchments,</tspan><tspan> reach</tspan><tspan> attributes)</tspan><tspan> in</tspan><tspan> a</tspan><tspan> slim</tspan><tspan font-family="Helvetica, Arial, sans-serif"> </tspan><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="12">.gpkg</tspan><tspan>.</tspan></text>
+<rect x="990" y="504.0" width="370" height="59.0" rx="9" fill="#FFFFFF" stroke="#4E8C5A" stroke-width="1.4" stroke-dasharray="6 5"/>
+<text x="1005" y="528.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">build_stream_network</text>
+<text x="1005.0" y="550.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Network</tspan><tspan> diagnostics</tspan><tspan> only</tspan><tspan> (optional).</tspan></text>
+<rect x="318.5" y="504.0" width="213.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="330.5" y="520.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">pilot_station_selection.csv</tspan></text>
+<rect x="470" y="637.0" width="660" height="136.0" rx="9" fill="#FBF4E8" stroke="#E2C79A" stroke-width="1.4"/>
+<text x="485" y="661.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">snap_features</text>
+<g transform="translate(1097.0,648.0) scale(0.900)" fill="none" stroke="#B7832F" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6.5"/><circle cx="10" cy="10" r="2"/><path d="M10 1.5v3.5M10 15v3.5M1.5 10h3.5M15 10h3.5"/></g>
+<circle cx="489" cy="678.5" r="2.1" fill="#B7832F"/>
+<text x="498.0" y="683.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Transform</tspan><tspan> coordinates</tspan><tspan> to</tspan><tspan> NAD83</tspan><tspan> using</tspan><tspan> datum</tspan><tspan> grids;</tspan><tspan> stop</tspan><tspan> if</tspan><tspan> a</tspan><tspan> grid</tspan><tspan> is</tspan><tspan> missing</tspan><tspan> rather</tspan><tspan> than</tspan><tspan> approximate.</tspan></text>
+<circle cx="489" cy="698.5" r="2.1" fill="#B7832F"/>
+<text x="498.0" y="703.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Only</tspan><tspan> stream/river</tspan><tspan> reaches</tspan><tspan> within</tspan><tspan> distance</tspan><tspan> limits</tspan><tspan> (dams</tspan><tspan> 500</tspan><tspan> m,</tspan><tspan> stations</tspan><tspan> 1,000</tspan><tspan> m).</tspan></text>
+<circle cx="489" cy="718.5" r="2.1" fill="#B7832F"/>
+<text x="498.0" y="723.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Score</tspan><tspan> candidate</tspan><tspan> reaches</tspan><tspan> on</tspan><tspan> distance,</tspan><tspan> river</tspan><tspan> name</tspan><tspan> and</tspan><tspan> drainage</tspan><tspan> area</tspan><tspan> →</tspan><tspan> accepted</tspan><tspan> /</tspan><tspan> ambiguous</tspan><tspan> /</tspan><tspan> rejected;</tspan></text>
+<text x="498.0" y="740.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>manual</tspan><tspan> overrides</tspan><tspan> from</tspan><tspan font-family="Helvetica, Arial, sans-serif"> </tspan><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="12">snap_overrides.csv</tspan><tspan>.</tspan></text>
+<circle cx="489" cy="755.5" r="2.1" fill="#B7832F"/>
+<text x="498.0" y="760.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Only</tspan><tspan> accepted</tspan><tspan> points</tspan><tspan> continue;</tspan><tspan> diagnostics</tspan><tspan> are</tspan><tspan> kept.</tspan></text>
+<rect x="70" y="667.0" width="360" height="76.0" rx="9" fill="#FFFFFF" stroke="#B7832F" stroke-width="1.4" stroke-dasharray="6 5"/>
+<text x="85" y="691.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">snap_validation / compare_snapping</text>
+<text x="85.0" y="713.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Optional</tspan><tspan> QA:</tspan><tspan> test</tspan><tspan> snapping</tspan><tspan> rule</tspan><tspan> changes</tspan><tspan> on</tspan><tspan> a</tspan><tspan> sample</tspan><tspan> of</tspan></text>
+<text x="85.0" y="730.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>HUC8s</tspan><tspan> before</tspan><tspan> applying</tspan><tspan> them.</tspan></text>
+<rect x="470" y="793.0" width="660" height="96.0" rx="9" fill="#FBF4E8" stroke="#E2C79A" stroke-width="1.4"/>
+<text x="485" y="817.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">link_dams</text>
+<circle cx="489" cy="834.5" r="2.1" fill="#B7832F"/>
+<text x="498.0" y="839.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Walk</tspan><tspan> the</tspan><tspan> downstream</tspan><tspan> flow</tspan><tspan> graph</tspan><tspan> from</tspan><tspan> each</tspan><tspan> dam:</tspan><tspan> each</tspan><tspan> station</tspan><tspan> is</tspan><tspan> upstream</tspan><tspan> /</tspan><tspan> downstream</tspan><tspan> /</tspan><tspan> same</tspan><tspan> reach</tspan><tspan> /</tspan></text>
+<text x="498.0" y="856.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>unconnected.</tspan></text>
+<circle cx="489" cy="871.5" r="2.1" fill="#B7832F"/>
+<text x="498.0" y="876.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Distance</tspan><tspan> measured</tspan><tspan> along</tspan><tspan> the</tspan><tspan> river,</tspan><tspan> not</tspan><tspan> straight-line.</tspan></text>
+<rect x="1164.0" y="693.0" width="220.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1176.0" y="709.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">snapped_features_{huc8}.gpkg</tspan></text>
+<rect x="1164.0" y="829.0" width="220.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1176.0" y="845.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">dam_station_links_{huc8}.csv</tspan></text>
+<rect x="470" y="963.0" width="660" height="59.0" rx="9" fill="#EAF2FA" stroke="#A5C3E2" stroke-width="1.4"/>
+<text x="485" y="987.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">download_wqp_results</text>
+<text x="485.0" y="1009.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Only</tspan><tspan> linked</tspan><tspan> stations,</tspan><tspan> only</tspan><tspan> within</tspan><tspan> each</tspan><tspan> dam&#x27;s</tspan><tspan> before/after</tspan><tspan> window.</tspan></text>
+<rect x="1164.0" y="980.5" width="118.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1176.0" y="997.0" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan>raw</tspan><tspan> CSV</tspan><tspan> batches</tspan></text>
+<rect x="470" y="1042.0" width="660" height="74.0" rx="9" fill="#EAF2FA" stroke="#A5C3E2" stroke-width="1.4"/>
+<text x="485" y="1066.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">load_core_tables</text>
+<text x="485.0" y="1088.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Core</tspan><tspan> tables</tspan><tspan> with</tspan><tspan> reach</tspan><tspan> type,</tspan><tspan> name,</tspan><tspan> drainage</tspan><tspan> area,</tspan><tspan> slope,</tspan><tspan> snap</tspan><tspan> distance</tspan><tspan> and</tspan><tspan> snap</tspan><tspan> status.</tspan></text>
+<rect x="1164.0" y="1052.0" width="101.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1176.0" y="1068.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">dam_removal</tspan></text>
+<rect x="1273.0" y="1052.0" width="94.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1285.0" y="1068.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">wq_station</tspan></text>
+<rect x="1375.0" y="1052.0" width="136.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1387.0" y="1068.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">dam_station_link</tspan></text>
+<rect x="1164.0" y="1082.0" width="122.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1176.0" y="1098.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">huc8_watershed</tspan></text>
+<rect x="1294.0" y="1082.0" width="73.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1306.0" y="1098.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">streams</tspan></text>
+<rect x="470" y="1136.0" width="660" height="79.0" rx="9" fill="#EAF2FA" stroke="#A5C3E2" stroke-width="1.4"/>
+<text x="485" y="1160.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">clean_wq_results</text>
+<circle cx="489" cy="1177.5" r="2.1" fill="#3C76B0"/>
+<text x="498.0" y="1182.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Map</tspan><tspan> parameters,</tspan><tspan> standardize</tspan><tspan> units,</tspan><tspan> drop</tspan><tspan> QC</tspan><tspan> blanks/replicates</tspan><tspan> and</tspan><tspan> implausible</tspan><tspan> values,</tspan><tspan> deduplicate.</tspan></text>
+<circle cx="489" cy="1197.5" r="2.1" fill="#3C76B0"/>
+<text x="498.0" y="1202.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Non-detects</tspan><tspan> =</tspan><tspan> ½</tspan><tspan> detection</tspan><tspan> limit,</tspan><tspan> flagged;</tspan><tspan> keeps</tspan><tspan font-family="Helvetica, Arial, sans-serif"> </tspan><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="12">method_id</tspan><tspan>.</tspan></text>
+<rect x="1164.0" y="1148.5" width="169.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1176.0" y="1165.0" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">wq_measurement</tspan><tspan fill="#5B6678"> cleaned</tspan></text>
+<rect x="1164.0" y="1178.5" width="263.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1176.0" y="1195.0" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">wq_measurement_raw</tspan><tspan fill="#5B6678"> unfiltered</tspan><tspan fill="#5B6678"> audit</tspan><tspan fill="#5B6678"> copy</tspan></text>
+<rect x="470" y="1235.0" width="660" height="79.0" rx="9" fill="#EAF2FA" stroke="#A5C3E2" stroke-width="1.4"/>
+<text x="485" y="1259.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">build_daily_measurements</text>
+<circle cx="489" cy="1276.5" r="2.1" fill="#3C76B0"/>
+<text x="498.0" y="1281.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>One</tspan><tspan> value</tspan><tspan> per</tspan><tspan> station</tspan><tspan> ·</tspan><tspan> day</tspan><tspan> ·</tspan><tspan> depth</tspan><tspan> ·</tspan><tspan> sample</tspan><tspan> type</tspan><tspan> ·</tspan><tspan> method.</tspan></text>
+<circle cx="489" cy="1296.5" r="2.1" fill="#3C76B0"/>
+<text x="498.0" y="1301.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Repeats</tspan><tspan> combined</tspan><tspan> by</tspan><tspan> median;</tspan><tspan> measured</tspan><tspan> values</tspan><tspan> preferred</tspan><tspan> over</tspan><tspan> non-detects.</tspan></text>
+<rect x="1164.0" y="1262.5" width="164.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1176.0" y="1279.0" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">wq_measurement_daily</tspan></text>
+<rect x="470" y="1334.0" width="660" height="116.0" rx="9" fill="#EAF2FA" stroke="#A5C3E2" stroke-width="1.4"/>
+<text x="485" y="1358.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">build_views<tspan font-family="Helvetica, Arial, sans-serif" font-weight="normal" font-size="13" fill="#5B6678">  views only, no data copied</tspan></text>
+<g transform="translate(1097.0,1345.0) scale(0.900)" fill="none" stroke="#3C76B0" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="10" cy="4.8" rx="6.5" ry="2.6"/><path d="M3.5 4.8v10.4c0 1.4 2.9 2.6 6.5 2.6s6.5-1.2 6.5-2.6V4.8"/><path d="M3.5 10c0 1.4 2.9 2.6 6.5 2.6s6.5-1.2 6.5-2.6"/></g>
+<circle cx="489" cy="1375.5" r="2.1" fill="#3C76B0"/>
+<text x="498.0" y="1380.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Eligibility:</tspan><tspan> ≥</tspan><tspan> 3</tspan><tspan> samples</tspan><tspan> in</tspan><tspan> ≥</tspan><tspan> 2</tspan><tspan> years</tspan><tspan> both</tspan><tspan> before</tspan><tspan> AND</tspan><tspan> after</tspan><tspan> removal;</tspan><tspan> the</tspan><tspan> removal</tspan><tspan> year</tspan><tspan> is</tspan><tspan> excluded.</tspan></text>
+<circle cx="489" cy="1395.5" r="2.1" fill="#3C76B0"/>
+<text x="498.0" y="1400.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Exposure:</tspan><tspan> each</tspan><tspan> measurement</tspan><tspan> is</tspan><tspan> assigned</tspan><tspan> to</tspan><tspan> its</tspan><tspan> nearest</tspan><tspan> upstream</tspan><tspan> removal;</tspan><tspan> competing</tspan><tspan> removals</tspan><tspan> are</tspan></text>
+<text x="498.0" y="1417.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>flagged,</tspan><tspan> not</tspan><tspan> assigned.</tspan></text>
+<circle cx="489" cy="1432.5" r="2.1" fill="#3C76B0"/>
+<text x="498.0" y="1437.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Station</tspan><tspan> QC</tspan><tspan> flags:</tspan><tspan> far</tspan><tspan> snap,</tspan><tspan> unsuitable</tspan><tspan> reach,</tspan><tspan> saline,</tspan><tspan> non-river</tspan><tspan> name.</tspan><tspan> Rows</tspan><tspan> are</tspan><tspan> flagged,</tspan><tspan> not</tspan><tspan> dropped.</tspan></text>
+<rect x="1164.0" y="1380.0" width="136.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1176.0" y="1396.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">warehouse.duckdb</tspan></text>
+<rect x="470" y="1524.0" width="660" height="79.0" rx="9" fill="#F3EFF9" stroke="#C4B4DC" stroke-width="1.4"/>
+<text x="485" y="1548.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">build_station_watershed</text>
+<circle cx="489" cy="1565.5" r="2.1" fill="#7B5EA7"/>
+<text x="498.0" y="1570.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Upstream</tspan><tspan> catchments</tspan><tspan> of</tspan><tspan> each</tspan><tspan> station</tspan><tspan> →</tspan><tspan> upstream</tspan><tspan> area.</tspan></text>
+<circle cx="489" cy="1585.5" r="2.1" fill="#7B5EA7"/>
+<text x="498.0" y="1590.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Placeholder</tspan><tspan> (−9999)</tspan><tspan> and</tspan><tspan> truncated</tspan><tspan> areas</tspan><tspan> are</tspan><tspan> flagged,</tspan><tspan> never</tspan><tspan> stored</tspan><tspan> as</tspan><tspan> values.</tspan></text>
+<rect x="90" y="1643.0" width="670" height="59.0" rx="9" fill="#F3EFF9" stroke="#C4B4DC" stroke-width="1.4"/>
+<text x="105" y="1667.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">download_nlcd → load_land_cover</text>
+<g transform="translate(727.0,1654.0) scale(0.900)" fill="none" stroke="#7B5EA7" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16.5C4 8.5 9 3.5 17 3.5 17 11.5 12 16.5 4 16.5Z"/><path d="M4 16.5 12 8.5"/></g>
+<text x="105.0" y="1689.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Annual</tspan><tspan> NLCD</tspan><tspan> 30</tspan><tspan> m</tspan><tspan> land-cover</tspan><tspan> mix</tspan><tspan> of</tspan><tspan> the</tspan><tspan> upstream</tspan><tspan> area.</tspan></text>
+<rect x="840" y="1643.0" width="670" height="59.0" rx="9" fill="#F3EFF9" stroke="#C4B4DC" stroke-width="1.4"/>
+<text x="855" y="1667.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">download_climate → load_climate</text>
+<g transform="translate(1477.0,1654.0) scale(0.900)" fill="none" stroke="#7B5EA7" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12.5a3.6 3.6 0 0 1 .4-7.2 4.6 4.6 0 0 1 8.7 1.6 2.9 2.9 0 0 1-.5 5.6Z"/><path d="M7.5 15.2 6.7 17.8M11 15.2l-.8 2.6M14.5 15.2l-.8 2.6"/></g>
+<text x="855.0" y="1689.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>PRISM</tspan><tspan> monthly</tspan><tspan> precipitation</tspan><tspan> and</tspan><tspan> temperature,</tspan><tspan> area-weighted</tspan><tspan> over</tspan><tspan> the</tspan><tspan> upstream</tspan><tspan> area.</tspan></text>
+<rect x="1164.0" y="1551.5" width="143.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1176.0" y="1568.0" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">station_watershed</tspan></text>
+<rect x="1315.0" y="1551.5" width="143.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1327.0" y="1568.0" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">station_catchment</tspan></text>
+<rect x="378.0" y="1716.0" width="94.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="390.0" y="1732.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">land_cover</tspan></text>
+<rect x="1138.5" y="1716.0" width="73.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1150.5" y="1732.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">climate</tspan></text>
+<rect x="470" y="1814.0" width="660" height="156.0" rx="9" fill="#E3F2F0" stroke="#8CC5BE" stroke-width="1.4"/>
+<text x="485" y="1838.0" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="bold" fill="#1F2A44">build_analysis_dataset</text>
+<g transform="translate(1097.0,1825.0) scale(0.900)" fill="none" stroke="#2D8A80" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="1.5"/><path d="M2.5 8h15M2.5 12.3h15M7.5 8v8.5"/></g>
+<circle cx="489" cy="1855.5" r="2.1" fill="#2D8A80"/>
+<text x="498.0" y="1860.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>One</tspan><tspan> row</tspan><tspan> per</tspan><tspan> pre/post</tspan><tspan> measurement</tspan><tspan> ×</tspan><tspan> eligible</tspan><tspan> dam–station</tspan><tspan> pair,</tspan><tspan> with</tspan><tspan> dam,</tspan><tspan> watershed,</tspan><tspan> climate</tspan><tspan> and</tspan></text>
+<text x="498.0" y="1877.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>land-cover</tspan><tspan> columns.</tspan></text>
+<circle cx="489" cy="1892.5" r="2.1" fill="#2D8A80"/>
+<text x="498.0" y="1897.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Land</tspan><tspan> cover</tspan><tspan> is</tspan><tspan> a</tspan><tspan> fixed</tspan><tspan> baseline:</tspan><tspan> the</tspan><tspan> last</tspan><tspan> NLCD</tspan><tspan> year</tspan><tspan> before</tspan><tspan> removal.</tspan></text>
+<circle cx="489" cy="1912.5" r="2.1" fill="#2D8A80"/>
+<text x="498.0" y="1917.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Climate:</tspan><tspan> the</tspan><tspan> sample</tspan><tspan> month</tspan><tspan> plus</tspan><tspan> the</tspan><tspan> previous</tspan><tspan> month&#x27;s</tspan><tspan> precipitation.</tspan></text>
+<circle cx="489" cy="1932.5" r="2.1" fill="#2D8A80"/>
+<text x="498.0" y="1937.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Exposure</tspan><tspan> status,</tspan><tspan> QC</tspan><tspan> flags</tspan><tspan> and</tspan><tspan> missing-covariate</tspan><tspan> flags</tspan><tspan> are</tspan><tspan> columns,</tspan><tspan> not</tspan><tspan> filters.</tspan></text>
+<circle cx="489" cy="1952.5" r="2.1" fill="#2D8A80"/>
+<text x="498.0" y="1957.0" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1F2A44" text-anchor="start"><tspan>Associations</tspan><tspan> only,</tspan><tspan> no</tspan><tspan> causal</tspan><tspan> claim.</tspan></text>
+<rect x="1164.0" y="1880.0" width="164.0" height="24" rx="12.0" fill="#8CC5BE" stroke="#2D8A80" stroke-width="1.2"/>
+<text x="1176.0" y="1896.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="11">analysis_measurement</tspan></text>
+<text x="40" y="2018" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#5B6678">Every stage validates before writing and replaces outputs atomically; if a stage fails, every later stage is cancelled.</text>
+<text x="1104" y="2018" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#5B6678">pipeline chain</text>
+<text x="1244" y="2018" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#5B6678">optional / one-time</text>
+<rect x="1372.0" y="2002.0" width="85.0" height="24" rx="12.0" fill="#F7F8FA" stroke="#BCC7D3" stroke-width="1.2"/>
+<text x="1384.0" y="2018.5" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1F2A44" text-anchor="start"><tspan>data</tspan><tspan> output</tspan></text>
+<text x="1465.0" y="2018" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#5B6678">file / table</text>
+</svg>
