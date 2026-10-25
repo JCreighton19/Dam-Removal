@@ -63,7 +63,7 @@ from etl.common.config import default_case_study, load_config
 from etl.common.covariates import eligible_station_years, split_reusable, window_years  # noqa: F401
 from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
-from etl.common.progress import huc8s_with_outputs
+from etl.common.progress import HucProgress, huc8s_with_outputs
 from etl.common.warehouse import warehouse_dir
 
 URL_TEMPLATE = (
@@ -292,6 +292,13 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
+    # A later attempt queued by run_pipeline.sh after this stage already
+    # succeeded has nothing to do; skip reading every package again.
+    done_dir = HucProgress(cfg, "download_nlcd").folder
+    if (done_dir / "complete").exists():
+        print("download_nlcd already finished earlier in this run; nothing to do.")
+        return
+
     db_path = require_file(
         warehouse_dir(cfg) / "warehouse.duckdb", "warehouse.duckdb (run build_views.py first)"
     )
@@ -326,6 +333,7 @@ def main():
     if failed:
         print(f"Failed years: {failed} -- re-run to retry them")
         sys.exit(1)
+    (done_dir / "complete").touch()
 
 
 if __name__ == "__main__":

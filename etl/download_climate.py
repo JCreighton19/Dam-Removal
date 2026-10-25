@@ -52,7 +52,7 @@ import requests
 from etl.common.config import default_case_study, load_config
 from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
-from etl.common.progress import huc8s_with_outputs
+from etl.common.progress import HucProgress, huc8s_with_outputs
 from etl.common.warehouse import warehouse_dir
 from etl.download_land_cover import (clip_window, mark_outside, needed_packages, needs_clip,
                                      pending_work, write_clip)
@@ -166,6 +166,13 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
+    # A later attempt queued by run_pipeline.sh after this stage already
+    # succeeded has nothing to do; skip reading every package again.
+    done_dir = HucProgress(cfg, "download_climate").folder
+    if (done_dir / "complete").exists():
+        print("download_climate already finished earlier in this run; nothing to do.")
+        return
+
     db_path = require_file(
         warehouse_dir(cfg) / "warehouse.duckdb", "warehouse.duckdb (run build_views.py first)"
     )
@@ -213,6 +220,7 @@ def main():
         print(f"Failed ({len(failed)}): {failed} -- re-run to retry them "
               "(each file can be downloaded at most twice per 24 hours)")
         sys.exit(1)
+    (done_dir / "complete").touch()
 
 
 if __name__ == "__main__":

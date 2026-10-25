@@ -136,6 +136,12 @@ def test_years_clips_cleanup_and_resume():
         # A re-run downloads nothing.
         assert _run(root, fake_zip) == []
 
+        # A later attempt after success exits before reading any package.
+        done = root / "data" / "processed" / "_progress" / "pilot_test" / "download_nlcd"
+        assert (done / "complete").exists()
+        with mock.patch.object(dlc, "needed_packages", side_effect=AssertionError("read")):
+            assert _run(root, fake_zip) == []
+
 
 def test_package_outside_the_raster_is_marked_not_failed():
     with tempfile.TemporaryDirectory() as tmp:
