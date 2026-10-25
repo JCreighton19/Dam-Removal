@@ -54,7 +54,8 @@ from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
 from etl.common.progress import huc8s_with_outputs
 from etl.common.warehouse import warehouse_dir
-from etl.download_land_cover import clip_window, needed_packages, pending_work, write_clip
+from etl.download_land_cover import (clip_window, mark_outside, needed_packages, needs_clip,
+                                     pending_work, write_clip)
 
 URL_TEMPLATE = "https://services.nacse.org/prism/data/get/us/800m/{variable}/{year}{month:02d}"
 VARIABLES = ("ppt", "tmean")
@@ -124,7 +125,7 @@ def process_month(variable, year, month, packages, prism_dir):
     """Download one variable-month (unless a zip is left from a failed run),
     clip it to every package missing a clip, then delete the zip."""
     missing = {name: info for name, info in packages.items()
-               if not clip_path(prism_dir, variable, name, year, month).exists()}
+               if needs_clip(clip_path(prism_dir, variable, name, year, month))}
     if not missing:
         return "skipped"
 
@@ -139,6 +140,11 @@ def process_month(variable, year, month, packages, prism_dir):
     with rasterio.open(zip_tif(zip_path)) as src:
         for name, info in missing.items():
             window = clip_window(src, info["bounds"], info["crs"])
+            if window is None:
+                # PRISM covers only the contiguous US (see download_land_cover.py).
+                mark_outside(prism_dir / variable / name, "PRISM (contiguous US)")
+                print(f"    {name}: outside PRISM coverage, skipped", flush=True)
+                continue
             write_clip(src, window, clip_path(prism_dir, variable, name, year, month))
     zip_path.unlink()
     return status

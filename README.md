@@ -12,8 +12,8 @@ The pipeline links each dam removal to the water-quality monitoring stations on 
 | USGS Watershed Boundary Dataset (WBD), national GeoPackage | HUC8 watershed boundaries |
 | NHDPlus High Resolution | Stream flowlines and the flow network |
 | Water Quality Portal (WQP) | Monitoring stations and measurements |
-| Annual NLCD (Collection 1 v2, 30 m) | Land cover of each station's upstream area |
-| PRISM (monthly) | Precipitation and temperature over each station's upstream area |
+| Annual NLCD, Collection 1.2 (MRLC; 30 m, 1985–2025) | Land cover of each station's upstream area |
+| PRISM AN monthly grids (PRISM Climate Group; 800 m) | Precipitation and mean temperature over each station's upstream area |
 
 ![ETL pipeline](docs/pipeline_flowchart.svg)
 

@@ -63,7 +63,8 @@ from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
 from etl.common.progress import HucProgress, huc8s_with_outputs
 from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
-from etl.download_land_cover import FIRST_YEAR, LAST_YEAR, clip_path, indexed_bounds
+from etl.download_land_cover import (FIRST_YEAR, LAST_YEAR, clip_path, indexed_bounds,
+                                     outside_coverage)
 
 SOURCE = "annual_nlcd_c1v2"
 PIXEL_KM2 = 30 * 30 / 1e6
@@ -207,6 +208,10 @@ def station_counts(membership, station_ids, nlcd_dir, packages, station_years, d
 
     for gdb_path, catchments in packages.items():
         package = gdb_path.stem
+        if outside_coverage(nlcd_dir / package):
+            # Outside Annual NLCD (download_land_cover.py): its stations get null land cover.
+            print(f"{package}: outside NLCD coverage, skipped", flush=True)
+            continue
         saved = done_dir / f"{package}.npz"
         if saved.exists():
             with np.load(saved) as done:
@@ -254,8 +259,9 @@ def station_counts(membership, station_ids, nlcd_dir, packages, station_years, d
 def build_land_cover(totals, station_ids, station_years, station_area, nodata):
     """Long table: one row per station x needed year x class."""
     frames = []
-    for year, counts in sorted(totals.items()):
-        counts = np.asarray(counts)
+    # Years only packages outside NLCD needed have no counts: all zeros.
+    for year in sorted(set(totals) | set(station_years["year"].astype(int))):
+        counts = np.asarray(totals.get(year, np.zeros((len(station_ids), 256))))
         valid = counts.sum(axis=1) - (counts[:, nodata] if nodata is not None else 0)
         class_counts = counts[:, CLASS_CODES]
         frame = pd.DataFrame({
@@ -388,9 +394,11 @@ def main():
     new = None
     if len(pending):
         totals = station_counts(todo, station_ids, nlcd_dir, packages, pending, done_dir)
-        first_clip = next(nlcd_dir.glob("*/LndCov_*.tif"))
-        with rasterio.open(first_clip) as src:
-            nodata = int(src.nodata) if src.nodata is not None else None
+        first_clip = next(nlcd_dir.glob("*/LndCov_*.tif"), None)
+        nodata = None
+        if first_clip is not None:
+            with rasterio.open(first_clip) as src:
+                nodata = int(src.nodata) if src.nodata is not None else None
         new = build_land_cover(totals, station_ids, pending, station_area, nodata)
 
     table = combine(kept, new, hashes, SCHEMA)

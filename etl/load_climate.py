@@ -66,6 +66,7 @@ from etl.common.nhdplus import find_huc8_geodatabase
 from etl.common.progress import huc8s_with_outputs
 from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
 from etl.download_climate import FIRST_YEAR, VARIABLES, clip_path, last_stable_year
+from etl.download_land_cover import outside_coverage
 from etl.load_land_cover import (BLOCK_ROWS, PIXEL_KM2, combine, delete_clip_folders,
                                  package_catchments, read_catchments, read_inputs)
 
@@ -145,6 +146,10 @@ def station_sums(membership, station_ids, prism_dir, packages, station_years):
 
     for gdb_path, catchments in packages.items():
         package = gdb_path.stem
+        if any(outside_coverage(prism_dir / v / package) for v in VARIABLES):
+            # Outside PRISM (download_climate.py): its stations get null climate.
+            print(f"{package}: outside PRISM coverage, skipped", flush=True)
+            continue
         position = pd.Series(np.arange(len(catchments)), index=catchments.index)
         rows = membership[membership["catchment_id"].isin(catchments.index)]
         stations_x_catchments = sparse.csr_matrix(
@@ -193,11 +198,15 @@ def station_sums(membership, station_ids, prism_dir, packages, station_years):
 def build_climate(totals, station_ids, station_years, station_area):
     """One row per station x needed year x month."""
     frames = []
-    for year, month in sorted({(y, m) for _, y, m in totals}):
+    # Months only packages outside PRISM needed have no sums: all null.
+    none = (np.zeros(len(station_ids)), np.zeros(len(station_ids)))
+    months = {(y, m) for _, y, m in totals} | {
+        (int(y), m) for y in station_years["year"].unique() for m in range(1, 13)}
+    for year, month in sorted(months):
         frame = pd.DataFrame({"station_id": station_ids, "year": year, "month": month})
         pixels = []
         for variable, column in COLUMNS.items():
-            sums, valid = totals[(variable, year, month)]
+            sums, valid = totals.get((variable, year, month), none)
             frame[column] = np.where(valid > 0, sums / np.where(valid > 0, valid, 1), np.nan)
             pixels.append(valid)
         # Area with data for both variables, over the station's upstream area.

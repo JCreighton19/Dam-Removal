@@ -29,6 +29,7 @@ import rasterio
 from rasterio.transform import from_origin
 from shapely.geometry import box
 
+from etl import download_land_cover as dlc
 from etl import load_climate as lcl
 from etl.common.config import PROJECT_ROOT_ENV_VAR
 
@@ -151,6 +152,26 @@ def test_missing_clip_is_an_error():
             assert "ppt 2010-03" in str(exc)
         else:
             raise AssertionError("expected a missing-clip error")
+
+
+def test_package_outside_prism_gives_null_climate():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        out, prism_dir = _build_project(root)
+        # As download_climate.py leaves a package outside the raster.
+        for variable in ("tmean", "ppt"):
+            package_b = prism_dir / variable / _package(HUC_B)
+            for clip in package_b.glob("*.tif"):
+                clip.unlink()
+            dlc.mark_outside(package_b, "test raster")
+        _run(root)
+        table = pd.read_parquet(out / "climate.parquet").set_index(["station_id", "month"])
+
+        # Rows are kept; S2 (only catchment 2) has no climate.
+        assert len(table) == 2 * 12
+        assert table.loc["S2", "temperature_mean_c"].isna().all()
+        assert (table.loc["S2", "valid_fraction"] == 0).all()
+        assert (table.loc[("S1", 6), "temperature_mean_c"]) == 10
 
 
 if __name__ == "__main__":

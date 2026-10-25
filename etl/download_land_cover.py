@@ -30,6 +30,12 @@ package, then delete the zip and the full GeoTIFF. Clips are written to
 
 and shared across case studies. A re-run skips every year whose clips all
 exist, so an interrupted job resumes where it stopped.
+
+Annual NLCD covers only the contiguous US. A package whose catchments lie
+entirely outside the raster (Alaska, Hawaii, Puerto Rico) gets no clips,
+only an outside_coverage.txt marker, so it doesn't fail the year or make a
+re-run download it again; its stations end up with null land cover
+(missing_land_cover in analysis_measurement).
 """
 
 from __future__ import annotations
@@ -49,6 +55,7 @@ import pandas as pd
 import pyogrio
 import rasterio
 import requests
+from rasterio.errors import WindowError
 from rasterio.warp import transform_bounds
 from rasterio.windows import Window, from_bounds
 
@@ -149,6 +156,26 @@ def clip_path(nlcd_dir, package, year):
     return nlcd_dir / package / f"LndCov_{year}.tif"
 
 
+# Written in a package's clip folder when its catchments are outside the
+# raster, so later years and re-runs skip it instead of failing.
+OUTSIDE_MARKER = "outside_coverage.txt"
+
+
+def outside_coverage(package_dir):
+    return (package_dir / OUTSIDE_MARKER).exists()
+
+
+def mark_outside(package_dir, raster_name):
+    package_dir.mkdir(parents=True, exist_ok=True)
+    (package_dir / OUTSIDE_MARKER).write_text(
+        f"Catchment extent is outside {raster_name}; no clips.\n")
+
+
+def needs_clip(path):
+    """A clip still to write: not on disk, and its package not outside the raster."""
+    return not path.exists() and not outside_coverage(path.parent)
+
+
 # --------------------------------------------------
 # Download and clip
 # --------------------------------------------------
@@ -185,14 +212,18 @@ def extract_tif(zip_path, out_dir):
 
 
 def clip_window(src, bounds, bounds_crs):
-    """Pixel window covering bounds (plus padding), snapped to the grid."""
+    """Pixel window covering bounds (plus padding), snapped to the grid, or
+    None if bounds lie entirely outside the raster."""
     left, bottom, right, top = transform_bounds(bounds_crs, src.crs, *bounds, densify_pts=21)
     window = from_bounds(left, bottom, right, top, transform=src.transform)
     col = math.floor(window.col_off) - PAD_PIXELS
     row = math.floor(window.row_off) - PAD_PIXELS
     width = math.ceil(window.col_off + window.width) + PAD_PIXELS - col
     height = math.ceil(window.row_off + window.height) + PAD_PIXELS - row
-    return Window(col, row, width, height).intersection(Window(0, 0, src.width, src.height))
+    try:
+        return Window(col, row, width, height).intersection(Window(0, 0, src.width, src.height))
+    except WindowError:
+        return None
 
 
 def write_clip(src, window, path):
@@ -213,7 +244,7 @@ def write_clip(src, window, path):
 def process_year(year, packages, nlcd_dir):
     """Download one year, clip it to every package missing a clip, clean up."""
     missing = {name: info for name, info in packages.items()
-               if not clip_path(nlcd_dir, name, year).exists()}
+               if needs_clip(clip_path(nlcd_dir, name, year))}
     if not missing:
         print(f"{year}: all {len(packages)} clips exist, skipped", flush=True)
         return "skipped"
@@ -232,6 +263,10 @@ def process_year(year, packages, nlcd_dir):
         with rasterio.open(tif_path) as src:
             for name, info in missing.items():
                 window = clip_window(src, info["bounds"], info["crs"])
+                if window is None:
+                    mark_outside(nlcd_dir / name, "Annual NLCD (contiguous US)")
+                    print(f"    {name}: outside NLCD coverage, skipped", flush=True)
+                    continue
                 write_clip(src, window, clip_path(nlcd_dir, name, year))
                 print(f"    {name}: {window.width:,} x {window.height:,} pixels", flush=True)
         return "downloaded"

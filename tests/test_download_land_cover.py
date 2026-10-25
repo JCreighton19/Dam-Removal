@@ -35,6 +35,9 @@ HUC_A, HUC_B = "01010001", "01010002"
 CATCHMENTS = {HUC_A: [(1, box(-70.00, 44.99, -69.99, 45.01))],
               HUC_B: [(7, box(-71.00, 44.99, -70.99, 45.01))]}
 ALBERS = "EPSG:5070"
+# A package outside the fake raster, like Puerto Rico outside CONUS NLCD.
+HUC_PR = "21010002"
+OUTSIDE = {HUC_PR: [(9, box(-66.10, 18.30, -66.09, 18.31))]}
 
 
 def _fake_nlcd_zip(path):
@@ -51,14 +54,15 @@ def _fake_nlcd_zip(path):
     tif.unlink()
 
 
-def _build_project(root):
+def _build_project(root, outside=False):
+    catchments = {**CATCHMENTS, **(OUTSIDE if outside else {})}
     (root / "config").mkdir()
     (root / "config" / "pilot_test.yaml").write_text(
-        f'case_study: pilot_test\nhuc8s: ["{HUC_A}", "{HUC_B}"]\n'
+        "case_study: pilot_test\nhuc8s: [" + ", ".join(f'"{h}"' for h in catchments) + "]\n"
         "dam_source: data/raw/dams/dams.csv\nwbd_source: data/raw/wbd/wbd.gpkg\n"
         "wq_window:\n  years_before: 1\n  years_after: 1\n"
     )
-    for huc8, rows in CATCHMENTS.items():
+    for huc8, rows in catchments.items():
         gdb_dir = root / "data" / "processed" / "nhdplus_extracted" / f"NHDPLUS_H_{huc8}_HU8_GDB"
         gdb_dir.mkdir(parents=True)
         gpd.GeoDataFrame(
@@ -69,10 +73,10 @@ def _build_project(root):
 
     out = root / "data" / "warehouse" / "pilot_test"
     out.mkdir(parents=True)
-    pairs = pd.DataFrame({"station_id": ["S1", "S2", "S3"],
-                          "removal_year": [1986, 2010, 1990],
-                          "has_both": [True, True, False]})
-    members = pd.DataFrame({"station_id": ["S1", "S2"], "catchment_id": [1, 1]})
+    pairs = pd.DataFrame({"station_id": ["S1", "S2", "S3", "S4"],
+                          "removal_year": [1986, 2010, 1990, 2010],
+                          "has_both": [True, True, False, outside]})
+    members = pd.DataFrame({"station_id": ["S1", "S2", "S4"], "catchment_id": [1, 1, 9]})
     members.to_parquet(out / "station_catchment.parquet")
     with duckdb.connect(str(out / "warehouse.duckdb")) as con:
         con.register("pairs_df", pairs)
@@ -130,6 +134,25 @@ def test_years_clips_cleanup_and_resume():
         assert list((nlcd_dir / "_downloads").iterdir()) == []
 
         # A re-run downloads nothing.
+        assert _run(root, fake_zip) == []
+
+
+def test_package_outside_the_raster_is_marked_not_failed():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        nlcd_dir = _build_project(root, outside=True)
+        fake_zip = root / "fake.zip"
+        _fake_nlcd_zip(fake_zip)
+
+        # Every year succeeds: package A is clipped, the outside one marked.
+        calls = _run(root, fake_zip)
+        assert len(calls) == 6
+        assert len(list((nlcd_dir / f"NHDPLUS_H_{HUC_A}_HU8_GDB").glob("*.tif"))) == 6
+        outside_dir = nlcd_dir / f"NHDPLUS_H_{HUC_PR}_HU8_GDB"
+        assert dlc.outside_coverage(outside_dir)
+        assert not list(outside_dir.glob("*.tif"))
+
+        # The marker stops a re-run from downloading for it again.
         assert _run(root, fake_zip) == []
 
 

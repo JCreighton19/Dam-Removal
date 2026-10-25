@@ -29,6 +29,7 @@ from rasterio.transform import from_origin
 from rasterio.warp import transform_bounds
 from shapely.geometry import box
 
+from etl import download_land_cover as dlc
 from etl import load_land_cover as llc
 from etl.common.config import PROJECT_ROOT_ENV_VAR
 
@@ -169,6 +170,26 @@ def test_missing_clip_is_an_error():
             assert "2011" in str(exc)
         else:
             raise AssertionError("expected a missing-clip error")
+
+
+def test_package_outside_nlcd_gives_null_land_cover():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        out = _build_project(root)
+        # As download_land_cover.py leaves a package outside the raster.
+        package_b = root / "data" / "raw" / "nlcd" / "annual_c1v2" / _package(HUC_B)
+        for clip in package_b.glob("*.tif"):
+            clip.unlink()
+        dlc.mark_outside(package_b, "test raster")
+        _run(root)
+        table = pd.read_parquet(out / "land_cover.parquet")
+
+        # Every station-year still has its rows; S2 (only catchment 2) is null.
+        assert len(table) == 2 * 2 * 16 + 16
+        assert _percent(table, "S2", 2010).isna().all()
+        assert (table.loc[table["station_id"] == "S2", "valid_fraction"] == 0).all()
+        # S1 keeps catchment 1: all forest, over about half its area.
+        assert _percent(table, "S1", 2010)[41] == 100
 
 
 def _clear_done_marker(root):
