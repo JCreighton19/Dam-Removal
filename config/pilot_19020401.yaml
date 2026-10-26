@@ -26,6 +26,17 @@ wq_window:
   years_before: 5
   years_after: 5
 
+# Which dam-station links count (etl/build_views.py; docs/warehouse_spec.md
+# section 5, "Link distance limits"). dam_station_link keeps every link;
+# these limit the ones eligibility, exposure and the analysis dataset use.
+# Small-dam effects are local (warming fades within ~1-2 km, Zaidel et al.
+# 2021), and the DAR sensitivity analysis (notebooks/dar_sensitivity.ipynb)
+# found distance does nearly all the filtering. Remove a limit (or set it to
+# null) to link every connected station, e.g. for that sensitivity analysis.
+exposure:
+  max_downstream_km: 10
+  max_upstream_km: 10
+
 # WQP CharacteristicName values of interest, seeded from the exploratory
 # notebooks. Kept as exact source strings deliberately -- e.g. "Oxygen" and
 # "Dissolved oxygen (DO)" are NOT treated as the same characteristic, since

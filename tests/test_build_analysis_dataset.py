@@ -48,10 +48,12 @@ def _core_tables(directory):
         "Year_Removed": pd.array([2015, 1973], dtype="Int16"), "snap_fraction": [0.5, 0.5],
         "River": ["R1", "R2"], "State": ["ME", "NY"], "Dam_Height_ft": [10.0, None],
         "Year_built": pd.array([1900, None], dtype="Int16"), "Original_Use": ["Mill", None],
+        "reach_totdasqkm": [20.0, 10.0], "reach_slope": [0.01, None],
     })
     stations = pd.DataFrame({"station_id": ["DOWN", "UP", "OLD"], "snap_fraction": [0.5] * 3,
                              "qc_far_snap": [False, False, True],
-                             "qc_near_unsuitable_flowline": False, "qc_non_riverine_name": False})
+                             "qc_near_unsuitable_flowline": False, "qc_non_riverine_name": False,
+                             "reach_totdasqkm": [50.0, 15.0, 30.0]})
     links = pd.DataFrame({
         "AR_ID": ["D1", "D1", "D2"], "station_id": ["DOWN", "UP", "OLD"],
         "relationship": ["downstream", "upstream", "downstream"],
@@ -70,8 +72,9 @@ def _core_tables(directory):
     measurements["provider"] = "NWIS"
     measurements["depth_m"] = None
     measurements["activity_type"] = "Field Msr/Obs"
-    for column in ["method_id", "method_context", "result_unit_raw"]:
+    for column in ["method_id", "method_context", "result_unit_raw", "detection_limit_unit"]:
         measurements[column] = pd.array([None] * len(measurements), dtype="string")
+    measurements["detection_limit"] = None
     tables = {
         "dam_removal": dams, "wq_station": stations, "dam_station_link": links,
         "huc8_watershed": pd.DataFrame({"huc8": ["01010101"]}),
@@ -169,6 +172,10 @@ def test_rows_and_context_joins():
         assert (down["exposure_status"] == "assigned_sole").all() and (down["assigned_AR_ID"] == "D1").all()
         assert (old["assigned_AR_ID"] == "D2").all() and (old["n_other_removals_in_window"] == 0).all()
 
+        # Link features: station / dam area (DOWN 50/20, OLD 30/10).
+        assert (down["drainage_area_ratio"] == 2.5).all() and (old["drainage_area_ratio"] == 3).all()
+        assert table["upstream_in_former_reservoir"].isna().all()  # no upstream rows
+
         # Flags carried, not applied; a truncated area never enters as a value.
         assert old["qc_far_snap"].all() and not down["qc_far_snap"].any()
         assert table["qc_saline"].isna().all()  # no conductance measured: unknown
@@ -189,6 +196,18 @@ def test_stale_daily_table_is_refused():
         # wq_measurement_daily from an older clean_wq_results run.
         errors = bad.validate(table, expected, written - {table["daily_id"].iloc[0]})
         assert any("re-run build_daily_measurements" in e for e in errors)
+
+
+def test_stale_context_table_is_refused():
+    with tempfile.TemporaryDirectory() as tmp:
+        out = _build(Path(tmp))
+        assert bad.stale_inputs(out / "warehouse.duckdb") == []
+        # Climate from an earlier run, for a station wq_station no longer has.
+        climate = pd.read_parquet(out / "climate.parquet")
+        climate.loc[0, "station_id"] = "GONE"
+        climate.to_parquet(out / "climate.parquet", index=False)
+        stale = bad.stale_inputs(out / "warehouse.duckdb")
+        assert len(stale) == 1 and "re-run load_climate.py" in stale[0]
 
 
 if __name__ == "__main__":

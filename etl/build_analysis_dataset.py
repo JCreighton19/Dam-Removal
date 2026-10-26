@@ -52,6 +52,21 @@ Added 2026-10-23 (spec 3.11, "Exposure and quality flags")
 8. Station flags (station_qc view) and the drainage-area flag are carried,
    not applied. upstream_area_km2 is null unless drainage_area_flag = 'ok',
    so a placeholder, truncated or unverifiable area never enters as a value.
+
+Added 2026-10-26
+----------------
+9. Links are limited by the config's exposure: max_downstream_km /
+   max_upstream_km (build_views.py removal_link), so only pairs within
+   those distances are eligible.
+10. drainage_area_ratio (station / dam NHDPlus area; a dilution proxy, for
+   modeling) and upstream_in_former_reservoir (an upstream station within
+   the rough reservoir length; affected by the removal, not a control) come
+   from the link_features view. Carried, not applied.
+11. result_unit_raw, method_id, detection_limit and detection_limit_unit
+   (as reported) are carried so analyses can check turbidity units, method
+   changes and detection limits across the removal.
+12. Refuses to run when a context table references stations wq_station
+   doesn't have (left from an earlier snapping or linking run).
 """
 
 from __future__ import annotations
@@ -68,7 +83,8 @@ from etl.build_daily_measurements import daily_ids
 from etl.build_views import add_view
 from etl.common.config import default_case_study, load_config
 from etl.common.io import require_file
-from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
+from etl.common.warehouse import (DERIVED_TABLES, schema_errors, stale_reference_errors,
+                                  warehouse_dir, write_parquet_atomic)
 
 REQUIRED_TABLES = ["station_watershed", "land_cover", "land_cover_codes", "climate"]
 
@@ -93,6 +109,8 @@ SCHEMA = {
     "network_distance_km": "float64",
     "period": "string",
     "years_from_removal": "int16",
+    "drainage_area_ratio": "float64",
+    "upstream_in_former_reservoir": "boolean",
     # Exposure
     "exposure_status": "string",
     "assigned_AR_ID": "string",
@@ -110,6 +128,10 @@ SCHEMA = {
     "is_censored": "bool",
     "unit_basis_assumed": "bool",
     "provider": "string",
+    "result_unit_raw": "string",
+    "method_id": "string",
+    "detection_limit": "float64",
+    "detection_limit_unit": "string",
     # Dam
     "dam_name": "string",
     "river": "string",
@@ -202,6 +224,8 @@ SELECT
     r.network_distance_km,
     r.period,
     r.years_from_removal,
+    lf.drainage_area_ratio,
+    lf.upstream_in_former_reservoir,
     CASE
         WHEN r.side = 'downstream' AND e.assigned_AR_ID = r.AR_ID THEN e.exposure_status
         WHEN r.side = 'downstream' AND e.assigned_AR_ID IS NOT NULL THEN 'assigned_to_other_removal'
@@ -228,6 +252,10 @@ SELECT
     r.is_censored,
     r.unit_basis_assumed,
     m.provider,
+    m.result_unit_raw,
+    m.method_id,
+    m.detection_limit,
+    m.detection_limit_unit,
     r.dam_name,
     d.River AS river,
     d.State AS state,
@@ -258,6 +286,7 @@ SELECT
 FROM rows r
 JOIN wq_measurement m USING (measurement_id)
 JOIN dam_removal d ON d.AR_ID = r.AR_ID
+LEFT JOIN link_features lf ON lf.AR_ID = r.AR_ID AND lf.station_id = r.station_id
 LEFT JOIN measurement_exposure e ON e.measurement_id = r.measurement_id
 LEFT JOIN pair_competing_removals pc ON pc.AR_ID = r.AR_ID AND pc.station_id = r.station_id
 LEFT JOIN station_qc q ON q.station_id = r.station_id
@@ -290,6 +319,14 @@ WHERE p.has_both AND w.period IN ('pre', 'post')
 
 def sql_path(path):
     return str(path.resolve()).replace("'", "''")
+
+
+def stale_inputs(db_path):
+    """Messages for context tables left from an earlier snapping or linking
+    run (they reference stations wq_station no longer has)."""
+    inputs = {t: stage for t, stage in DERIVED_TABLES.items() if t != "analysis_measurement"}
+    with duckdb.connect(str(db_path), read_only=True) as con:
+        return stale_reference_errors(con, inputs)
 
 
 def build_table(db_path):
@@ -337,6 +374,10 @@ def validate(table, expected_rows, daily_ids_written):
         errors.append("a measurement is assigned to more than one removal")
     if table.loc[table["drainage_area_flag"].ne("ok"), "upstream_area_km2"].notna().any():
         errors.append("upstream_area_km2 set for a station whose drainage area isn't ok")
+    if (table["drainage_area_ratio"] <= 0).any():
+        errors.append("drainage_area_ratio <= 0")
+    if table.loc[table["side"].ne("upstream"), "upstream_in_former_reservoir"].notna().any():
+        errors.append("upstream_in_former_reservoir set for a station that isn't upstream")
     return errors
 
 
@@ -381,6 +422,10 @@ def main():
     require_file(output_dir / "wq_measurement_daily.parquet",
                  "wq_measurement_daily table (run build_daily_measurements.py first)")
 
+    if stale := stale_inputs(db_path):
+        raise ValueError("Context tables are from an earlier run; no warehouse files were "
+                         "written:\n  - " + "\n  - ".join(stale))
+
     table, expected, daily_ids_written = build_table(db_path)
     errors = validate(table, expected, daily_ids_written)
     if errors:
@@ -410,6 +455,12 @@ def main():
     for column in ["qc_far_snap", "qc_near_unsuitable_flowline", "qc_non_riverine_name",
                    "qc_saline"]:
         print(f"  {column:<28} {int(table[column].fillna(False).sum()):>10,}")
+    print("\nLink features (pairs):")
+    pairs = table.drop_duplicates(["AR_ID", "station_id"])
+    print(pairs.groupby("side")["drainage_area_ratio"].describe(percentiles=[0.5, 0.9])
+          .round(2).to_string())
+    print(f"  upstream pairs possibly in the former reservoir: "
+          f"{int(pairs['upstream_in_former_reservoir'].fillna(False).sum())}")
     print("\nDrainage area flags (rows):")
     print(table["drainage_area_flag"].value_counts(dropna=False).to_string())
 

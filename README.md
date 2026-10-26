@@ -105,7 +105,7 @@ sbatch data/slurm/snap_recheck.slurm      # re-snap a few HUC8s after a rule cha
 
 The full procedure (validate, back up, `run_pipeline.sh --from snap_features`, what to check in each log) is in [`docs/rerun_after_snapping.md`](docs/rerun_after_snapping.md).
 
-**Checking a run.** `notebooks/warehouse_qa.ipynb` checks the core and cleaned tables (row counts, key integrity, maps). `notebooks/preprocessing_audit.ipynb` audits `analysis_measurement` for duplicates, misplaced stations, outliers and competing removals; it needs the full chain to have finished, about 32 GB of memory, and it writes its flag tables to `data/processed/preprocessing_audit/<case_study>/`. Set `CASE_STUDY` at the top of each notebook.
+**Checking a run.** `notebooks/warehouse_qa.ipynb` checks the core and cleaned tables (row counts, key integrity, maps). `notebooks/preprocessing_audit.ipynb` audits `analysis_measurement` for duplicates, misplaced stations, outliers and competing removals; it needs the full chain to have finished, about 32 GB of memory, and it writes its flag tables to `data/processed/preprocessing_audit/<case_study>/`. `notebooks/warehouse_integrity.ipynb` checks that no derived table is stale (from an earlier snapping or linking run), that no sample is future-dated, what the link distance limits keep, and raw-to-cleaned retention before vs after removal. `notebooks/analysis_robustness.ipynb` estimates the before/after change with one exposure per measurement, dam-level averages, a matched upstream control, measurement-consistency checks and a by-dam event study. Set `CASE_STUDY` at the top of each notebook.
 
 ## Warehouse
 
@@ -122,7 +122,7 @@ Curated tables are written as Parquet (GeoParquet for geometry) to `data/warehou
 | `climate` | `load_climate.py` |
 | `analysis_measurement` | `build_analysis_dataset.py` |
 
-`build_views.py` writes `data/warehouse/<case_study>/warehouse.duckdb`, which holds views only (no data). Open it with `duckdb.connect(path, read_only=True)` and query e.g. `eligibility_summary`. Eligibility thresholds come from the config's optional `eligibility: {min_samples: 3, min_years: 2}` block; the saline threshold from `qc: {saline_sc_us_cm: 3000}`, the exposure distance ratio from `exposure: {min_distance_ratio: 2}`, and snapping limits from `snapping: {dams: {...}, stations: {...}}`.
+`build_views.py` writes `data/warehouse/<case_study>/warehouse.duckdb`, which holds views only (no data). Open it with `duckdb.connect(path, read_only=True)` and query e.g. `eligibility_summary`. Eligibility thresholds come from the config's optional `eligibility: {min_samples: 3, min_years: 2}` block; the saline threshold from `qc: {saline_sc_us_cm: 3000}`, the exposure distance ratio from `exposure: {min_distance_ratio: 2}`, the link distance limits from `exposure: {max_downstream_km: 10, max_upstream_km: 10}` (default: no limit; `dam_station_link` keeps every link), and snapping limits from `snapping: {dams: {...}, stations: {...}}`.
 
 ## Current status
 

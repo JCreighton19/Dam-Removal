@@ -52,3 +52,39 @@ def schema_errors(name, frame, schema, primary_key):
         errors.append(f"{name}: duplicate primary key(s), e.g. {dupes.to_dict('records')}")
 
     return errors
+
+
+# Tables later stages build from wq_station / dam_removal / wq_measurement,
+# and the stage that rebuilds each. A station_id (or AR_ID, measurement_id)
+# they hold that the core tables don't means the table comes from an earlier
+# snapping or linking run.
+DERIVED_TABLES = {
+    "wq_measurement_daily": "build_daily_measurements.py",
+    "station_watershed": "build_station_watershed.py",
+    "station_catchment": "build_station_watershed.py",
+    "land_cover": "load_land_cover.py",
+    "climate": "load_climate.py",
+    "analysis_measurement": "build_analysis_dataset.py",
+}
+
+
+def stale_reference_errors(con, tables=DERIVED_TABLES):
+    """Messages for derived tables (views in `con`) that reference IDs the
+    current core tables don't have. Tables not in `con` are skipped."""
+    present = {row[0] for row in con.sql(
+        "SELECT table_name FROM information_schema.tables").fetchall()}
+    checks = [(table, "station_id", "wq_station") for table in tables]
+    checks += [("analysis_measurement", "AR_ID", "dam_removal"),
+               ("analysis_measurement", "measurement_id", "wq_measurement")]
+    errors = []
+    for table, column, parent in checks:
+        if table not in tables or table not in present:
+            continue
+        n = con.sql(f"""
+            SELECT count(DISTINCT {column}) FROM {table}
+            WHERE {column} NOT IN (SELECT {column} FROM {parent})
+        """).fetchone()[0]
+        if n:
+            errors.append(f"{table}: {n:,} {column}(s) not in {parent}; stale, "
+                          f"re-run {tables[table]}")
+    return errors

@@ -24,8 +24,13 @@ Views
   stations with both sides, and upstream ones (possible controls).
 - eligibility_summary: one row per parameter x fraction: how many dams
   are eligible downstream, and how many also have an upstream control.
-- removal_link: dam_station_link with each dam's removal year and the
-  station's side (the link part of measurement_window).
+- removal_link_all: dam_station_link with each dam's removal year and the
+  station's side.
+- removal_link: removal_link_all within the link distance limits (the link
+  part of measurement_window; every view below uses it).
+- link_features: per link in removal_link, the drainage-area ratio
+  (station / dam NHDPlus area) and, for upstream stations, whether they may
+  sit in the former reservoir (within dam height / reach slope of the dam).
 - pair_competing_removals: per dam-station pair, the other removals linked
   to the station whose removal year falls inside the pair's window.
 - measurement_exposure: one row per measurement downstream of at least one
@@ -39,8 +44,13 @@ Views
 Thresholds come from the config's optional `eligibility` block
 (min_samples, min_years per side; defaults 3 and 2), the window from
 `wq_window`, the saline threshold from `qc: {saline_sc_us_cm}` (default
-3000) and the exposure distance ratio from `exposure: {min_distance_ratio}`
-(default 2). Change them and re-run this script; nothing else is rebuilt.
+3000) and the exposure settings from `exposure:` -- min_distance_ratio
+(default 2), and max_downstream_km / max_upstream_km, the farthest a station
+can be from a dam along the network to be linked to it (default: no limit;
+docs/warehouse_spec.md section 5, "Link distance limits"). dam_station_link
+itself stays complete. Change them and re-run this script; the stages after
+it (watershed, land cover, climate, analysis dataset) then need re-running,
+since they cover the eligible stations only.
 """
 
 from __future__ import annotations
@@ -56,7 +66,7 @@ import duckdb
 
 from etl.common.config import default_case_study, load_config
 from etl.common.io import require_file
-from etl.common.warehouse import warehouse_dir
+from etl.common.warehouse import stale_reference_errors, warehouse_dir
 
 TABLES = [
     "dam_removal",
@@ -83,17 +93,30 @@ DEFAULT_SALINE_SC = 3000
 # next one is more than this many times as far (preprocessing audit,
 # section 9).
 DEFAULT_MIN_DISTANCE_RATIO = 2.0
+# Farthest a station can be from a dam (network km) to be linked to it. None
+# links every connected station (the behavior before 2026-10-26).
+DEFAULT_MAX_DOWNSTREAM_KM = None
+DEFAULT_MAX_UPSTREAM_KM = None
+
+
+def _sql_number(value):
+    return "NULL::DOUBLE" if value is None else repr(float(value))
 
 
 def settings_sql(years_before, years_after, min_samples, min_years,
-                 saline_sc=DEFAULT_SALINE_SC, min_distance_ratio=DEFAULT_MIN_DISTANCE_RATIO):
-    """The two one-row settings views the views below read."""
+                 saline_sc=DEFAULT_SALINE_SC, min_distance_ratio=DEFAULT_MIN_DISTANCE_RATIO,
+                 max_downstream_km=DEFAULT_MAX_DOWNSTREAM_KM,
+                 max_upstream_km=DEFAULT_MAX_UPSTREAM_KM):
+    """The two one-row settings views the views below read. A null distance
+    limit means no limit."""
     return f"""
         CREATE VIEW eligibility_settings AS SELECT
             {int(years_before)} AS years_before,
             {int(years_after)} AS years_after,
             {int(min_samples)} AS min_samples,
-            {int(min_years)} AS min_years;
+            {int(min_years)} AS min_years,
+            {_sql_number(max_downstream_km)} AS max_downstream_km,
+            {_sql_number(max_upstream_km)} AS max_upstream_km;
         CREATE VIEW qc_settings AS SELECT
             {float(saline_sc)} AS saline_sc_us_cm,
             {float(min_distance_ratio)} AS exposure_min_distance_ratio;
@@ -101,7 +124,7 @@ def settings_sql(years_before, years_after, min_samples, min_years,
 
 
 ELIGIBILITY_VIEWS = """
-CREATE VIEW removal_link AS
+CREATE VIEW removal_link_all AS
 SELECT
     l.AR_ID,
     d.Dam_Name AS dam_name,
@@ -118,6 +141,20 @@ FROM dam_station_link l
 JOIN dam_removal d USING (AR_ID)
 JOIN wq_station s USING (station_id)
 WHERE d.Year_Removed IS NOT NULL;
+
+-- Links within the distance limits. A link with no distance or side is kept
+-- only when no limit applies to it.
+CREATE VIEW removal_link AS
+SELECT l.*
+FROM removal_link_all l
+CROSS JOIN eligibility_settings s
+WHERE CASE l.side
+          WHEN 'downstream' THEN s.max_downstream_km IS NULL
+                                 OR l.network_distance_km <= s.max_downstream_km
+          WHEN 'upstream' THEN s.max_upstream_km IS NULL
+                               OR l.network_distance_km <= s.max_upstream_km
+          ELSE s.max_downstream_km IS NULL AND s.max_upstream_km IS NULL
+      END;
 
 CREATE VIEW measurement_window AS
 WITH settings AS (SELECT * FROM eligibility_settings),
@@ -192,6 +229,35 @@ ORDER BY dams_eligible DESC, parameter_std;
 # Built after ELIGIBILITY_VIEWS; they need qc_settings and the snapping
 # columns of wq_station (load_core_tables after the 2026-10-23 snapping).
 EXPOSURE_QC_VIEWS = """
+-- Drainage-area ratio: how much of the station's water passed the dam
+-- (about 1: mostly the dam's; 50: the dam drains ~2%). NHDPlus areas at
+-- each reach's downstream end; non-positive values are NHDPlus placeholders.
+-- backwater_km: rough reservoir length, dam height / reach slope; an
+-- upstream station within it may have been in the former reservoir, i.e.
+-- affected by the removal rather than a control (preprocessing audit,
+-- section 6).
+CREATE VIEW link_features AS
+WITH areas AS (
+    SELECT
+        l.AR_ID,
+        l.station_id,
+        l.side,
+        l.network_distance_km,
+        CASE WHEN d.reach_totdasqkm > 0 THEN d.reach_totdasqkm END AS dam_drainage_area_km2,
+        CASE WHEN s.reach_totdasqkm > 0 THEN s.reach_totdasqkm END AS station_drainage_area_km2,
+        d.Dam_Height_ft * 0.3048 / CASE WHEN d.reach_slope > 0 THEN d.reach_slope END / 1000
+            AS backwater_km
+    FROM removal_link l
+    JOIN dam_removal d USING (AR_ID)
+    JOIN wq_station s USING (station_id)
+)
+SELECT
+    *,
+    station_drainage_area_km2 / dam_drainage_area_km2 AS drainage_area_ratio,
+    CASE WHEN side = 'upstream' THEN network_distance_km <= backwater_km END
+        AS upstream_in_former_reservoir
+FROM areas;
+
 -- Other removals linked to the same station whose removal year is inside
 -- this pair's window. "Upstream" ones are upstream of the station
 -- (side = 'downstream': the station is downstream of them).
@@ -291,9 +357,14 @@ def add_view(db_path, table, path):
 
 
 def build_database(db_path, parquet_dir, years_before, years_after, min_samples, min_years,
-                   saline_sc=DEFAULT_SALINE_SC, min_distance_ratio=DEFAULT_MIN_DISTANCE_RATIO):
+                   saline_sc=DEFAULT_SALINE_SC, min_distance_ratio=DEFAULT_MIN_DISTANCE_RATIO,
+                   max_downstream_km=DEFAULT_MAX_DOWNSTREAM_KM,
+                   max_upstream_km=DEFAULT_MAX_UPSTREAM_KM):
     """Write the views to db_path (via a .tmp file, so a failed build never
-    replaces a working database)."""
+    replaces a working database). Returns eligibility_summary and messages
+    for derived tables that are stale (from an earlier snapping or linking
+    run); those don't stop the build, since the stages that rebuild them run
+    after this one."""
     tmp_path = db_path.with_name(db_path.name + ".tmp")
     tmp_path.unlink(missing_ok=True)
 
@@ -305,17 +376,22 @@ def build_database(db_path, parquet_dir, years_before, years_after, min_samples,
                 con.execute(table_view_sql(table, parquet_dir / f"{table}.parquet"))
 
         con.execute(settings_sql(years_before, years_after, min_samples, min_years,
-                                 saline_sc, min_distance_ratio))
+                                 saline_sc, min_distance_ratio, max_downstream_km, max_upstream_km))
         con.execute(ELIGIBILITY_VIEWS)
         con.execute(EXPOSURE_QC_VIEWS)
 
         # Fails here, before replacing anything, if a view is broken.
         summary = con.sql("SELECT * FROM eligibility_summary").df()
-        for view in ["measurement_exposure", "station_qc"]:
+        for view in ["measurement_exposure", "station_qc", "link_features"]:
             con.sql(f"SELECT * FROM {view} LIMIT 0").fetchall()
+        stale = stale_reference_errors(con)
 
     os.replace(tmp_path, db_path)
-    return summary
+    return summary, stale
+
+
+def _limit_text(km):
+    return "none" if km is None else f"{float(km):g} km"
 
 
 def main():
@@ -345,22 +421,29 @@ def main():
     min_samples = int(eligibility.get("min_samples", DEFAULT_MIN_SAMPLES))
     min_years = int(eligibility.get("min_years", DEFAULT_MIN_YEARS))
     saline_sc = float((cfg.get("qc", {}) or {}).get("saline_sc_us_cm", DEFAULT_SALINE_SC))
-    min_distance_ratio = float((cfg.get("exposure", {}) or {}).get(
-        "min_distance_ratio", DEFAULT_MIN_DISTANCE_RATIO))
+    exposure = cfg.get("exposure", {}) or {}
+    min_distance_ratio = float(exposure.get("min_distance_ratio", DEFAULT_MIN_DISTANCE_RATIO))
+    max_downstream_km = exposure.get("max_downstream_km", DEFAULT_MAX_DOWNSTREAM_KM)
+    max_upstream_km = exposure.get("max_upstream_km", DEFAULT_MAX_UPSTREAM_KM)
 
     print(f"Case study: {cfg.name}")
     print(f"Window: {years_before} years before / {years_after} years after removal")
     print(f"Each side needs >= {min_samples} samples in >= {min_years} distinct years")
     print(f"Saline: median specific conductance > {saline_sc:g} uS/cm; exposure: next "
           f"removal must be > {min_distance_ratio:g}x as far as the nearest")
+    print(f"Link distance limits: downstream {_limit_text(max_downstream_km)}, "
+          f"upstream {_limit_text(max_upstream_km)}")
 
     db_path = parquet_dir / "warehouse.duckdb"
-    summary = build_database(
+    summary, stale = build_database(
         db_path, parquet_dir, years_before, years_after, min_samples, min_years,
-        saline_sc, min_distance_ratio,
+        saline_sc, min_distance_ratio, max_downstream_km, max_upstream_km,
     )
 
     print(f"\nWrote {db_path}")
+    if stale:
+        print("\nStale tables (from an earlier run; the stages after this one rebuild them, "
+              "re-run those before using these tables):\n  - " + "\n  - ".join(stale))
     print("\neligibility_summary:")
     print(summary.to_string(index=False) if len(summary) else "  (no eligible pairs)")
 

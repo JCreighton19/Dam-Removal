@@ -36,6 +36,9 @@ from etl.common.config import load_config
 from etl.common.dams import load_dams
 from etl.common.wbd import resolve_huc8_for_points
 
+# Config blocks copied from the base case study when it has them.
+OPTIONAL_BLOCKS = ["eligibility", "qc", "exposure", "snapping"]
+
 
 def sample_dams(dams, n_dams, seed):
     rng = random.Random(seed)
@@ -65,6 +68,9 @@ def build_config_dict(case_study_name, base_cfg, resolved, seed, n_dams, base_ca
         "station_types": base_cfg.get("station_types", []),
         "wq_window": base_cfg.get("wq_window", {}),
         "wq_characteristics": base_cfg.get("wq_characteristics", []),
+        # Optional rule blocks, copied only when the base config sets them
+        # (each stage has defaults otherwise).
+        **{block: base_cfg.get(block) for block in OPTIONAL_BLOCKS if base_cfg.get(block)},
         "sampled_dams": sampled_dams,
         "sampling": {
             "seed": seed,

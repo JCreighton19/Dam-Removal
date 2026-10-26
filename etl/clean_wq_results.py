@@ -17,7 +17,8 @@ Inputs:
 
 Steps, in order: scope to the mapped parameters and to wq_station
 stations; row filters 1-8; resolve units; parse values and non-detects;
-convert units; filters 9-10 (no value or date, implausible value);
+convert units; filters 9-10 (no value or date, a date in the future,
+implausible value);
 deduplicate. The number of rows each step drops is printed, so a run can
 be checked against the counts in the spec.
 
@@ -31,6 +32,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -361,6 +363,10 @@ def convert_units(df, log):
     df = log.drop(df, factor.reindex(df.index).isna(), "Unit not convertible")
     df = log.drop(df, df["sample_date_parsed"].isna(), "9a. Unparseable sample date")
     df = log.drop(df, df["result_value_std"].isna(), "9b. No value and no detection limit")
+    # WQP returns whatever date the provider entered; download windows reach
+    # removal year + years_after, so a mistyped year (e.g. 2028) gets in.
+    df = log.drop(df, df["sample_date_parsed"] > pd.Timestamp(date.today()),
+                  "9c. Sample date in the future")
 
     conductance = df["parameter_std"] == "specific_conductance"
     basis = rules.normalize_unit(df.loc[conductance, "ResultTemperatureBasisText"])
@@ -491,6 +497,8 @@ def validate(table, station_ids):
         errors.append(f"station_id not in wq_station, e.g. {bad}")
     if table["sample_date"].isna().any():
         errors.append("null sample_date")
+    if (pd.to_datetime(table["sample_date"]) > pd.Timestamp(date.today())).any():
+        errors.append("sample_date in the future")
     if (table["result_value_std"].notna() & table["result_unit_std"].isna()).any():
         errors.append("result_value_std without result_unit_std")
     if bad := sorted(set(table["parameter_std"].dropna()) - set(rules.STANDARD_UNITS)):

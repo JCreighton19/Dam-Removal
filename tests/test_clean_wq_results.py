@@ -45,6 +45,7 @@ ROWS = {
     "qc_replicate": {"ActivityTypeCode": "Quality Control Sample-Field Replicate"},
     "sediment_media": {"ActivityMediaName": "Sediment"},
     "rejected": {"ResultStatusIdentifier": "Rejected"},
+    "future_date": {"ActivityStartDate": "2999-09-13"},
     "calculated": {"ResultValueTypeName": "Calculated"},
     "holding_time": {"MeasureQualifierCode": "J;H"},
     "nitrate_as_no3": {

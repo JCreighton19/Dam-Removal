@@ -28,10 +28,21 @@ ONE_PRE_YEAR = [2014, 2014, 2014, 2016, 2017, 2018]
 
 
 def _with_qc(stations):
-    """The snapping flag columns station_qc reads."""
+    """The snapping flag and reach columns station_qc and link_features read."""
     for column in ["qc_far_snap", "qc_near_unsuitable_flowline", "qc_non_riverine_name"]:
         stations[column] = False
+    if "reach_totdasqkm" not in stations:
+        stations["reach_totdasqkm"] = 100.0
     return stations
+
+
+def _with_reach(dams):
+    """The dam reach columns link_features reads."""
+    for column, value in [("reach_totdasqkm", 100.0), ("reach_slope", 0.001),
+                          ("Dam_Height_ft", 10.0)]:
+        if column not in dams:
+            dams[column] = value
+    return dams
 
 
 def _measurements(rows):
@@ -47,15 +58,17 @@ def _measurements(rows):
 
 
 def write_tables(directory):
-    dams = pd.DataFrame({
+    # Dam reach: 100 km2, slope 0.001, 10 ft -> backwater about 3.05 km.
+    dams = _with_reach(pd.DataFrame({
         "AR_ID": ["D1", "D2"],
         "Dam_Name": ["Dam one", "No year"],
         "Year_Removed": pd.array([REMOVAL_YEAR, None], dtype="Int16"),
         "snap_fraction": [0.3, 0.5],
-    })
+    }))
     stations = _with_qc(pd.DataFrame({
         "station_id": ["DOWN", "UP", "SAME_BELOW", "SAME_ABOVE", "NOYEAR"],
         "snap_fraction": [0.5, 0.5, 0.8, 0.1, 0.5],
+        "reach_totdasqkm": [250.0, 40.0, 100.0, 100.0, -9999.0],
     }))
     links = pd.DataFrame({
         "AR_ID": ["D1", "D1", "D1", "D1", "D2"],
@@ -98,11 +111,11 @@ def write_tables(directory):
         frame.to_parquet(directory / f"{name}.parquet", index=False)
 
 
-def build(directory):
+def build(directory, **limits):
     write_tables(directory)
     db_path = directory / "warehouse.duckdb"
     bv.build_database(db_path, directory, years_before=5, years_after=5,
-                      min_samples=3, min_years=2)
+                      min_samples=3, min_years=2, **limits)
     return duckdb.connect(str(db_path), read_only=True)
 
 
@@ -166,11 +179,11 @@ EXPOSURE_YEARS = {"A": 2010, "F": 2017, "G": 2018, "H": 2012}
 
 
 def build_exposure(directory):
-    dams = pd.DataFrame({
+    dams = _with_reach(pd.DataFrame({
         "AR_ID": list(EXPOSURE_YEARS), "Dam_Name": list(EXPOSURE_YEARS),
         "Year_Removed": pd.array(list(EXPOSURE_YEARS.values()), dtype="Int16"),
         "snap_fraction": 0.5,
-    })
+    }))
     stations = _with_qc(pd.DataFrame({
         "station_id": ["ST_SOLE", "ST_NEAR", "ST_DIST", "ST_TIME"], "snap_fraction": 0.5}))
     links = pd.DataFrame(EXPOSURE_LINKS, columns=["AR_ID", "station_id", "network_distance_km"])
@@ -238,6 +251,46 @@ def test_station_qc_saline_flag():
     assert qc.loc["ST_SOLE", "sc_median_us_cm"] == 4500
     assert qc.loc["ST_NEAR", "qc_saline"] == False  # noqa: E712
     assert pd.isna(qc.loc["ST_DIST", "qc_saline"])  # no conductance: unknown, not fresh
+
+
+def test_distance_limits_filter_links():
+    # DOWN is 1 km below, SAME_BELOW 0.1 km below, UP 2 km above, SAME_ABOVE 0.1 km above.
+    with tempfile.TemporaryDirectory() as tmp, \
+            build(Path(tmp), max_downstream_km=0.5, max_upstream_km=1.0) as con:
+        kept = {r[0] for r in con.sql("SELECT station_id FROM removal_link").fetchall()}
+        every = {r[0] for r in con.sql("SELECT station_id FROM removal_link_all").fetchall()}
+        windowed = {r[0] for r in con.sql(
+            "SELECT DISTINCT station_id FROM measurement_window").fetchall()}
+    assert kept == windowed == {"SAME_BELOW", "SAME_ABOVE"}
+    assert every == {"DOWN", "UP", "SAME_BELOW", "SAME_ABOVE"}  # D2 has no removal year
+
+
+def test_no_limits_keep_every_link():
+    with tempfile.TemporaryDirectory() as tmp, build(Path(tmp)) as con:
+        n_kept = con.sql("SELECT count(*) FROM removal_link").fetchone()[0]
+        n_all = con.sql("SELECT count(*) FROM removal_link_all").fetchone()[0]
+    assert n_kept == n_all == 4
+
+
+def test_link_features():
+    with tempfile.TemporaryDirectory() as tmp, build(Path(tmp)) as con:
+        f = con.sql("SELECT * FROM link_features").df().set_index("station_id")
+    assert f.loc["DOWN", "drainage_area_ratio"] == 2.5
+    assert f.loc["UP", "drainage_area_ratio"] == 0.4
+    assert abs(f.loc["UP", "backwater_km"] - 3.048) < 1e-9
+    assert f.loc["UP", "upstream_in_former_reservoir"] == True  # noqa: E712  2 km < 3.05 km
+    assert pd.isna(f.loc["DOWN", "upstream_in_former_reservoir"])  # downstream: not applicable
+
+
+def test_stale_derived_tables_are_reported():
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        write_tables(directory)
+        # Climate from an earlier run, for a station wq_station no longer has.
+        pd.DataFrame({"station_id": ["DOWN", "GONE"], "year": [2015, 2015], "month": [6, 6]}) \
+            .to_parquet(directory / "climate.parquet", index=False)
+        _, stale = bv.build_database(directory / "warehouse.duckdb", directory, 5, 5, 3, 2)
+    assert len(stale) == 1 and stale[0].startswith("climate: 1 station_id(s) not in wq_station")
 
 
 if __name__ == "__main__":

@@ -33,9 +33,11 @@ CORE_TABLES = ["dam_removal", "wq_station", "dam_station_link", "wq_measurement"
 # --------------------------------------------------
 
 def connect(parquet_dir, years_before, years_after, min_samples, min_years,
-            threads=None, memory_limit=None, temp_dir=None):
+            threads=None, memory_limit=None, temp_dir=None,
+            max_downstream_km=None, max_upstream_km=None):
     """In-memory DuckDB with one view per existing warehouse Parquet file,
-    plus the eligibility views of build_views.py. Returns (con, views)."""
+    plus the eligibility views of build_views.py (with the config's link
+    distance limits; None = no limit). Returns (con, views)."""
     parquet_dir = Path(parquet_dir)
     missing = [t for t in CORE_TABLES if not (parquet_dir / f"{t}.parquet").exists()]
     if missing:
@@ -57,11 +59,12 @@ def connect(parquet_dir, years_before, years_after, min_samples, min_years,
             con.execute(table_view_sql(table, path))
             views.append(table)
 
-    con.execute(settings_sql(years_before, years_after, min_samples, min_years))
+    con.execute(settings_sql(years_before, years_after, min_samples, min_years,
+                             max_downstream_km=max_downstream_km, max_upstream_km=max_upstream_km))
     con.execute(ELIGIBILITY_VIEWS)
     try:
         con.execute(EXPOSURE_QC_VIEWS)
-        views += ["measurement_exposure", "station_qc"]
+        views += ["measurement_exposure", "station_qc", "link_features"]
     except duckdb.BinderException as exc:
         # A warehouse from before the 2026-10-23 snapping lacks the columns.
         print(f"Exposure / station QC views not built (older warehouse): {exc}")
