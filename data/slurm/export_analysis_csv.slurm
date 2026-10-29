@@ -38,7 +38,7 @@ duckdb.sql(f"""
           ORDER BY AR_ID, station_id, parameter_std, sample_date)
     TO '{output}' (HEADER)
 """)
-rows = duckdb.sql(f"SELECT count(*) FROM read_csv_auto('{output}')").fetchone()[0]
+rows = duckdb.sql(f"SELECT count(*) FROM read_parquet('{source}')").fetchone()[0]
 print(f"Rows written: {rows:,}")
 EOF
 

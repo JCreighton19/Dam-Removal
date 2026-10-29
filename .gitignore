@@ -1,6 +1,9 @@
 # Raw datasets
 data/raw/
 
+# Local test notebook
+notebooks/local_eda.ipynb
+
 # Processed data: ignore everything except the HUC4 list
 data/processed/*
 !data/processed/huc4_list.txt
