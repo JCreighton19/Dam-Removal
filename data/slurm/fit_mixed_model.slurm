@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=fit_mixed_model
-#SBATCH --output=data/slurm/logs/fit_mixed_model_%j.out
-#SBATCH --error=data/slurm/logs/fit_mixed_model_%j.err
+#SBATCH --output=data/slurm/logs/mm_%j.out
+#SBATCH --error=data/slurm/logs/mm_%j.err
 #SBATCH --time=01:00:00
-#SBATCH --mem=16G
-#SBATCH --cpus-per-task=1
+#SBATCH --mem=8G
+#SBATCH --cpus-per-task=2
 
 # Fits the mixed-effects removal models (analysis/mixed_model.py) on
 # analysis_measurement and writes data/processed/mixed_model/<case_study>/
