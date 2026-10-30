@@ -12,6 +12,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from etl.common.config import default_case_study, load_config
+from etl.common.nhdplus import missing_slim_layers
 from etl.unzip_nhdplus import process_zip
 
 
@@ -285,7 +286,9 @@ def download_package(session, item):
 
     package = item["filename"].removesuffix(".zip")
     extracted = [EXTRACTED_DIR / package / f"{package}{ext}" for ext in (".gpkg", ".gdb")]
-    if any(path.exists() for path in extracted):
+    # A GeoPackage slimmed before the water layers were added is downloaded
+    # again; unzip_nhdplus.process_zip then adds only the missing layers.
+    if any(path.exists() and not missing_slim_layers(path) for path in extracted):
         print(f"Already extracted; skipping {item['filename']}", flush=True)
         return {
             **item,
@@ -401,10 +404,18 @@ def main():
         default=default_case_study(),
         help="Name of a config file under config/ (without the .yaml extension).",
     )
+    parser.add_argument(
+        "--hu4",
+        nargs="+",
+        help="Only the case study's HUC8s in these HUC4s (e.g. a test subset).",
+    )
     args = parser.parse_args()
     cfg = load_config(args.case_study)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     huc8_codes = read_pilot_huc8s(cfg.wqp_results_dir / "pilot_station_selection.csv")
+    if args.hu4:
+        huc8_codes = [code for code in huc8_codes if code[:4] in set(args.hu4)]
+        print(f"Restricted to HUC4s {args.hu4}: {len(huc8_codes)} HUC8(s)", flush=True)
 
     with requests.Session() as session:
         files = list_s3_files(session)

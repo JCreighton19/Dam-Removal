@@ -1,10 +1,12 @@
 """Checks for etl/unzip_nhdplus.py.
 
-Builds a fake NHDPlus HR package (a FileGDB with the four layers the
-pipeline reads plus one it doesn't), zips it, and checks that the job
-leaves only a slim GeoPackage that the pipeline's readers find, deletes
-the zip and the geodatabase, converts an old extraction, and skips
-finished packages on a re-run.
+Builds a fake NHDPlus HR package (a FileGDB with the four core layers,
+one water layer, and a layer the pipeline doesn't read), zips it, and
+checks that the job leaves only a slim GeoPackage that the pipeline's
+readers find (missing water layers written empty), deletes the zip and the
+geodatabase, converts an old extraction, skips finished packages on a
+re-run, and adds the water layers to a GeoPackage slimmed before they
+were kept without rewriting its other layers.
 
 Run directly: `python tests/test_unzip_nhdplus.py`
 """
@@ -24,7 +26,8 @@ import pyogrio
 from shapely.geometry import LineString, box
 
 from etl import unzip_nhdplus as unz
-from etl.common.nhdplus import SLIM_LAYERS, find_huc8_geodatabase, read_nhdplus_layer
+from etl.common.nhdplus import (CORE_LAYERS, SLIM_LAYERS, find_huc8_geodatabase,
+                                missing_slim_layers, read_nhdplus_layer)
 
 
 def _make_gdb(path):
@@ -35,9 +38,13 @@ def _make_gdb(path):
     gpd.GeoDataFrame({"nhdplusid": [1.0, 2.0], "areasqkm": [1.0, 1.0]},
                      geometry=[box(0, 0, 1, 1), box(1, 1, 2, 2)], crs=crs).to_file(
         path, layer="NHDPlusCatchment", driver="OpenFileGDB", append=True)
-    # A layer the pipeline doesn't read: must not be kept.
-    gpd.GeoDataFrame({"x": [1]}, geometry=[box(0, 0, 3, 3)], crs=crs).to_file(
+    # A water layer (NHDArea and NHDPlusBurnWaterbody are left out: written empty).
+    gpd.GeoDataFrame({"permanent_identifier": ["{AB-1}"], "nhdplusid": [9.0], "ftype": [390]},
+                     geometry=[box(0, 0, 3, 3)], crs=crs).to_file(
         path, layer="NHDWaterbody", driver="OpenFileGDB", append=True)
+    # A layer the pipeline doesn't read: must not be kept.
+    gpd.GeoDataFrame({"x": [1]}, geometry=[LineString([(0, 0), (3, 3)])], crs=crs).to_file(
+        path, layer="NHDLine", driver="OpenFileGDB", append=True)
     pyogrio.write_dataframe(pd.DataFrame({"fromnhdpid": [1.0], "tonhdpid": [2.0]}),
                             path, layer="NHDPlusFlow", driver="OpenFileGDB", append=True)
     pyogrio.write_dataframe(pd.DataFrame({"nhdplusid": [1.0, 2.0], "totdasqkm": [1.0, 2.0]}),
@@ -95,6 +102,42 @@ def test_slims_deletes_and_resumes():
         before = (out_dir / new / f"{new}.gpkg").stat().st_mtime
         _run(zip_dir, out_dir)
         assert (out_dir / new / f"{new}.gpkg").stat().st_mtime == before
+
+        # Water layers: the real one copied, the absent ones written empty.
+        gpkg = out_dir / new / f"{new}.gpkg"
+        assert len(pyogrio.read_dataframe(gpkg, layer="NHDWaterbody")) == 1
+        for layer in ("NHDArea", "NHDPlusBurnWaterbody"):
+            assert len(pyogrio.read_dataframe(gpkg, layer=layer)) == 0
+
+
+def test_adds_water_layers_to_old_slim_package():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        zip_dir, out_dir, work = tmp / "zips", tmp / "extracted", tmp / "work"
+        for d in (zip_dir, out_dir, work):
+            d.mkdir()
+        package = "NHDPLUS_H_0103_HU4_20230713_GDB"
+        zip_path = _make_zip(zip_dir, package, work)
+
+        # A GeoPackage slimmed before the water layers were kept.
+        gpkg = out_dir / package / f"{package}.gpkg"
+        gpkg.parent.mkdir()
+        old = gpd.GeoDataFrame({"nhdplusid": [7.0]}, geometry=[LineString([(5, 5), (6, 6)])],
+                               crs="EPSG:4269")
+        for layer in CORE_LAYERS:
+            pyogrio.write_dataframe(old, gpkg, layer=layer, driver="GPKG")
+        assert missing_slim_layers(gpkg) == ["NHDArea", "NHDWaterbody", "NHDPlusBurnWaterbody"]
+
+        status = unz.process_zip(zip_path, out_dir)
+
+        assert status.startswith("added NHDArea, NHDWaterbody, NHDPlusBurnWaterbody")
+        assert missing_slim_layers(gpkg) == []
+        assert not zip_path.exists()
+        assert not list(out_dir.glob(".tmp_*")) and not list(gpkg.parent.glob("*.tmp"))
+        # The existing layers are the old ones, not re-copied from the zip.
+        flowlines = pyogrio.read_dataframe(gpkg, layer="NHDFlowline")
+        assert flowlines["nhdplusid"].tolist() == [7.0]
+        assert len(pyogrio.read_dataframe(gpkg, layer="NHDWaterbody")) == 1
 
 
 if __name__ == "__main__":

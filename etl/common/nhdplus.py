@@ -16,8 +16,14 @@ import pyogrio
 # Column names as the rest of the pipeline spells them. Newer NHDPlus HR
 # releases (e.g. NHDPLUS_H_0106_HU4_20230713_GDB) use lowercase field names
 # (nhdplusid, fromnhdpid, ...), so reads normalize to these spellings.
-# The only NHDPlus HR layers the pipeline reads.
-SLIM_LAYERS = ("NHDFlowline", "NHDPlusFlow", "NHDPlusCatchment", "NHDPlusFlowlineVAA")
+# The only NHDPlus HR layers the pipeline reads. Every package must have
+# the core layers. The water layers (wide-river and lake/reservoir polygons
+# that NHDFlowline.WBArea_Permanent_Identifier points to, and the burn
+# waterbodies with their on/off-network flag) are copied when the package
+# has them; when it doesn't, an empty layer marks the package as done.
+CORE_LAYERS = ("NHDFlowline", "NHDPlusFlow", "NHDPlusCatchment", "NHDPlusFlowlineVAA")
+WATER_LAYERS = ("NHDArea", "NHDWaterbody", "NHDPlusBurnWaterbody")
+SLIM_LAYERS = CORE_LAYERS + WATER_LAYERS
 
 # Extensions of an extracted package, preferred first.
 PACKAGE_EXTENSIONS = (".gpkg", ".gdb")
@@ -34,6 +40,10 @@ CANONICAL_COLUMNS = (
     "FlowDir",
     "TotDASqKm",
     "Slope",
+    "Permanent_Identifier",
+    "WBArea_Permanent_Identifier",
+    "OnOffNet",
+    "SourceFC",
 )
 
 
@@ -87,6 +97,16 @@ def find_huc8_geodatabase(nhdplus_extracted_dir, huc8):
 def is_hu4_fallback(gdb_path, huc8):
     """True if the located geodatabase is an HU4 fallback, not an exact HU8 match."""
     return f"_{huc8}_HU8_GDB" not in Path(gdb_path).name
+
+
+def missing_slim_layers(path):
+    """SLIM_LAYERS absent from an extracted package (names ignore case).
+    A full FileGDB counts as complete: it holds every layer."""
+    path = Path(path)
+    if path.suffix == ".gdb":
+        return []
+    present = {str(name).lower() for name, _ in pyogrio.list_layers(path)}
+    return [layer for layer in SLIM_LAYERS if layer.lower() not in present]
 
 
 def normalize_nhdplus_columns(frame):

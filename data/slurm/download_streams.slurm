@@ -25,6 +25,10 @@ echo "Python: $(which python)"
 echo "Start time: $(date)"
 echo "========================================"
 
-python -u etl/download_nhdplus.py
+# HU4="0104 0205" sbatch data/slurm/download_streams.slurm limits the run
+# to the case study's HUC8s in those HUC4s. Packages slimmed before the
+# water layers (NHDArea, NHDWaterbody, NHDPlusBurnWaterbody) were kept are
+# downloaded again and only those layers are added.
+python -u etl/download_nhdplus.py ${HU4:+--hu4 $HU4}
 
 echo "NHDPlus download job finished: $(date)"
