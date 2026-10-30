@@ -44,18 +44,20 @@ REACH_COLUMNS = ["FType", "GNIS_Name", "totdasqkm", "area_ratio", "generation_me
                  "path_polygon_layer", "path_polygon_ftype", "catchment_relation"]
 
 
-def apply_overrides(decisions, points, overrides):
-    """Reviewed manual decisions replace automatic ones (stations only).
-    Returns decisions with auto_status, auto_reason, match_method and
-    override_nhdplus_id (checked later against the flowlines)."""
+def apply_overrides(decisions, ids, overrides, kind="station"):
+    """Reviewed manual decisions replace automatic ones. `ids` are the
+    feature ids (aligned with decisions); `kind` is the overrides'
+    feature_kind (station / dam). Returns decisions with auto_status,
+    auto_reason, match_method and override_nhdplus_id (checked later
+    against the flowlines)."""
     out = decisions.copy()
     out["auto_status"], out["auto_reason"] = out["status"], out["reason"]
     out["match_method"] = "evidence_rules"
     out["override_nhdplus_id"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
-    for index, station in points[STATION_ID].astype(str).items():
-        if ("station", station) not in overrides.index:
+    for index, feature in ids.astype(str).items():
+        if (kind, feature) not in overrides.index:
             continue
-        override = overrides.loc[("station", station)]
+        override = overrides.loc[(kind, feature)]
         out.loc[index, "match_method"] = "manual_override"
         out.loc[index, "evidence"] = ";".join(filter(None, [out.loc[index, "evidence"],
                                                             "manual_override"]))
@@ -134,7 +136,7 @@ def process_huc8(huc8, candidate_dir, nhd_dir, rules, overrides):
     candidates["NHDPlusID"] = candidates["NHDPlusID"].astype("Int64")
 
     decisions = rs.decide_stations(points, candidates, rules, STATION_ID)
-    decisions = apply_overrides(decisions, points, overrides)
+    decisions = apply_overrides(decisions, points[STATION_ID], overrides)
     if (decisions["status"] == rs.ACCEPTED).any():
         placed = place_on_reaches(points, decisions, candidates,
                                   find_huc8_geodatabase(nhd_dir, huc8))

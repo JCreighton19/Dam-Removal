@@ -36,6 +36,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 import pyogrio
 
@@ -75,8 +76,9 @@ def _layer_names(path):
 
 
 def read_layer(path, layer, columns, bbox=None, geometry=True):
-    """The columns of `layer` that exist (canonical names; missing ones
-    added as NA), clipped to bbox (layer CRS) when given."""
+    """The columns of `layer` that exist, named as requested whatever
+    their case in the package (missing ones added as NA), clipped to bbox
+    (layer CRS) when given."""
     name = _layer_names(path).get(layer.lower())
     if name is None:
         return None
@@ -84,7 +86,8 @@ def read_layer(path, layer, columns, bbox=None, geometry=True):
     frame = pyogrio.read_dataframe(path, layer=name, bbox=bbox, read_geometry=geometry,
                                    columns=[fields[c.lower()] for c in columns
                                             if c.lower() in fields])
-    frame = normalize_nhdplus_columns(frame)
+    frame = normalize_nhdplus_columns(frame).rename(
+        columns={fields[c.lower()]: c for c in columns if c.lower() in fields})
     for column in columns:
         if column not in frame.columns:
             frame[column] = pd.NA
@@ -102,13 +105,18 @@ def load_package(gdb_path, bbox):
     flowlines["NHDPlusID"] = wf.clean_nhdplus_id(flowlines["NHDPlusID"])
     flowlines["FType"] = pd.to_numeric(flowlines["FType"], errors="coerce")
     flowlines = flowlines.dropna(subset=["NHDPlusID"]).drop_duplicates("NHDPlusID")
-    vaa = read_layer(gdb_path, "NHDPlusFlowlineVAA", ["NHDPlusID", "TotDASqKm"], geometry=False)
+    vaa = read_layer(gdb_path, "NHDPlusFlowlineVAA", ["NHDPlusID", "TotDASqKm", "Divergence"],
+                     geometry=False)
     if vaa is not None:
         vaa = pd.DataFrame({"NHDPlusID": wf.clean_nhdplus_id(vaa["NHDPlusID"]),
-                            "TotDASqKm": vaa["TotDASqKm"]}).drop_duplicates("NHDPlusID")
+                            "TotDASqKm": vaa["TotDASqKm"],
+                            # 0 none, 1 main path, 2 minor path of a divergence
+                            "divergence": pd.to_numeric(vaa["Divergence"], errors="coerce")
+                            }).drop_duplicates("NHDPlusID")
         flowlines = flowlines.merge(vaa, on="NHDPlusID", how="left")
     else:
         flowlines["TotDASqKm"] = pd.NA
+        flowlines["divergence"] = np.nan
     flowlines["totdasqkm"] = sn.valid_area(flowlines["TotDASqKm"])
 
     water = not any(layer in WATER_LAYERS for layer in missing_slim_layers(gdb_path))
@@ -116,7 +124,7 @@ def load_package(gdb_path, bbox):
     if water:
         for layer in ("NHDArea", "NHDWaterbody"):
             frame = read_layer(gdb_path, layer, ["Permanent_Identifier", "NHDPlusID", "FType",
-                                                 "FCode"], bbox)
+                                                 "FCode", "FDate"], bbox)
             if frame is not None and len(frame):
                 shapes.append(frame.assign(_layer=layer))
     empty = pd.DataFrame(columns=["Permanent_Identifier", "NHDPlusID", "FType", "FCode"])
@@ -125,6 +133,11 @@ def load_package(gdb_path, bbox):
     attributes = wf.water_polygons(areas, bodies)
     geometry = [g for f in (areas, bodies) if isinstance(f, gpd.GeoDataFrame) for g in f.geometry]
     polygons = gpd.GeoDataFrame(attributes, geometry=geometry, crs=flowlines.crs)
+    # Date the polygon was last edited in NHD (does the current hydrography
+    # postdate a dam removal?).
+    polygons["polygon_fdate"] = pd.to_datetime(pd.Series(
+        [d for f in (areas, bodies) if isinstance(f, gpd.GeoDataFrame) for d in f["FDate"]],
+        dtype="object"), errors="coerce").to_numpy()
 
     linked = wf.link_flowlines_to_polygons(flowlines, attributes)
     flowlines = flowlines.assign(wbarea_id=linked["wbarea_id"].to_numpy(),

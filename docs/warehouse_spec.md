@@ -580,7 +580,7 @@ Computed per catchment, then summed to each station through `station_catchment` 
 
 ### 3.12 Snapping: matching dams and stations to reaches
 
-`etl/snap_features.py`, rules in `etl/common/snapping.py` (decided 2026-10-23 from the preprocessing audit, sections 11–14). It replaces the earlier nearest-flowline rule, which ignored the reported datum and the flowline's type, name and size, and had no distance limit.
+`etl/snap_features.py`, rules in `etl/common/snapping.py` (decided 2026-10-23 from the preprocessing audit, sections 11–14). It replaces the earlier nearest-flowline rule, which ignored the reported datum and the flowline's type, name and size, and had no distance limit. It is itself being replaced by the evidence-based matching in 3.13; until that is wired into linking, the tables above still come from this section.
 
 **1. Datum.** Each point is moved from its reported datum to the flowlines' CRS (NHDPlus HR: NAD83) with PROJ's best transformation for the HUC8's area. WQP `HorizontalCoordinateReferenceSystemDatumName` gives the datum: NAD83, NAD27, WGS84, WGS72, OLDHI, PR, SGEOR, SLAWR, SPAUL, GUAM, AMSMA, JOHNS and WAKE map to EPSG codes; blank, `UNKWN` and `OTHER` are taken as NAD83 (`datum_assumed`); any other name has no transformation (rejected, `datum_unsupported`). Dams have no datum field and are taken as WGS84 (`datum_assumed`). Without the NADCON grid PROJ converts NAD27 with a zero "ballpark" shift (tens of metres wrong), so when a grid-based transformation exists but its grid isn't installed, or the usable one is worse than 10 m, the run stops before any HUC8 with the grid name (`export PROJ_NETWORK=ON`, set in `snap_features.slurm`, lets PROJ fetch it). `datum_transform` and `datum_accuracy_m` in the diagnostics record what was used.
 
@@ -619,6 +619,30 @@ Names match when every distinctive word of the reach's GNIS name appears in the 
 | `snap_candidates_<huc8>.csv` | Every candidate reach of every point: distance, name, type, drainage area, `name_match`, `eligible_ftype` |
 
 **Validation before replacing outputs:** run `snap_features.py --output-dir data/processed/snap_validation` on the HUC8s holding known failures plus a random `--sample`, then `etl/compare_snapping.py`, which compares each point's old and new reach and reports what happened to the seven stations confirmed wrong on the audit map and to the audit's `likely wrong` / `check` dams and stations. Steps in `docs/rerun_after_snapping.md`.
+
+
+### 3.13 Reach-matching rework (in progress; not yet in the warehouse)
+
+Decided 2026-10-30. Reported coordinates are taken as right; flowlines have no width, so the nearest flowline is often the wrong one (a bank station on a wide river can be nearer a tributary than the river's centreline). Each point's flowline is chosen from evidence first; only then is the reported (datum-transformed, as in 3.12) point projected onto it for `snap_fraction` and the snapped coordinates, kept in separate columns from the reported ones.
+
+**NHDPlus relationships used** (stored identifiers, not geometry): `NHDFlowline.WBArea_Permanent_Identifier` → the `NHDArea` / `NHDWaterbody` polygon an artificial path (558) runs through; `NHDPlusCatchment.NHDPlusID` = its flowline (catchments with `SourceFC` `NHDPlusSink` are closed basins with no flowline); `NHDPlusFlow` for up/downstream; VAA `Divergence` (2 = minor path). `NHDPlusBurnWaterbody.OnOffNet` is not used: closed-basin waterbodies are flagged on-network too. Checked on HU4s 0104, 0108, 0205, 0301, 0701, 0707, 1019, 1709, 1902 (`etl/nhdplus_diagnostics.py`): every artificial path but one carries a polygon id, ≤ 0.9% don't resolve; 94.6–99.5% of 460/558 flowlines have a catchment.
+
+| Stage | Script (rules) | Output in `data/processed/` |
+|---|---|---|
+| 1 | `nhdplus_diagnostics.py` (`etl/common/water_features.py`) | `nhdplus_diagnostics/<case_study>/`: coverage per HUC8, per-package counts, polygon types, exceptions |
+| 2 | `station_candidates.py` (`etl/common/candidates.py`) | `station_candidates/<case_study>/station_points_<huc8>.parquet`, `station_candidates_<huc8>.parquet` |
+| 3 | `select_station_reaches.py` (`etl/common/reach_selection.py`), `check_known_stations.py` | `station_reaches/<case_study>/station_reaches_<huc8>.parquet`, `known_stations_check.csv` |
+| 4 | `match_dams.py` (`etl/common/dam_matching.py`) | `dam_reaches/<case_study>/dam_reaches_<huc8>.parquet`, `dam_reservoir_outlets_<huc8>.parquet`, `dam_candidates_<huc8>.parquet` |
+
+**Station candidates** come from: the artificial paths of a water polygon the station is in (or within 30 m of); the flowline of its catchment and the flowlines directly up- and downstream; every flowline within 1,000 m. Each candidate keeps its distance, type, name match, drainage-area ratio, polygon and catchment relation and how it was found.
+
+**Station decision:** only 460/558 flowlines; plausible ones are within 300 m, a path of the station's polygon, or its own catchment's flowline. Drainage-area agreement, then name, then structure (polygon path, own catchment) narrow them; the closest remaining is chosen. It is ambiguous, unless area or name supports it, at a confluence (a reach about as close, or in the same polygon, ≥ 5× bigger or smaller), at a polygon edge with a closer non-polygon reach, beyond 300 m outside a polygon, or in a sink catchment. Reasons: `drainage_area_match`, `name_match`, `water_polygon`, `own_catchment`, `nearest_plausible_reach`; ambiguous `drainage_area_mismatch`, `confluence_ambiguous`, `polygon_edge_ambiguous`, `far_without_support`, `sink_catchment`; rejected `no_eligible_candidate`, `sink_catchment_no_reach`, `datum_unsupported`, `no_nhdplus_package`. Thresholds: config blocks `station_candidates` and `station_selection`.
+
+**Dams** record three flowlines: *impounded* (the reservoir polygon's paths), *structure* (the flowline the dam is on, which places it in the network) and *downstream* (directly below the structure flowline). A dam within 300 m of an `NHDWaterbody`'s main outlet (the outlet path with the largest drainage area; an outlet on a minor divergence is a diversion) goes on that outlet (`reservoir_outlet`); ambiguous when another non-diversion outlet is of similar size (`multiple_outlets`) or the dam's `River` names neither the outlet nor the flowline below (`reservoir_name_mismatch`). Otherwise (no reservoir mapped, often because current NHD postdates the removal, or the dam isn't at an outlet) it is matched like a station with the dam distances (500 m search, 150 m review, 100 m polygon tolerance). `reservoir_fdate` and `reservoir_mapped_after_removal` record whether the mapped reservoir was edited after the removal year. Thresholds: config block `dam_matching`.
+
+**Kept from 3.12:** accepted / ambiguous / rejected (only accepted points are to be linked; ambiguous ones keep a `provisional_nhdplus_id` for review), evidence codes, runner-up, `auto_status` / `auto_reason`, and `config/snap_overrides.csv`.
+
+**Known stations.** `config/known_station_reaches.csv` lists the seven audit stations with the reach(es) the old snapping wrongly chose (filled from the old `snapped_features` and `snap_diagnostics` files) and, once reviewed, the correct reach or river. `check_known_stations.py` reports two separate results: `avoids_wrong_reach` (not accepted on a known wrong reach; ambiguous or rejected passes) and `correct_reach` (`confirmed` only against a reviewed answer, else `not_reviewed`). Avoiding a wrong reach does not show the match is right.
 
 ---
 

@@ -22,8 +22,9 @@ The flowchart is drawn by `docs/pipeline_flowchart.py` (writes the SVG and a PNG
 ## Repository layout
 
 ```
-config/          Case-study configs (which HUC8s and dams are in scope) and
-                 snap_overrides.csv (reviewed manual snapping decisions)
+config/          Case-study configs (which HUC8s and dams are in scope),
+                 snap_overrides.csv (reviewed manual snapping decisions) and
+                 known_station_reaches.csv (stations with a known wrong reach)
 etl/             Pipeline scripts (one per stage) and shared helpers in etl/common/
 analysis/        Helpers for the preprocessing audit notebook (audit_utils.py)
 data/slurm/      One Slurm job per pipeline stage; case_study.env selects the config
@@ -71,14 +72,14 @@ The case study is set in `data/slurm/case_study.env`: `PILOT_N_DAMS=all` runs ev
 
 **Don't hold `warehouse.duckdb` open while the chain runs.** Several stages (`build_views`, `build_station_watershed`, the land-cover and climate loads) write to it, and DuckDB refuses the write if another process, such as a notebook, has the file open, even read-only. In notebooks, read the Parquet files directly or open the database only inside a `with` block.
 
-**Storage.** Intermediate data is deleted once used: NHDPlus zips after unzipping, all but the 4 NHDPlus layers the pipeline reads (`unzip_nhdplus` keeps a slim GeoPackage per package), all WBD layers but HUC8 (`slim_wbd.py`, run by `unzip_huc8`), and the NLCD/PRISM clips after `load_land_cover`/`load_climate` (`--keep-clips` keeps them). NLCD/PRISM clips cover only the catchments the stations need.
+**Storage.** Intermediate data is deleted once used: NHDPlus zips after unzipping, all but the NHDPlus layers the pipeline reads (`unzip_nhdplus` keeps a slim GeoPackage per package: 4 core layers plus NHDArea, NHDWaterbody and NHDPlusBurnWaterbody), all WBD layers but HUC8 (`slim_wbd.py`, run by `unzip_huc8`), and the NLCD/PRISM clips after `load_land_cover`/`load_climate` (`--keep-clips` keeps them). NLCD/PRISM clips cover only the catchments the stations need.
 
 The stages, in order:
 
 1. `download_huc8` → `unzip_huc8`: WBD boundaries
 2. `sample_random_pilot` (optional): generate a config from a random sample of dams
 3. `download_wqp_stations` → `select_candidate_stations`: WQP stations in the case-study HUC8s
-4. `download_streams` → `unzip_nhdplus`: NHDPlus HR packages, kept as slim GeoPackages (4 layers)
+4. `download_streams` → `unzip_nhdplus`: NHDPlus HR packages, kept as slim GeoPackages (4 core + 3 water layers; packages slimmed earlier are re-downloaded and only the missing layers added; `HU4="..."` limits the run)
 5. `build_stream_network`: network diagnostics (not in the chain; run separately if needed)
 6. `snap_features`: match dams and stations to an NHDPlus reach (datum transformation, stream types only, distance limits, name and drainage-area checks, manual overrides in `config/snap_overrides.csv`); each point is accepted, ambiguous or rejected, and only accepted ones go on (spec 3.12)
 7. `link_dams`: classify each station as upstream, downstream or unconnected relative to each dam
@@ -105,6 +106,16 @@ sbatch data/slurm/snap_recheck.slurm      # re-snap a few HUC8s after a rule cha
 
 The full procedure (validate, back up, `run_pipeline.sh --from snap_features`, what to check in each log) is in [`docs/rerun_after_snapping.md`](docs/rerun_after_snapping.md).
 
+**Reach-matching rework (in progress).** A replacement for `snap_features` that picks each point's flowline from hydrologic evidence (the water polygon or catchment it is in, drainage area, name, then distance) and only then projects the reported point onto it (spec 3.13). It runs alongside the pipeline, writing to its own folders; nothing the pipeline reads changes until it is wired into linking:
+
+```bash
+sbatch data/slurm/nhdplus_diagnostics.slurm                 # 1: stored NHDPlus relationships, per package
+HU4="..." sbatch data/slurm/station_candidates.slurm        # 2: candidate reaches and evidence per station
+FILL_WRONG_REACHES=1 sbatch data/slurm/select_station_reaches.slurm   # once: record the known wrong reaches
+HU4="..." sbatch data/slurm/select_station_reaches.slurm    # 3: choose station reaches, check known stations
+HU4="..." sbatch data/slurm/match_dams.slurm                # 4: dams: reservoir outlet, structure and downstream flowlines
+```
+
 **Checking a run.** `notebooks/warehouse_qa.ipynb` checks the core and cleaned tables (row counts, key integrity, maps). `notebooks/preprocessing_audit.ipynb` audits `analysis_measurement` for duplicates, misplaced stations, outliers and competing removals; it needs the full chain to have finished, about 32 GB of memory, and it writes its flag tables to `data/processed/preprocessing_audit/<case_study>/`. `notebooks/warehouse_integrity.ipynb` checks that no derived table is stale (from an earlier snapping or linking run), that no sample is future-dated, what the link distance limits keep, and raw-to-cleaned retention before vs after removal. `notebooks/analysis_robustness.ipynb` estimates the before/after change with one exposure per measurement, dam-level averages, a matched upstream control, measurement-consistency checks and a by-dam event study. Set `CASE_STUDY` at the top of each notebook.
 
 ## Warehouse
@@ -129,3 +140,5 @@ Curated tables are written as Parquet (GeoParquet for geometry) to `data/warehou
 Case study: `all_removals` (every dam removal in the list). The smaller pilots (`pilot_random5_seed42`, and `pilot_random50_seed7` kept as a benchmark) were used to develop the pipeline.
 
 As of 2026-10-25: after the preprocessing audit, the pipeline gained scored snapping, the daily measurement table, exposure assignment and station QC flags (see the runbook). The full `all_removals` chain is being re-run with these changes. Next: re-run `warehouse_qa` and `preprocessing_audit` on the new outputs and compare with the pre-change audit. `report_pilot_eligibility` is kept only until the `build_views` eligibility views have been checked against it.
+
+As of 2026-10-30: the reach-matching rework (spec 3.13) has stages 1–4 implemented and tested on synthetic data; the water layers have been added for HU4s 0104, 0108, 0205, 0301, 0701, 0707, 1019, 1709 and 1902, where stages 2–4 are being validated. Next: stage 5, re-linking dams and stations from the new matches and comparing with the current links.
