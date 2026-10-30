@@ -1,0 +1,19 @@
+# Stations with a known reach problem, checked by etl/check_known_stations.py.
+#   station_id           MonitoringLocationIdentifier
+#   wrong_nhdplus_id     a reach the old snapping chose that is known or suspected wrong
+#                        (one row per wrong reach; a station may have several)
+#                        (filled with: python etl/check_known_stations.py --fill-wrong-reaches)
+#   wrong_source         file the wrong reach was taken from
+#   correct_nhdplus_id   reviewed correct reach (optional; strengthens the check)
+#   correct_river_name   reviewed correct river, if the reach ID isn't known (optional)
+#   reviewed_by, reviewed_on, notes
+# Avoiding wrong_nhdplus_id does NOT show a station is matched correctly; only a
+# reviewed correct_nhdplus_id / correct_river_name can confirm that.
+station_id,wrong_nhdplus_id,wrong_source,correct_nhdplus_id,correct_river_name,reviewed_by,reviewed_on,notes
+11113300-SILHARSB1,,,,,,,confirmed on the wrong reach on the audit map
+11113300-SILHARL1,,,,,,,confirmed on the wrong reach on the audit map
+11113300-SILHARL2,,,,,,,confirmed on the wrong reach on the audit map
+CHESAPEAKEMONITORINGCOOP-CMC.LWQVC.MILL3,,,,,,,confirmed on the wrong reach on the audit map
+CADWR-1541.00,,,,,,,confirmed on the wrong reach on the audit map
+MNPCA-S004-561,,,,,,,confirmed on the wrong reach on the audit map
+WIDNR_WQX-10040927,,,,,,,confirmed on the wrong reach on the audit map; manually rejected in config/snap_overrides.csv
