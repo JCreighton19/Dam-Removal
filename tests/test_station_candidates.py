@@ -49,7 +49,7 @@ REACHES = {
 # name, lat, lon, datum
 STATIONS = {
     "S_BANK": ("MILL RIVER AT BROOK", 45.0028, -69.9701, "NAD83"),
-    "S_LAKE": ("LAKE SITE", 45.0290, -69.9210, "NAD83"),
+    "S_LAKE": ("SITE 7", 45.0290, -69.9210, "NAD83"),
     "S_TRIB": ("OTTER BROOK ABOVE MOUTH", 45.0060, -69.9750, "NAD83"),
     "S_POND": ("POND", 45.0350, -70.0300, "NAD83"),
     "S_ASTRO": ("OLD SURVEY", 45.0010, -69.9900, "ASTRO"),
