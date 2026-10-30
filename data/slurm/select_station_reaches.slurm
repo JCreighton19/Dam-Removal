@@ -16,6 +16,10 @@
 #     sbatch data/slurm/select_station_reaches.slurm
 #     HU4="0104 0205" sbatch data/slurm/select_station_reaches.slurm
 #
+# First, once: record the known wrong reaches from the old snapping
+# outputs into config/known_station_reaches.csv (review, then commit it):
+#     FILL_WRONG_REACHES=1 sbatch data/slurm/select_station_reaches.slurm
+#
 # The known-station check fails the job if a station is accepted on its
 # known wrong reach. Passing it does not show the stations are matched
 # correctly; see etl/check_known_stations.py.
@@ -32,6 +36,12 @@ conda activate dam-removal
 
 echo "Job started: $(date)"
 echo "Case study: $DAM_REMOVAL_CASE_STUDY"
+
+if [[ -n "${FILL_WRONG_REACHES:-}" ]]; then
+    python -u etl/check_known_stations.py --fill-wrong-reaches
+    echo "Job completed: $(date)"
+    exit 0
+fi
 
 python -u etl/select_station_reaches.py ${HU4:+--hu4 $HU4}
 
