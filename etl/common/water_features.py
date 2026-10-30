@@ -102,6 +102,14 @@ def polygon_path_counts(linked, polygons, burn=None):
     return out
 
 
+def _text(series):
+    """A column as pandas' string dtype for building detail text (pandas 2
+    can't add a string column to an object one). Numbers lose any .0."""
+    if pd.api.types.is_numeric_dtype(series):
+        series = pd.to_numeric(series, errors="coerce").round().astype("Int64")
+    return series.astype("string")
+
+
 def relationship_checks(flowlines, areas, waterbodies, catchments, vaa, flow, burn=None):
     """Check every stored relationship of one package.
 
@@ -140,30 +148,28 @@ def relationship_checks(flowlines, areas, waterbodies, catchments, vaa, flow, bu
     no_poly = linked[ap & (linked["wbarea_status"] == NO_POLYGON)]
     add("artificial_path_without_polygon", no_poly["NHDPlusID"])
     bad = linked[linked["wbarea_status"] == UNRESOLVED]
-    add("polygon_id_unresolved", bad["NHDPlusID"], "wbarea_id=" + bad["wbarea_id"])
+    add("polygon_id_unresolved", bad["NHDPlusID"], "wbarea_id=" + _text(bad["wbarea_id"]))
     other = linked[~ap & (linked["wbarea_status"] != NO_POLYGON)]
     add("non_artificial_path_with_polygon", other["NHDPlusID"],
-        "ftype=" + other["FType"].astype("Int64").astype("string")
-        + " polygon=" + other["polygon_layer"].fillna("unresolved"))
+        "ftype=" + _text(other["FType"]) + " polygon="
+        + _text(other["polygon_layer"]).fillna("unresolved"))
 
     # Polygons.
     ids = polygons["permanent_id"].dropna()
     repeated = polygons[polygons["permanent_id"].isin(ids[ids.duplicated()])]
     add("duplicate_polygon_permanent_id", repeated["permanent_id"],
-        "layer=" + repeated["polygon_layer"])
+        "layer=" + _text(repeated["polygon_layer"]))
     add("polygon_without_permanent_id",
         polygons.loc[polygons["permanent_id"].isna(), "polygon_nhdplusid"])
     known = per_polygon["on_off_network"].notna()
     offnet = per_polygon[known & (per_polygon["on_off_network"] == 0)
                          & (per_polygon["n_artificial_paths"] > 0)]
     add("offnet_polygon_with_paths", offnet["permanent_id"],
-        "layer=" + offnet["polygon_layer"] + " ftype="
-        + offnet["polygon_ftype"].astype("string"))
+        "layer=" + _text(offnet["polygon_layer"]) + " ftype=" + _text(offnet["polygon_ftype"]))
     onnet = per_polygon[known & (per_polygon["on_off_network"] == 1)
                         & (per_polygon["n_artificial_paths"] == 0)]
     add("onnet_polygon_without_paths", onnet["permanent_id"],
-        "layer=" + onnet["polygon_layer"] + " ftype="
-        + onnet["polygon_ftype"].astype("string"))
+        "layer=" + _text(onnet["polygon_layer"]) + " ftype=" + _text(onnet["polygon_ftype"]))
     if burn is not None and len(burn):
         burn_ids = clean_nhdplus_id(burn["NHDPlusID"])
         add("burn_waterbody_unresolved",
@@ -174,7 +180,7 @@ def relationship_checks(flowlines, areas, waterbodies, catchments, vaa, flow, bu
     add("catchment_without_flowline", catch_ids[catch_ids.notna() & ~catch_ids.isin(flowline_ids)])
     no_catch = linked[matchable & ~linked["NHDPlusID"].isin(set(catch_ids.dropna()))]
     add("flowline_without_catchment", no_catch["NHDPlusID"],
-        "ftype=" + no_catch["FType"].astype("Int64").astype("string"))
+        "ftype=" + _text(no_catch["FType"]))
     vaa = vaa.assign(NHDPlusID=clean_nhdplus_id(vaa["NHDPlusID"]))
     no_vaa = linked[matchable & ~linked["NHDPlusID"].isin(set(vaa["NHDPlusID"].dropna()))]
     add("flowline_without_vaa", no_vaa["NHDPlusID"])
