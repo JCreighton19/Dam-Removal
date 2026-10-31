@@ -122,6 +122,14 @@ def test_reservoir_outlets_and_diversions():
     assert outlets.loc[21, "downstream_ids"] == "23" and outlets.loc[21, "n_paths"] == 3
 
 
+def test_split_ids_terminal_outlet():
+    # A terminal outlet's downstream_ids is None, or NaN once it has been
+    # through a merge (HUC8 10190003 failed with "'float' object has no
+    # attribute 'split'").
+    assert dm._split_ids("12;13") == [12, 13]
+    assert dm._split_ids(None) == [] and dm._split_ids(float("nan")) == []
+
+
 def test_match_dams_end_to_end():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)

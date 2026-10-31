@@ -85,6 +85,11 @@ def _ids(values):
     return ";".join(str(int(v)) for v in values) or None
 
 
+def _split_ids(value):
+    """Inverse of _ids; None or NaN (a terminal outlet) gives []."""
+    return [int(i) for i in value.split(";") if i] if isinstance(value, str) else []
+
+
 def flow_edges(flow):
     return pd.DataFrame({"from": wf.clean_nhdplus_id(flow["FromNHDPID"]),
                          "to": wf.clean_nhdplus_id(flow["ToNHDPID"])}).dropna(subset=["from"])
@@ -135,8 +140,7 @@ def outlet_node(flowlines_by_id, outlet_id, downstream_ids):
     flowline below it (the line's last vertex for a terminal path)."""
     coords = shapely.get_coordinates(flowlines_by_id.geometry.loc[outlet_id])
     first, last = shapely.points(coords[0]), shapely.points(coords[-1])
-    below = [int(i) for i in (downstream_ids or "").split(";") if i]
-    below = [i for i in below if i in flowlines_by_id.index]
+    below = [i for i in _split_ids(downstream_ids) if i in flowlines_by_id.index]
     if not below:
         return last
     target = flowlines_by_id.geometry.loc[below[0]]
@@ -235,9 +239,8 @@ def _decide(index, candidates, point, review, river, year_removed, by_id, edges,
                 decision.update(status=rs.AMBIGUOUS, reason="multiple_outlets")
         if all_outlets["is_diversion"].any():
             evidence.append("diversion_outlet")
-        below = (res["downstream_ids"] or "").split(";")
         names = [by_id.loc[outlet, "GNIS_Name"]] + [
-            by_id.loc[int(b), "GNIS_Name"] for b in below if b and int(b) in by_id.index]
+            by_id.loc[b, "GNIS_Name"] for b in _split_ids(res["downstream_ids"]) if b in by_id.index]
         name = _name_ok(river, *names)
         if name is True:
             evidence.append("name_match")
