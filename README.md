@@ -114,6 +114,7 @@ HU4="..." sbatch data/slurm/station_candidates.slurm        # 2: candidate reach
 FILL_WRONG_REACHES=1 sbatch data/slurm/select_station_reaches.slurm   # once: record the known wrong reaches
 HU4="..." sbatch data/slurm/select_station_reaches.slurm    # 3: choose station reaches, check known stations
 HU4="..." sbatch data/slurm/match_dams.slurm                # 4: dams: reservoir outlet, structure and downstream flowlines
+HU4="..." sbatch data/slurm/link_reaches.slurm              # 5: link dams to stations on the new reaches, compare with current links
 ```
 
 **Checking a run.** `notebooks/warehouse_qa.ipynb` checks the core and cleaned tables (row counts, key integrity, maps). `notebooks/preprocessing_audit.ipynb` audits `analysis_measurement` for duplicates, misplaced stations, outliers and competing removals; it needs the full chain to have finished, about 32 GB of memory, and it writes its flag tables to `data/processed/preprocessing_audit/<case_study>/`. `notebooks/warehouse_integrity.ipynb` checks that no derived table is stale (from an earlier snapping or linking run), that no sample is future-dated, what the link distance limits keep, and raw-to-cleaned retention before vs after removal. `notebooks/analysis_robustness.ipynb` estimates the before/after change with one exposure per measurement, dam-level averages, a matched upstream control, measurement-consistency checks and a by-dam event study. Set `CASE_STUDY` at the top of each notebook.
