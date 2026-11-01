@@ -1,7 +1,7 @@
 """Checks for etl/common/reach_links.py and etl/link_reaches.py on a
 synthetic network around 45 N (every reach 1 km, digitized downstream):
 
-    reach 4 (tributary) --\\
+    reach 4 (tributary) --\\            /-- reach 6 (tributary below D1)
     reach 1 ---> reach 2 ---> reach 3        reach 5 (separate network)
 
 Dams:  D1 accepted on 2 at 0.5 (its reservoir's path is 1)
@@ -10,7 +10,10 @@ Stations:
     S_UP    accepted on 1 at 0.5      upstream of D1, 1.0 km, in reservoir
     S_DN    accepted on 3 at 0.25     downstream of D1, 0.75 km
     S_SAME  accepted on 2 at 0.8      downstream of D1 on its reach, 0.3 km
-    S_TRIB  ambiguous (confluence), provisional 4   upstream of D1, not usable
+    S_TRIB  ambiguous (confluence), provisional 4, rival 1: upstream of D1
+            either way -> usable, robust_to_reach_choice
+    S_CDN   ambiguous (confluence), provisional 3, rival 6: downstream of D1
+            on 3, unconnected on 6 -> stays blocked
     S_ISO   accepted on 5             not connected
     S_REJ   rejected
 
@@ -47,8 +50,9 @@ LINES = {
     3: LineString([(-69.98, 45.0), (-69.97, 45.0)]),
     4: LineString([(-69.99, 45.01), (-69.99, 45.0)]),
     5: LineString([(-69.95, 45.02), (-69.94, 45.02)]),
+    6: LineString([(-69.975, 45.01), (-69.975, 45.0)]),
 }
-FLOW = [(1, 2), (2, 3), (4, 2), (3, 0), (5, 0)]
+FLOW = [(1, 2), (2, 3), (4, 2), (3, 0), (5, 0), (6, 3)]
 
 # id: (status, reason, reach, fraction, provisional, lon, lat)
 STATIONS = {
@@ -56,6 +60,7 @@ STATIONS = {
     "S_DN": ("accepted", "own_catchment", 3, 0.25, 3, -69.9775, 45.0001),
     "S_SAME": ("accepted", "name_match", 2, 0.8, 2, -69.982, 45.0001),
     "S_TRIB": ("ambiguous", "confluence_ambiguous", None, None, 4, -69.9901, 45.005),
+    "S_CDN": ("ambiguous", "confluence_ambiguous", None, None, 3, -69.9752, 45.0002),
     "S_ISO": ("accepted", "name_match", 5, 0.5, 5, -69.945, 45.0201),
     "S_REJ": ("rejected", "no_eligible_candidate", None, None, None, -69.96, 45.03),
 }
@@ -69,10 +74,25 @@ OLD = [  # dam_id, station_id, relationship, km
     ("1001", "S_DN", "downstream", 0.9),
     ("1001", "S_TRIB", "upstream", 1.0),
     ("1001", "S_ISO", "downstream", 2.0),
+    ("1001", "S_CDN", "downstream", 0.8),
     ("1001", "S_REJ", "downstream", 1.0),
     ("1001", "S_SAME", "unconnected", np.nan),
     ("1001", "S_SAME", "unconnected", np.nan),
 ]
+
+
+# Stage-2 candidates of the confluence stations: (station, reach, m, in polygon)
+CANDIDATES = [
+    ("S_TRIB", 4, 1.0, False), ("S_TRIB", 1, 10.0, False), ("S_TRIB", 2, 400.0, False),
+    ("S_CDN", 3, 2.0, False), ("S_CDN", 6, 20.0, False), ("S_CDN", 2, 200.0, False),
+]
+
+
+def _candidates():
+    return pd.DataFrame([{"MonitoringLocationIdentifier": sid, "NHDPlusID": reach,
+                          "distance_m": m, "eligible_ftype": True, "in_point_polygon": inside,
+                          "catchment_relation": None}
+                         for sid, reach, m, inside in CANDIDATES]).astype({"NHDPlusID": "Int64"})
 
 
 def _metric(lon, lat):
@@ -99,7 +119,7 @@ def test_link_pairs_relationships_and_distances():
     links = rl.link_pairs(_ends(DAMS), _ends(STATIONS), graph, lengths,
                           impounded={"1001": {1}}).set_index(["dam_id", "station_id"])
     d1 = links.loc["1001"]
-    assert set(d1.index) == {"S_UP", "S_DN", "S_SAME", "S_TRIB"}   # S_ISO unconnected
+    assert set(d1.index) == {"S_UP", "S_DN", "S_SAME", "S_TRIB", "S_CDN"}   # S_ISO unconnected
     assert d1.loc["S_UP", "relationship"] == "upstream"
     assert np.isclose(d1.loc["S_UP", "network_distance_km"], 1.0)
     assert np.isclose(d1.loc["S_DN", "network_distance_km"], 0.75)
@@ -120,7 +140,7 @@ def test_link_pairs_max_km_drops_far_pairs():
     graph, lengths = _graph()
     links = rl.link_pairs(_ends(DAMS), _ends(STATIONS), graph, lengths, max_km=0.8)
     near = set(links.loc[links["dam_id"] == "1001", "station_id"])
-    assert near == {"S_DN", "S_SAME"}
+    assert near == {"S_DN", "S_SAME"}           # S_CDN is 1.0 km away
 
 
 def test_link_pairs_matches_old_shortest_path_distance():
@@ -134,6 +154,67 @@ def test_link_pairs_matches_old_shortest_path_distance():
         old, _ = calculate_network_distance(graph, 2, int(row["station_reach_id"]), 0.5,
                                             row["station_fraction"], lengths, rel)
         assert np.isclose(old, row["network_distance_km"]), station
+
+
+def _station_frame():
+    return pd.DataFrame([{"MonitoringLocationIdentifier": k, "snap_status": v[0],
+                          "snap_reason": v[1], "provisional_nhdplus_id": v[4]}
+                         for k, v in STATIONS.items()]).astype({"provisional_nhdplus_id": "Int64"})
+
+
+def test_confluence_rivals():
+    from etl.common.reach_selection import SelectionRules
+    rivals = rl.confluence_rivals(_station_frame(), _candidates(), SelectionRules(),
+                                  "MonitoringLocationIdentifier")
+    got = {(r.MonitoringLocationIdentifier, int(r.rival_nhdplus_id))
+           for r in rivals.itertuples()}
+    assert got == {("S_TRIB", 1), ("S_CDN", 6)}     # reach 2 is too far to tie
+    # Inside the same water polygon, distance doesn't matter.
+    cands = _candidates()
+    cands.loc[cands["NHDPlusID"].isin([3, 2]) & cands["MonitoringLocationIdentifier"].eq("S_CDN"),
+              "in_point_polygon"] = True
+    rivals = rl.confluence_rivals(_station_frame(), cands, SelectionRules(),
+                                  "MonitoringLocationIdentifier")
+    assert set(rivals.loc[rivals["MonitoringLocationIdentifier"] == "S_CDN",
+                          "rival_nhdplus_id"]) == {6, 2}
+
+
+def test_robust_links_upstream_recovered_downstream_not():
+    graph, lengths = _graph()
+    dams, stations = _ends(DAMS), _ends(STATIONS)
+    links = rl.link_pairs(dams, stations, graph, lengths)
+    rivals = pd.DataFrame({"station_id": ["S_TRIB", "S_CDN"], "rival_nhdplus_id": [1, 6]})
+    rival_ends = pd.DataFrame({"feature_id": ["S_TRIB", "S_CDN"], "status": "ambiguous",
+                               "reason": "confluence_ambiguous",
+                               "reach_id": pd.array([1, 6], dtype="Int64"), "fraction": [0.9, 0.9]})
+    rival_links = rl.link_pairs(dams[dams["status"] == "accepted"], rival_ends, graph, lengths)
+    limits = {"max_downstream_km": 10, "max_upstream_km": 10}
+    out = rl.robust_links(links, rival_links, rivals, limits).set_index(["dam_id", "station_id"])
+    trib = out.loc[("1001", "S_TRIB")]
+    assert trib["usable"] and trib["usable_reason"] == rl.ROBUST
+    assert np.isclose(trib["reach_spread_km"], 0.4)      # 1.0 km on 4, 0.6 km on 1
+    cdn = out.loc[("1001", "S_CDN")]
+    assert not cdn["usable"] and pd.isna(cdn["usable_reason"])
+    assert out.loc[("1001", "S_UP"), "usable_reason"] == rl.BOTH_ACCEPTED
+    assert not out.loc[("1002", "S_TRIB"), "usable"]     # the dam is ambiguous
+    # A tight window: the rival's link is outside it -> not robust.
+    tight = rl.robust_links(links, rival_links, rivals,
+                            {"max_downstream_km": 10, "max_upstream_km": 0.8})
+    assert not tight.set_index(["dam_id", "station_id"]).loc[("1001", "S_TRIB"), "usable"]
+
+
+def test_empty_links_keep_numeric_dtypes():
+    # A HUC8 with no pairs once turned distance_change_km into objects after
+    # concatenation (describe() printed unique/top/freq on the cluster).
+    empty = rl.typed_links(pd.DataFrame(columns=rl.LINK_COLUMNS))
+    graph, lengths = _graph()
+    full = rl.link_pairs(_ends(DAMS), _ends(STATIONS), graph, lengths)
+    both = pd.concat([empty, full], ignore_index=True)
+    assert both["network_distance_km"].dtype == "float64"
+    old = pd.DataFrame({"dam_id": ["1001"], "station_id": ["S_DN"],
+                        "relationship": ["downstream"], "network_distance_km": ["0.9"]})
+    out = rl.compare_links(old, both, _ends(DAMS), _ends(STATIONS), {})
+    assert out["distance_change_km"].dtype == "float64"
 
 
 def test_in_window():
@@ -225,6 +306,10 @@ def _build_project(root):
     pd.DataFrame(rows).astype({"NHDPlusID": "Int64", "provisional_nhdplus_id": "Int64"}) \
         .to_parquet(dam_dir / f"dam_reaches_{HUC8}.parquet", index=False)
 
+    candidate_dir = processed / "station_candidates" / "links_test"
+    candidate_dir.mkdir(parents=True)
+    _candidates().to_parquet(candidate_dir / f"station_candidates_{HUC8}.parquet", index=False)
+
     pd.DataFrame(OLD, columns=["dam_id", "station_id", "relationship", "network_distance_km"]) \
         .to_csv(processed / f"dam_station_links_{HUC8}.csv", index=False)
 
@@ -258,14 +343,16 @@ def test_link_reaches_end_to_end():
         assert np.isclose(cmp.loc[("1001", "S_DN"), "distance_change_km"], -0.15)
         assert change[("1001", "S_SAME")] == "gained"
         assert change[("1001", "S_ISO")] == "now_unconnected"
-        assert change[("1001", "S_TRIB")] == "now_blocked"
-        assert cmp.loc[("1001", "S_TRIB"), "blocker"] == "station:ambiguous:confluence_ambiguous"
+        assert change[("1001", "S_TRIB")] == "kept"
+        assert d1.loc["S_TRIB", "usable_reason"] == rl.ROBUST
+        assert change[("1001", "S_CDN")] == "now_blocked"
+        assert cmp.loc[("1001", "S_CDN"), "blocker"] == "station:ambiguous:confluence_ambiguous"
         assert cmp.loc[("1001", "S_REJ"), "blocker"] == "station:rejected:no_eligible_candidate"
         assert change[("1002", "S_DN")] == "blocked"
         assert cmp.loc[("1002", "S_DN"), "blocker"] == "dam:ambiguous:reservoir_name_mismatch"
 
         summary = pd.read_csv(out_dir / "summary.csv").iloc[0]
-        assert summary["usable"] == 3 and summary["kept"] == 2
+        assert summary["usable"] == 4 and summary["kept"] == 3
         assert summary["digitized_downstream"] == summary["digitized_checked"] > 0
 
 

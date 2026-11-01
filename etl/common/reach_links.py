@@ -8,9 +8,19 @@ Endpoints. Each dam (stage 4) and station (stage 3) gets one reach:
                 onto it for the fraction (provisional_fraction)
     rejected    no reach
 
-A pair is usable only when both endpoints are accepted. Pairs with an
-ambiguous endpoint are linked too, so the comparison can say how many links
-each ambiguous reason costs; they are never used for analysis.
+A pair is usable when both endpoints are accepted (usable_reason
+both_accepted). Pairs with an ambiguous endpoint are linked too, so the
+comparison can say how many links each ambiguous reason costs.
+
+Robust to the reach choice. A station ambiguous only because other reaches
+are about as close (confluence_ambiguous; ROBUST_REASONS) is linked from
+its provisional reach and from every rival reach that made it ambiguous
+(confluence_rivals). With an accepted dam, the pair is usable
+(usable_reason robust_to_reach_choice) when every one of those reaches
+gives the same relationship and is inside the exposure window: a station at
+a confluence above a dam is upstream whichever river it is on, but one
+just below a dam may be on a tributary that never received the dam's water.
+reach_spread_km is how far apart the distances are.
 
 Relationship and distance follow etl/link_dams_stations.py, so old and new
 links compare like for like: FromNHDPID -> ToNHDPID is downstream, a reach
@@ -57,6 +67,9 @@ LINK_COLUMNS = [
     "dam_status", "dam_reason", "station_status", "station_reason", "usable",
     "station_in_mapped_reservoir",
 ]
+
+ROBUST_REASONS = ("confluence_ambiguous",)
+BOTH_ACCEPTED, ROBUST = "both_accepted", "robust_to_reach_choice"
 
 CHANGES = ["kept", "gained", "now_out_of_window", "now_unconnected", "now_blocked", "blocked"]
 
@@ -189,9 +202,87 @@ def link_pairs(dams, stations, graph, length_by_reach, max_km=None, impounded=No
                     "usable": dam.status == rs.ACCEPTED and station.status == rs.ACCEPTED,
                     "station_in_mapped_reservoir": station_reach in paths,
                 })
-    out = pd.DataFrame(rows, columns=LINK_COLUMNS)
-    out["dam_reach_id"] = out["dam_reach_id"].astype("Int64")
-    out["station_reach_id"] = out["station_reach_id"].astype("Int64")
+    return typed_links(pd.DataFrame(rows, columns=LINK_COLUMNS))
+
+
+def typed_links(links):
+    """Fixed dtypes, so an empty table (a HUC8 with no pairs) concatenates
+    with the others without turning numbers into objects."""
+    links = links.copy()
+    for column in ("dam_reach_id", "station_reach_id"):
+        links[column] = pd.to_numeric(links[column], errors="coerce").astype("Int64")
+    for column in ("network_distance_km", "dam_fraction", "station_fraction"):
+        links[column] = pd.to_numeric(links[column], errors="coerce").astype("float64")
+    for column in ("usable", "station_in_mapped_reservoir"):
+        links[column] = links[column].astype("boolean").fillna(False).astype(bool)
+    if "reach_spread_km" in links:
+        links["reach_spread_km"] = pd.to_numeric(links["reach_spread_km"],
+                                                 errors="coerce").astype("float64")
+    return links
+
+
+def confluence_rivals(stations, candidates, rules, key, reasons=ROBUST_REASONS):
+    """(station, rival reach) rows: for each station ambiguous for one of
+    `reasons`, the plausible reaches other than its provisional one that
+    are about as close (within rules.tie_margin_m) or, with it, in the
+    station's water polygon -- the reaches the confluence check weighed
+    (reach_selection.decide_station_reach), whatever their size."""
+    columns = [key, "rival_nhdplus_id"]
+    chosen = stations[stations["snap_status"].eq(rs.AMBIGUOUS)
+                      & stations["snap_reason"].isin(reasons)
+                      & stations["provisional_nhdplus_id"].notna()]
+    if chosen.empty or candidates.empty:
+        return pd.DataFrame(columns=columns)
+    cands = candidates[candidates[key].isin(set(chosen[key]))
+                       & candidates["eligible_ftype"].astype(bool)].copy()
+    cands["NHDPlusID"] = pd.to_numeric(cands["NHDPlusID"], errors="coerce").astype("Int64")
+    cands["in_point_polygon"] = cands["in_point_polygon"].astype("boolean").fillna(False)
+    plausible = cands[(cands["distance_m"] <= rules.review_distance_m) | cands["in_point_polygon"]
+                      | (cands["catchment_relation"] == "own")]
+    provisional = chosen.set_index(key)["provisional_nhdplus_id"].astype("Int64")
+    plausible = plausible.assign(_chosen=plausible[key].map(provisional))
+    own = plausible[plausible["NHDPlusID"] == plausible["_chosen"]].drop_duplicates(key) \
+        .set_index(key)
+    others = plausible[plausible["NHDPlusID"] != plausible["_chosen"]].copy()
+    others["_chosen_m"] = others[key].map(own["distance_m"])
+    others["_chosen_in"] = others[key].map(own["in_point_polygon"]).astype("boolean").fillna(False)
+    close = others[(others["distance_m"] <= others["_chosen_m"] + rules.tie_margin_m)
+                   | (others["in_point_polygon"] & others["_chosen_in"])]
+    return close[[key, "NHDPlusID"]].rename(columns={"NHDPlusID": "rival_nhdplus_id"}) \
+        .drop_duplicates().reset_index(drop=True)
+
+
+def robust_links(links, rival_links, rivals, limits, reasons=ROBUST_REASONS):
+    """links plus usable_reason and reach_spread_km, with pairs robust to
+    the station's reach choice made usable (see the module docstring).
+    rival_links: link_pairs() from the stations' rival reaches (feature_id
+    = station); rivals: confluence_rivals() with column station_id."""
+    out = links.copy()
+    out["usable_reason"] = np.where(out["usable"], BOTH_ACCEPTED, None)
+    out["reach_spread_km"] = np.nan
+    eligible = (~out["usable"] & out["dam_status"].eq(rs.ACCEPTED)
+                & out["station_status"].eq(rs.AMBIGUOUS) & out["station_reason"].isin(reasons)
+                & in_window(out["relationship"], out["network_distance_km"], limits))
+    if not eligible.any() or rivals.empty:
+        return out
+    needed = rivals.groupby("station_id")["rival_nhdplus_id"].agg(lambda r: set(map(int, r)))
+    rival_links = rival_links.assign(
+        _in=in_window(rival_links["relationship"], rival_links["network_distance_km"], limits))
+    by_pair = {pair: group for pair, group in rival_links.groupby(["dam_id", "station_id"])}
+    for index in out.index[eligible]:
+        row = out.loc[index]
+        reaches = needed.get(row["station_id"])
+        if not reaches:
+            continue
+        group = by_pair.get((row["dam_id"], row["station_id"]))
+        if group is None:
+            continue
+        agree = group[group["_in"] & group["relationship"].eq(row["relationship"])]
+        if set(agree["station_reach_id"].astype(int)) >= reaches:
+            distances = pd.concat([agree["network_distance_km"],
+                                   pd.Series([row["network_distance_km"]])])
+            out.loc[index, ["usable", "usable_reason", "reach_spread_km"]] = [
+                True, ROBUST, float(distances.max() - distances.min())]
     return out
 
 
@@ -244,10 +335,13 @@ def compare_links(old, new, dams, stations, limits):
     merged = old.rename(columns={"relationship": "old_relationship",
                                  "network_distance_km": "old_distance_km"}).merge(
         new[["dam_id", "station_id", "relationship", "network_distance_km", "usable",
-             "new_in_window", "station_in_mapped_reservoir"]].rename(
+             "new_in_window", "station_in_mapped_reservoir"]
+            + [c for c in ("usable_reason",) if c in new]].rename(
             columns={"relationship": "new_relationship",
                      "network_distance_km": "new_distance_km"}),
         on=["dam_id", "station_id"], how="outer")
+    for column in ("old_distance_km", "new_distance_km"):
+        merged[column] = pd.to_numeric(merged[column], errors="coerce").astype("float64")
     for column in ("old_in_window", "new_in_window", "usable"):
         merged[column] = merged[column].astype("boolean").fillna(False).astype(bool)
     merged = merged[merged["old_in_window"] | merged["new_in_window"]].copy()

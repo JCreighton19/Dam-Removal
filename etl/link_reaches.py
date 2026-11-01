@@ -5,6 +5,8 @@ reaches, and compare the result with the current links
 (link_dams_stations.py). Rules in etl/common/reach_links.py.
 
 Reads data/processed/station_reaches/<case_study>/ (select_station_reaches.py),
+data/processed/station_candidates/<case_study>/ (station_candidates.py; the
+rival reaches of confluence-ambiguous stations),
 data/processed/dam_reaches/<case_study>/ (match_dams.py), the NHDPlus
 packages and the current data/processed/dam_station_links_<huc8>.csv, and
 writes data/processed/reach_links/<case_study>/ (--output-dir):
@@ -12,9 +14,12 @@ writes data/processed/reach_links/<case_study>/ (--output-dir):
     reach_links_<huc8>.parquet      every connected (dam, station) pair whose
         endpoints both have a reach (accepted, or ambiguous with its
         provisional reach): relationship, network_distance_km, both
-        endpoints' status and reason, usable (both accepted; the only pairs
-        for analysis), station_in_mapped_reservoir (the station's reach is a
-        path of the dam's reservoir). Unconnected pairs are not written.
+        endpoints' status and reason, usable and usable_reason
+        (both_accepted, or robust_to_reach_choice: a confluence-ambiguous
+        station whose every candidate reach links the same way inside the
+        window; reach_spread_km), station_in_mapped_reservoir (the
+        station's reach is a path of the dam's reservoir). Unconnected
+        pairs are not written.
     link_comparison_<huc8>.parquet  every pair in the old or new exposure
         window (config `exposure`): change, blocker, old / new relationship
         and distance
@@ -23,6 +28,9 @@ writes data/processed/reach_links/<case_study>/ (--output-dir):
 
 The current links and every later stage are not touched; the summary at the
 end of the log is for deciding whether the new reaches replace the old ones.
+
+Config block `reach_links: {robust_reasons: [confluence_ambiguous]}` sets
+which ambiguous station reasons get the robustness check ([] turns it off).
 
     python etl/link_reaches.py [--huc8 ...] [--hu4 ...] [--max-km KM]
 """
@@ -38,6 +46,7 @@ import pandas as pd
 
 from etl.common import dam_matching as dm
 from etl.common import reach_links as rl
+from etl.common import reach_selection as rs
 from etl.common import water_features as wf
 from etl.common.config import default_case_study, load_config
 from etl.common.network import build_reach_graph
@@ -106,7 +115,20 @@ def impounded_paths(dams):
             for dam_id, ids in zip(dams["dam_id"], dams["impounded_nhdplus_ids"])}
 
 
-def process_huc8(huc8, station_dir, dam_dir, processed, networks, limits, max_km):
+def rival_endpoints(stations, rivals, lines):
+    """One endpoint row per (station, rival reach), the reported point
+    projected onto the rival."""
+    if rivals.empty or lines is None:
+        return pd.DataFrame(columns=rl.ENDPOINT_COLUMNS)
+    frame = rivals.merge(stations[[STATION_ID, "snap_status", "snap_reason", "x_m", "y_m",
+                                   "metric_crs"]], on=STATION_ID)
+    frame["provisional_nhdplus_id"] = frame["rival_nhdplus_id"].astype("Int64")
+    frame = with_provisional_fractions(frame, lines)
+    return rl.endpoints(frame, STATION_ID, "snap_status", "snap_reason")
+
+
+def process_huc8(huc8, station_dir, dam_dir, candidate_dir, processed, networks, limits,
+                 max_km, robust_reasons, selection_rules):
     station_path = station_dir / f"station_reaches_{huc8}.parquet"
     dam_path = dam_dir / f"dam_reaches_{huc8}.parquet"
     stations = pd.read_parquet(station_path) if station_path.exists() else None
@@ -129,15 +151,31 @@ def process_huc8(huc8, station_dir, dam_dir, processed, networks, limits, max_km
     dam_ends = rl.endpoints(dams, "dam_id", "match_status", "match_reason")
 
     digitized = pd.Series(dtype=bool)
+    rivals = pd.DataFrame(columns=[STATION_ID, "rival_nhdplus_id"])
     if lines is not None:
         graph, lengths, stats, edges = networks.get(gdb_path)
+        impounded = impounded_paths(dams)
         links = rl.link_pairs(dam_ends, station_ends, graph, lengths, max_km=max_km,
-                              impounded=impounded_paths(dams))
+                              impounded=impounded)
+        candidate_path = candidate_dir / f"station_candidates_{huc8}.parquet"
+        if robust_reasons and candidate_path.exists():
+            candidates = pd.read_parquet(candidate_path)
+            candidates[STATION_ID] = candidates[STATION_ID].astype(str)
+            rivals = rl.confluence_rivals(stations, candidates, selection_rules, STATION_ID,
+                                          robust_reasons)
+        accepted_dams = dam_ends[dam_ends["status"] == rs.ACCEPTED]
+        rival_links = rl.link_pairs(accepted_dams, rival_endpoints(stations, rivals, lines),
+                                    graph, lengths, max_km=max_km, impounded=impounded)
+        links = rl.robust_links(links, rival_links,
+                                rivals.rename(columns={STATION_ID: "station_id"}), limits,
+                                robust_reasons)
         used = pd.concat([dam_ends["reach_id"], station_ends["reach_id"]]).dropna().unique()
         digitized = rl.digitized_downstream(lines.to_crs(stations["metric_crs"].dropna().iat[0]),
                                             edges, used)
     else:
-        links = pd.DataFrame(columns=rl.LINK_COLUMNS)
+        links = rl.typed_links(pd.DataFrame(columns=rl.LINK_COLUMNS))
+        links["usable_reason"], links["reach_spread_km"] = None, np.nan
+    links = rl.typed_links(links)
     links.insert(0, "huc8", huc8)
 
     old_path = processed / f"dam_station_links_{huc8}.csv"
@@ -149,7 +187,7 @@ def process_huc8(huc8, station_dir, dam_dir, processed, networks, limits, max_km
         comparison.insert(0, "huc8", huc8)
     else:
         comparison = None
-    return links, comparison, digitized
+    return links, comparison, digitized, rivals
 
 
 def print_summary(links, comparison, digitized, limits):
@@ -164,6 +202,25 @@ def print_summary(links, comparison, digitized, limits):
     print(f"usable upstream links with the station in the dam's mapped reservoir: "
           f"{int(up['station_in_mapped_reservoir'].sum()):,} of {len(up):,}")
     print(f"distance missing on usable links: {int(usable['network_distance_km'].isna().sum()):,}")
+
+    print("\n=== Usable links in the window, by reason and side ===")
+    inside = links[window & links["usable"]]
+    print(pd.crosstab(inside["usable_reason"], inside["relationship"], margins=True).to_string())
+    robust = inside[inside["usable_reason"] == rl.ROBUST]
+    if len(robust):
+        spread = robust["reach_spread_km"]
+        print(f"robust_to_reach_choice: {len(robust):,} pairs, "
+              f"{robust['station_id'].nunique():,} stations, {robust['dam_id'].nunique():,} dams; "
+              f"distance spread across reaches (km): median {spread.median():.3f}, "
+              f"max {spread.max():.3f}, > 1 km: {int((spread > 1).sum()):,}")
+    checked = links[window & links["dam_status"].eq("accepted")
+                    & links["station_status"].eq("ambiguous")
+                    & links["station_reason"].isin(rl.ROBUST_REASONS)]
+    if len(checked):
+        print("confluence-ambiguous stations with an accepted dam, in the window "
+              "(recovered / checked):")
+        table = checked.groupby("relationship")["usable"].agg(["sum", "size"])
+        print(table.rename(columns={"sum": "recovered", "size": "checked"}).to_string())
 
     if digitized.size:
         print(f"\nflowlines digitized downstream (last vertex nearer the flowline below): "
@@ -191,7 +248,7 @@ def print_summary(links, comparison, digitized, limits):
 
     kept = comparison[comparison["change"] == "kept"]
     if len(kept):
-        change = kept["distance_change_km"].abs()
+        change = pd.to_numeric(kept["distance_change_km"], errors="coerce").abs()
         print("\n=== Kept pairs ===")
         print(f"relationship changed: {int(kept['relationship_changed'].sum()):,} of {len(kept):,}")
         print(f"|distance change| (km): {change.describe().round(3).to_dict()}")
@@ -230,6 +287,7 @@ def main():
     parser.add_argument("--hu4", nargs="+", help="Only HUC8s in these HUC4s.")
     parser.add_argument("--station-dir", type=Path)
     parser.add_argument("--dam-dir", type=Path)
+    parser.add_argument("--candidate-dir", type=Path)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--max-km", type=float, default=None,
                         help="Stop each network search this far from the dam (default: no "
@@ -241,11 +299,15 @@ def main():
     processed = cfg.project_root / "data" / "processed"
     station_dir = args.station_dir or processed / "station_reaches" / cfg.name
     dam_dir = args.dam_dir or processed / "dam_reaches" / cfg.name
+    candidate_dir = args.candidate_dir or processed / "station_candidates" / cfg.name
     output_dir = args.output_dir or processed / "reach_links" / cfg.name
     output_dir.mkdir(parents=True, exist_ok=True)
     exposure = cfg.get("exposure", {}) or {}
     limits = {"max_downstream_km": exposure.get("max_downstream_km"),
               "max_upstream_km": exposure.get("max_upstream_km")}
+    settings = cfg.get("reach_links", {}) or {}
+    robust_reasons = tuple(settings.get("robust_reasons", rl.ROBUST_REASONS) or ())
+    selection_rules = rs.rules_from_config(cfg)
 
     huc8s = sorted(p.stem.removeprefix("station_reaches_")
                    for p in station_dir.glob("station_reaches_*.parquet"))
@@ -254,14 +316,16 @@ def main():
     if args.hu4:
         huc8s = [h for h in huc8s if h[:4] in set(args.hu4)]
     print(f"Case study: {cfg.name}; HUC8s with station reaches: {len(huc8s)}; "
-          f"exposure window: {limits}; max_km: {args.max_km}", flush=True)
+          f"exposure window: {limits}; max_km: {args.max_km}; "
+          f"robust reasons: {list(robust_reasons)}; {selection_rules}", flush=True)
 
     networks = Networks()
     all_links, all_comparisons, all_digitized, counts, failed = [], [], [], [], []
     for number, huc8 in enumerate(huc8s, start=1):
         try:
-            result = process_huc8(huc8, station_dir, dam_dir, processed, networks, limits,
-                                  args.max_km)
+            result = process_huc8(huc8, station_dir, dam_dir, candidate_dir, processed,
+                                  networks, limits, args.max_km, robust_reasons,
+                                  selection_rules)
         except Exception as exc:
             print(f"[{number}/{len(huc8s)}] HUC8 {huc8} FAILED: {exc}", flush=True)
             failed.append(huc8)
@@ -269,7 +333,7 @@ def main():
         if result is None:
             print(f"[{number}/{len(huc8s)}] HUC8 {huc8}: no dams or no stations", flush=True)
             continue
-        links, comparison, digitized = result
+        links, comparison, digitized, rivals = result
         links.to_parquet(output_dir / f"reach_links_{huc8}.parquet", index=False)
         if comparison is not None:
             comparison.to_parquet(output_dir / f"link_comparison_{huc8}.parquet", index=False)
@@ -279,8 +343,10 @@ def main():
         counts.append(huc8_counts(huc8, links, comparison, digitized))
         old_text = "no old links" if comparison is None else \
             comparison["change"].value_counts().to_dict()
+        robust = int((links["usable_reason"] == rl.ROBUST).sum())
         print(f"[{number}/{len(huc8s)}] HUC8 {huc8}: {len(links):,} pairs, "
-              f"{int(links['usable'].sum()):,} usable; {old_text}", flush=True)
+              f"{int(links['usable'].sum()):,} usable ({robust:,} robust to reach choice); "
+              f"{old_text}", flush=True)
 
     if counts:
         pd.DataFrame(counts).to_csv(output_dir / "summary.csv", index=False)
