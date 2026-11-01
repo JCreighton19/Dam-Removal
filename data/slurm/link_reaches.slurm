@@ -4,7 +4,7 @@
 #SBATCH --error=data/slurm/logs/link_reaches_%j.err
 #SBATCH --time=08:00:00
 #SBATCH --mem=32G
-#SBATCH --cpus-per-task=1
+#SBATCH --cpus-per-task=2
 
 # Stage 5 of the reach-matching rework: link dams (stage 4) to stations
 # (stage 3) along the network and compare with the current
