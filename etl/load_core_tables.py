@@ -11,12 +11,22 @@ writes the five tables specified in docs/warehouse_spec.md (sections
     huc8_watershed.parquet    GeoParquet: one row per case-study HUC8 polygon
     streams.parquet           GeoParquet: flowlines up/downstream of the dams
 
-Inputs, required for every HUC8 in the case-study config:
+Inputs. The dams, stations and links come from the config's
+`link_source`:
 
-    data/processed/snapped_features_<huc8>.gpkg   (snap_features.py)
-    data/processed/dam_station_links_<huc8>.csv   (link_dams_stations.py)
-    data/processed/nhdplus_extracted/...gdb       (unzip_nhdplus)
-    the config's wbd_source GeoPackage
+    reach_links (default): the evidence-based reach matching, read by
+        etl/common/reach_inputs.py -- data/processed/dam_reaches/,
+        station_reaches/, station_candidates/ and reach_links/<case_study>/,
+        plus the dam CSV (dam_source) and the WQP station selection for the
+        dam and station attributes. Only usable links are loaded (both
+        endpoints accepted, or robust_to_reach_choice), only accepted dams,
+        and only stations in a usable link.
+    snapped: the nearest-flowline outputs, required for every HUC8 --
+        data/processed/snapped_features_<huc8>.gpkg (snap_features.py) and
+        data/processed/dam_station_links_<huc8>.csv (link_dams_stations.py)
+
+and in both cases data/processed/nhdplus_extracted/...gdb (unzip_nhdplus)
+and the config's wbd_source GeoPackage.
 
 All five tables are built and validated (spec section 4) in memory before
 anything is written, so a failed run leaves the previous warehouse files
@@ -39,13 +49,16 @@ import networkx as nx
 import pandas as pd
 from shapely.geometry import MultiPolygon
 
+from etl.common import reach_inputs as ri
 from etl.common.config import default_case_study, load_config
+from etl.common.dams import filter_to_sampled_dams, load_dams
 from etl.common.io import find_column
 from etl.common.links import CONNECTED_RELATIONSHIPS, connected_only, load_links
 from etl.common.network import build_reach_graph
 from etl.common.nhdplus import find_huc8_geodatabase, read_nhdplus_layer
 from etl.common.progress import huc8s_with_outputs
 from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
+from etl.snap_features import load_candidate_stations
 from etl.common.wbd import find_hu8_layer
 
 # --------------------------------------------------
@@ -665,19 +678,36 @@ def validate_tables(tables, current_year=None):
 # Main
 # --------------------------------------------------
 
+def load_inputs(cfg, huc8s):
+    """(dams, stations, links) in the snap_features / link_dams shape, from
+    the config's link_source."""
+    processed_dir = cfg.project_root / "data" / "processed"
+    source = ri.link_source(cfg)
+    print(f"Link source: {source}")
+    if source == ri.SNAPPED:
+        check_inputs(processed_dir, huc8s)
+        return (load_snapped_layer(processed_dir, huc8s, "dams_snapped"),
+                load_snapped_layer(processed_dir, huc8s, "stations_snapped"),
+                load_all_links(processed_dir, huc8s))
+
+    links = ri.load_usable_links(cfg, huc8s)
+    dams = ri.load_dam_points(cfg, huc8s,
+                              filter_to_sampled_dams(load_dams(cfg.path("dam_source")), cfg))
+    stations = ri.load_station_points(
+        cfg, huc8s, links,
+        load_candidate_stations(cfg.wqp_results_dir / "pilot_station_selection.csv"))
+    return dams, stations, links
+
+
 def build_tables(cfg, huc8s):
     processed_dir = cfg.project_root / "data" / "processed"
-    check_inputs(processed_dir, huc8s)
+    dams, stations, links = load_inputs(cfg, huc8s)
 
     huc8_watershed = build_huc8_watershed(cfg.path("wbd_source"), huc8s)
 
-    dam_removal = build_dam_removal(load_snapped_layer(processed_dir, huc8s, "dams_snapped"))
-    stations = build_station_candidates(
-        load_snapped_layer(processed_dir, huc8s, "stations_snapped")
-    )
-    dam_station_link = build_dam_station_link(
-        load_all_links(processed_dir, huc8s), dam_removal, stations
-    )
+    dam_removal = build_dam_removal(dams)
+    stations = build_station_candidates(stations)
+    dam_station_link = build_dam_station_link(links, dam_removal, stations)
     wq_station = build_wq_station(stations, dam_station_link)
 
     streams = build_streams(

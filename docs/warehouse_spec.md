@@ -84,9 +84,9 @@ Nulls are joined as empty strings. Hash collisions or genuine duplicate rows are
 
 | Table | Status | Written by (proposed stage) | Inputs |
 |---|---|---|---|
-| `dam_removal` | Ready | `load_core_tables.py` (new, after `link_dams`) | dam CSV, `snapped_features_<huc8>.gpkg` (accepted dams, 3.12) |
-| `wq_station` | Ready | `load_core_tables.py` | `data/raw/wqp/stations/<huc8>.csv`, `snapped_features_<huc8>.gpkg` (accepted stations, 3.12) |
-| `dam_station_link` | Ready | `load_core_tables.py` | `dam_station_links_<huc8>.csv` |
+| `dam_removal` | Ready | `load_core_tables.py` (new, after `link_dams`) | dam CSV + `dam_reaches/<case_study>/` (accepted dams; config `link_source: reach_links`, the default), or `snapped_features_<huc8>.gpkg` (`link_source: snapped`, 3.12) |
+| `wq_station` | Ready | `load_core_tables.py` | WQP station selection + `station_reaches/<case_study>/` (`reach_links`), or `snapped_features_<huc8>.gpkg` (`snapped`) |
+| `dam_station_link` | Ready | `load_core_tables.py` | usable pairs in `reach_links/<case_study>/reach_links_<huc8>.parquet` (`reach_links`), or `dam_station_links_<huc8>.csv` (`snapped`) |
 | `huc8_watershed` | Ready | `load_core_tables.py` | WBD GeoPackage (HU8 layer) |
 | `streams` | Ready | `load_core_tables.py` | NHDPlus HR `NHDFlowline` + reach graph |
 | `wq_measurement` | Ready (rules in 3.6) | `clean_wq_results.py` (after `download_wqp_results` and `load_core_tables`) | `data/raw/wqp/results/<case_study>/pilot_download/results_batch_*.csv` listed in `download_manifest.csv`; `wq_station.parquet` |
@@ -189,7 +189,7 @@ Duplicate snaps are resolved the same way as for dams (section 3.1). A station n
 
 - **Grain:** one row per network-connected (dam, station) pair.
 - **PK:** `(AR_ID, station_id)`.
-- **Rows:** `dam_station_links_<huc8>.csv` rows with `relationship` in (`upstream`, `downstream`, `same_reach`). `unconnected` pairs are **not stored**; they remain in the intermediate CSVs for QA.
+- **Rows:** with `link_source: reach_links` (default), the `usable` pairs of `reach_links_<huc8>.parquet` (`etl/link_reaches.py`): both endpoints accepted (`both_accepted`), or a confluence-ambiguous station whose every candidate reach gives the same relationship inside the exposure window (`robust_to_reach_choice`). That station is stored in `wq_station` on its provisional reach with `match_method = provisional_reach` and its reported location as geometry. Pairs with any other ambiguous endpoint are not stored. With `link_source: snapped`, `dam_station_links_<huc8>.csv` rows with `relationship` in (`upstream`, `downstream`, `same_reach`). `unconnected` pairs are **not stored** either way; they remain in the intermediate files for QA. `qc_near_unsuitable_flowline` is a nearest-flowline check and is always false with `reach_links`.
 
 | Column | Type | Meaning | Source | Rule / notes |
 |---|---|---|---|---|

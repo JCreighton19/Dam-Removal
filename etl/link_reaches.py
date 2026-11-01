@@ -26,8 +26,10 @@ writes data/processed/reach_links/<case_study>/ (--output-dir):
     summary.csv                     per HUC8: pairs by change, usable links,
                                     digitization check
 
-The current links and every later stage are not touched; the summary at the
-end of the log is for deciding whether the new reaches replace the old ones.
+The current links are not touched. load_core_tables.py and
+download_wqp_results.py read the usable pairs written here (config
+link_source: reach_links, the default; etl/common/reach_inputs.py), so
+rerun the pipeline from download_wqp_results after this stage changes.
 
 Config block `reach_links: {robust_reasons: [confluence_ambiguous]}` sets
 which ambiguous station reasons get the robustness check ([] turns it off).
@@ -50,19 +52,12 @@ from etl.common import reach_selection as rs
 from etl.common import water_features as wf
 from etl.common.config import default_case_study, load_config
 from etl.common.network import build_reach_graph
+from etl.common.reach_inputs import dam_id_text
 from etl.common.nhdplus import find_huc8_geodatabase
 from etl.snap_features import BBOX_MARGIN_DEG, DAM_ID, STATION_ID
 from etl.station_candidates import read_layer
 
 
-def dam_id_text(series):
-    """AR_IDs as text the way the old link tables write them ("123", not
-    "123.0")."""
-    numeric = pd.to_numeric(series, errors="coerce")
-    whole = numeric.notna() & (numeric == numeric.round())
-    out = series.astype(str)
-    out[whole] = numeric[whole].astype("int64").astype(str)
-    return out
 
 
 class Networks:

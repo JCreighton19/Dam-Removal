@@ -12,10 +12,14 @@ a small fraction of that -- the cap was discarding almost all of the
 relevant stations, essentially at random, instead of using the relevance
 signal link_dams_stations.py already computed.
 
-This now reads every data/processed/dam_station_links_<huc8>.csv for the
-case study's HUC8 scope, keeps only rows classified as "upstream",
-"downstream", or "same_reach" (excluding "unconnected"), and downloads
-results for exactly that station set. It must run AFTER
+This now reads the case study's dam-station links and downloads results for
+exactly the linked station set. Which links depends on the config's
+`link_source`: "reach_links" (default) reads the usable pairs from
+data/processed/reach_links/<case_study>/ (etl/link_reaches.py; both
+endpoints accepted, or robust_to_reach_choice), the same pairs
+load_core_tables.py loads; "snapped" reads every
+data/processed/dam_station_links_<huc8>.csv and keeps the rows classified as
+"upstream", "downstream", or "same_reach" (excluding "unconnected"). It must run AFTER
 link_dams_stations.py, not in parallel with it -- a HUC8 without a link
 table yet (e.g. no NHDPlus coverage) is skipped with a warning rather
 than treated as fatal, so a partially-processed case study still works.
@@ -61,6 +65,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from etl.common import reach_inputs as ri
 from etl.common.config import default_case_study, load_config
 from etl.common.links import connected_only, load_links
 
@@ -93,7 +98,14 @@ def load_confirmed_stations(cfg, years_before, years_after):
     frames = []
     missing_huc8s = []
 
-    for huc8 in cfg.huc8s:
+    if ri.link_source(cfg) == ri.REACH_LINKS:
+        links = ri.load_usable_links(cfg, [huc8.zfill(8) for huc8 in cfg.huc8s])
+        frames.append(links[["station_id", "year_removed"]])
+        snapped_huc8s = []
+    else:
+        snapped_huc8s = cfg.huc8s
+
+    for huc8 in snapped_huc8s:
         links_path = processed_dir / f"dam_station_links_{huc8}.csv"
 
         if not links_path.exists():

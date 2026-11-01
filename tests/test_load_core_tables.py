@@ -161,6 +161,7 @@ case_study: pilot_test
 huc8s: ["{HUC8}"]
 dam_source: data/raw/dams/dams.csv
 wbd_source: data/raw/wbd/wbd.gpkg
+link_source: snapped
 """
     )
 

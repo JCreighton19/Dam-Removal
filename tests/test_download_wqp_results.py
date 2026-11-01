@@ -42,6 +42,7 @@ huc8s:
 {huc8_yaml}
 dam_source: data/raw/dams/dams.csv
 wbd_source: data/raw/wbd/wbd.gpkg
+link_source: snapped
 """
     )
     return load_config("test", project_root=root)
