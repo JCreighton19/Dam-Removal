@@ -15,6 +15,10 @@
 #
 #     sbatch data/slurm/match_dams.slurm                  # every case-study HUC8
 #     HU4="0104 0205" sbatch data/slurm/match_dams.slurm  # a subset
+#
+# RESUME=1 skips HUC8s an earlier attempt finished (run_pipeline.sh sets it
+# for the extra attempts after a time-out); without it every chosen HUC8 is
+# recomputed.
 
 set -euo pipefail
 
@@ -29,6 +33,6 @@ conda activate dam-removal
 echo "Job started: $(date)"
 echo "Case study: $DAM_REMOVAL_CASE_STUDY"
 
-python -u etl/match_dams.py ${HU4:+--hu4 $HU4}
+python -u etl/match_dams.py ${HU4:+--hu4 $HU4} ${RESUME:+--resume}
 
 echo "Job completed: $(date)"

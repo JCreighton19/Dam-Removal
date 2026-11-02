@@ -172,6 +172,26 @@ def test_match_dams_end_to_end():
         assert set(outlets.loc[outlets["AR_ID"] == "D_MULTI", "outlet_id"]) == {21, 22}
 
 
+def test_match_dams_resume_skips_finished_huc8s():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _build_project(root)
+        argv = ["match_dams.py", "--case-study", "dam_test", "--output-dir", str(root / "out")]
+        with mock.patch.dict(os.environ, {PROJECT_ROOT_ENV_VAR: str(root)}):
+            with mock.patch.object(sys, "argv", argv):
+                md.main()
+            first = pd.read_csv(root / "out" / "summary.csv")
+            with mock.patch.object(sys, "argv", argv + ["--resume"]), \
+                    mock.patch.object(md, "process_huc8", side_effect=AssertionError):
+                md.main()
+            pd.testing.assert_frame_equal(pd.read_csv(root / "out" / "summary.csv"), first)
+            # Recomputed with no dams: the HUC8's old outputs are removed.
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(md, "process_huc8", return_value=None):
+                md.main()
+            assert not (root / "out" / f"dam_reaches_{HUC8}.parquet").exists()
+
+
 if __name__ == "__main__":
     tests = [
         obj for name, obj in list(globals().items())

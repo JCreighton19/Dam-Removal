@@ -40,6 +40,7 @@ import pyogrio
 from etl.common import reach_selection as rs
 from etl.common import snapping as sn
 from etl.common.nhdplus import find_huc8_geodatabase, read_nhdplus_layer
+from etl.common.progress import HucProgress
 
 REACH_LINKS, SNAPPED = "reach_links", "snapped"
 LINK_SOURCES = (REACH_LINKS, SNAPPED)
@@ -91,6 +92,8 @@ def read_per_huc8(cfg, stage, prefix, huc8s):
             f"{folder} does not exist. Run the reach-matching stages (station_candidates, "
             "select_station_reaches, match_dams, link_reaches) for this case study, or set "
             f"link_source: {SNAPPED} in the config to use the snap_features / link_dams files.")
+    # A HUC8 without a file is only "no dams / no stations / no package" once
+    # check_coverage has confirmed the stages ran on it.
     frames = [pd.read_parquet(path) for huc8 in huc8s
               if (path := folder / f"{prefix}_{huc8}.parquet").exists()]
     frames = [frame for frame in frames if len(frame)]
@@ -129,8 +132,27 @@ def usable_links(links, dams):
     return out[columns].reset_index(drop=True)
 
 
+def check_coverage(cfg, huc8s):
+    """Every HUC8 must have been processed by link_reaches.py (its progress
+    marker), since a HUC8 with no reach_links file is otherwise read as "no
+    links". Stops on HUC8s the stages never ran on, e.g. after a run limited
+    to a few HUC4s."""
+    progress = HucProgress(cfg, "link_reaches")
+    missing = sorted(huc8 for huc8 in huc8s if not progress.done(huc8))
+    if missing:
+        hu4s = sorted({huc8[:4] for huc8 in missing})
+        raise ValueError(
+            f"{len(missing)} of {len(huc8s)} HUC8(s) were never processed by the reach-matching "
+            f"stages (no link_reaches marker in {progress.folder}), e.g. {missing[:10]}; "
+            f"HU4s: {hu4s[:20]}{' ...' if len(hu4s) > 20 else ''}. Run station_candidates, "
+            "select_station_reaches, match_dams and link_reaches for every HUC8 "
+            "(bash data/slurm/run_pipeline.sh --from download_streams --skip "
+            f"snap_features,link_dams), or set link_source: {SNAPPED} in the config.")
+
+
 def load_usable_links(cfg, huc8s):
     links = read_per_huc8(cfg, "reach_links", "reach_links", huc8s)
+    check_coverage(cfg, huc8s)
     dams = read_per_huc8(cfg, "dam_reaches", "dam_reaches", huc8s)
     if dams.empty:
         dams = pd.DataFrame(columns=[DAM_ID, "Dam_Name", "Year_Removed"])

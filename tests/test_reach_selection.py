@@ -170,6 +170,18 @@ def test_manual_overrides():
         assert abs(trib["snapped_lat"] - 45.0) < 1e-5  # placed on Mill River
 
 
+def test_resume_skips_finished_huc8s():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _build_project(root)
+        _run(root)
+        first = _select(root)
+        with mock.patch.object(ssr, "process_huc8", side_effect=AssertionError):
+            again = _select(root, "--resume")
+        pd.testing.assert_frame_equal(again, first)
+        assert (root / "reaches" / "summary.csv").exists()
+
+
 if __name__ == "__main__":
     tests = [
         obj for name, obj in list(globals().items())

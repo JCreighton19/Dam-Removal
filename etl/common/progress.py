@@ -34,6 +34,24 @@ class HucProgress:
         folder = self.folder / "skipped"
         return sorted(p.name for p in folder.iterdir()) if folder.exists() else []
 
+    def clear(self, huc8s):
+        """Forget these HUC8s, so they are recomputed (and re-marked)."""
+        for huc8 in huc8s:
+            (self.folder / str(huc8)).unlink(missing_ok=True)
+            (self.folder / "skipped" / str(huc8)).unlink(missing_ok=True)
+
+    def start(self, huc8s, resume):
+        """For a stage run over `huc8s`: with resume, the ones already done
+        (to skip); without, clear their markers and return []."""
+        if not resume:
+            self.clear(huc8s)
+            return []
+        done = [huc8 for huc8 in huc8s if self.done(huc8)]
+        if done:
+            print(f"Resuming: {len(done)} of {len(huc8s)} HUC8(s) already done "
+                  f"(markers in {self.folder})", flush=True)
+        return done
+
 
 def huc8s_with_outputs(cfg):
     """The case study's HUC8s, minus any snap_features / link_dams skipped on

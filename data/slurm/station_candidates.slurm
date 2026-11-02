@@ -16,6 +16,10 @@
 #
 # A subset also gets the HUC8s holding the known wrong-reach stations
 # (etl/compare_snapping.py KNOWN_WRONG_STATIONS and the audit flags).
+#
+# RESUME=1 skips HUC8s an earlier attempt finished (run_pipeline.sh sets it
+# for the extra attempts after a time-out); without it every chosen HUC8 is
+# recomputed.
 
 set -euo pipefail
 
@@ -40,6 +44,6 @@ if [[ -n "${HU4:-}" ]]; then
     echo "HUC8s with known wrong-reach stations: ${KNOWN:-none}"
 fi
 
-python -u etl/station_candidates.py ${HU4:+--hu4 $HU4} ${KNOWN:+--huc8 $KNOWN}
+python -u etl/station_candidates.py ${HU4:+--hu4 $HU4} ${KNOWN:+--huc8 $KNOWN} ${RESUME:+--resume}
 
 echo "Job completed: $(date)"

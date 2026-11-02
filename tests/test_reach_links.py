@@ -356,6 +356,35 @@ def test_link_reaches_end_to_end():
         assert summary["digitized_downstream"] == summary["digitized_checked"] > 0
 
 
+def test_link_reaches_resume_skips_finished_huc8s_and_keeps_the_summary():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _build_project(root)
+        out_dir = root / "out"
+        argv = ["link_reaches.py", "--case-study", "links_test", "--output-dir", str(out_dir)]
+        marker = root / "data" / "processed" / "_progress" / "links_test" / "link_reaches" / HUC8
+        with mock.patch.dict(os.environ, {PROJECT_ROOT_ENV_VAR: str(root)}):
+            with mock.patch.object(sys, "argv", argv):
+                lr.main()
+            assert marker.exists()
+            first = pd.read_csv(out_dir / "summary.csv")
+
+            # Resumed: the HUC8 is not recomputed (process_huc8 would fail),
+            # and the summary is rebuilt from its saved outputs.
+            with mock.patch.object(sys, "argv", argv + ["--resume"]), \
+                    mock.patch.object(lr, "process_huc8", side_effect=AssertionError):
+                lr.main()
+            pd.testing.assert_frame_equal(pd.read_csv(out_dir / "summary.csv"), first)
+
+            # Not resumed: recomputed, and a HUC8 that now has no dams loses
+            # its old outputs instead of keeping stale links.
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(lr, "process_huc8", return_value=None):
+                lr.main()
+            assert marker.exists()
+            assert not (out_dir / f"reach_links_{HUC8}.parquet").exists()
+
+
 if __name__ == "__main__":
     tests = [obj for name, obj in list(globals().items())
              if name.startswith("test_") and callable(obj)]

@@ -36,6 +36,7 @@ from etl.common import reach_selection as rs
 from etl.common import snapping as sn
 from etl.common import water_features as wf
 from etl.common.config import default_case_study, load_config
+from etl.common.progress import HucProgress
 from etl.common.nhdplus import find_huc8_geodatabase
 from etl.snap_features import BBOX_MARGIN_DEG, NHDPLUS_CRS, OVERRIDES_FILE, STATION_ID
 from etl.station_candidates import read_layer
@@ -164,6 +165,9 @@ def main():
     parser.add_argument("--candidate-dir", type=Path)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--overrides", type=Path)
+    parser.add_argument("--resume", action="store_true",
+                        help="Skip HUC8s finished by an earlier attempt (Slurm time limit); "
+                             "without it, every chosen HUC8 is recomputed.")
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
@@ -182,8 +186,14 @@ def main():
     print(f"Case study: {cfg.name}; HUC8s with candidates: {len(huc8s)}; rules: {rules}; "
           f"manual overrides: {len(overrides)}", flush=True)
 
+    progress = HucProgress(cfg, "select_station_reaches")
+    done = set(progress.start(huc8s, args.resume))
     results, failed = [], []
     for number, huc8 in enumerate(huc8s, start=1):
+        if huc8 in done:
+            results.append(pd.read_parquet(output_dir / f"station_reaches_{huc8}.parquet",
+                                           columns=["huc8", "snap_status", "snap_reason"]))
+            continue
         try:
             out = process_huc8(huc8, candidate_dir, processed / "nhdplus_extracted", rules,
                                overrides)
@@ -193,6 +203,7 @@ def main():
             continue
         out.to_parquet(output_dir / f"station_reaches_{huc8}.parquet", index=False)
         results.append(out[["huc8", "snap_status", "snap_reason"]])
+        progress.mark(huc8)
         print(f"[{number}/{len(huc8s)}] HUC8 {huc8}: "
               f"{out['snap_status'].value_counts().to_dict()}", flush=True)
 

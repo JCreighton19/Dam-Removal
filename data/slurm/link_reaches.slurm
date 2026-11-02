@@ -17,6 +17,10 @@
 #     sbatch data/slurm/link_reaches.slurm                   # every HUC8
 #     HU4="0104 0205" sbatch data/slurm/link_reaches.slurm   # a subset
 #     MAX_KM=50 sbatch data/slurm/link_reaches.slurm         # cap each search
+#
+# RESUME=1 skips HUC8s an earlier attempt finished (run_pipeline.sh sets it
+# for the extra attempts after a time-out); without it every chosen HUC8 is
+# recomputed.
 
 set -euo pipefail
 
@@ -31,6 +35,6 @@ conda activate dam-removal
 echo "Job started: $(date)"
 echo "Case study: $DAM_REMOVAL_CASE_STUDY"
 
-python -u etl/link_reaches.py ${HU4:+--hu4 $HU4} ${MAX_KM:+--max-km $MAX_KM}
+python -u etl/link_reaches.py ${HU4:+--hu4 $HU4} ${MAX_KM:+--max-km $MAX_KM} ${RESUME:+--resume}
 
 echo "Job completed: $(date)"

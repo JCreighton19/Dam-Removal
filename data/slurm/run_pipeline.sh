@@ -9,6 +9,7 @@
 #     bash data/slurm/run_pipeline.sh --from snap_features
 #     bash data/slurm/run_pipeline.sh --to select_candidate_stations
 #     bash data/slurm/run_pipeline.sh --from snap_features --to link_dams
+#     bash data/slurm/run_pipeline.sh --from download_streams --skip snap_features,link_dams
 #     bash data/slurm/run_pipeline.sh --list             # show stages
 #
 # The case study comes from case_study.env. If its config doesn't exist yet
@@ -19,7 +20,8 @@
 # finished files or HUC8s) are submitted as several attempts (ATTEMPTS
 # below). Each extra attempt starts when the previous one ends, even if it
 # hit the time limit, and finishes in minutes once everything is done. The
-# next stage waits for the last attempt to succeed. A stage's HUC8 progress
+# next stage waits for the last attempt to succeed. Extra attempts get
+# RESUME=1, which the reach-matching stages need to skip finished HUC8s. A stage's HUC8 progress
 # markers (data/processed/_progress/<case_study>/<stage>) are cleared when
 # the stage is submitted, so a new submission recomputes it.
 #
@@ -41,6 +43,10 @@ STAGES=(
     unzip_nhdplus
     snap_features
     link_dams
+    station_candidates
+    select_station_reaches
+    match_dams
+    link_reaches
     download_wqp_results
     load_core_tables
     clean_wq_results
@@ -62,6 +68,10 @@ attempts_for() {
         unzip_nhdplus)         echo 3 ;;
         snap_features)         echo 3 ;;
         link_dams)             echo 3 ;;
+        station_candidates)    echo 4 ;;
+        select_station_reaches) echo 2 ;;
+        match_dams)            echo 3 ;;
+        link_reaches)          echo 4 ;;
         download_wqp_results)  echo 8 ;;
         download_nlcd)         echo 4 ;;
         load_land_cover)       echo 3 ;;
@@ -96,6 +106,7 @@ cd "$PROJECT_ROOT"
 
 from_stage="${STAGES[0]}"
 to_stage="${STAGES[${#STAGES[@]}-1]}"
+skip_stages=""
 while (( $# )); do
     case "$1" in
         --list)
@@ -105,7 +116,8 @@ while (( $# )); do
             exit 0 ;;
         --from) from_stage="${2:?--from needs a stage name (see --list)}"; shift 2 ;;
         --to)   to_stage="${2:?--to needs a stage name (see --list)}"; shift 2 ;;
-        *) echo "Unknown argument: $1 (use --from <stage>, --to <stage> or --list)"; exit 1 ;;
+        --skip) skip_stages="${2:?--skip needs comma-separated stage names}"; shift 2 ;;
+        *) echo "Unknown argument: $1 (use --from, --to, --skip or --list)"; exit 1 ;;
     esac
 done
 
@@ -123,7 +135,13 @@ if (( end < start )); then
 fi
 
 source data/slurm/case_study.env
-to_submit=("${STAGES[@]:$start:$((end - start + 1))}")
+to_submit=()
+for stage in "${STAGES[@]:$start:$((end - start + 1))}"; do
+    [[ ",$skip_stages," == *",$stage,"* ]] || to_submit+=("$stage")
+done
+for stage in ${skip_stages//,/ }; do
+    stage_index "$stage" > /dev/null   # typo check
+done
 
 if [[ ! -f "config/${DAM_REMOVAL_CASE_STUDY}.yaml" ]]; then
     if [[ "$PILOT_N_DAMS" == "all" && "$DAM_REMOVAL_CASE_STUDY" == "all_removals" ]] \
@@ -139,7 +157,7 @@ fi
 mkdir -p data/slurm/logs
 echo "Started:    $(date)"
 echo "Case study: $DAM_REMOVAL_CASE_STUDY"
-echo "Submitting: $from_stage -> $to_stage"
+echo "Submitting: $from_stage -> $to_stage${skip_stages:+ (skipping $skip_stages)}"
 
 previous=""   # last job of the previous stage
 for stage in "${to_submit[@]}"; do
@@ -158,7 +176,10 @@ for stage in "${to_submit[@]}"; do
             dependency=(--dependency="$(IFS=,; echo "${deps[*]}")" --kill-on-invalid-dep=yes)
         fi
         # ${arr[@]+...} keeps an empty array safe under `set -u` on older bash.
-        attempt_job=$(submit "$stage" "$attempt" ${dependency[@]+"${dependency[@]}"} "data/slurm/${stage}.slurm")
+        resume=()
+        (( attempt > 1 )) && resume=(--export=ALL,RESUME=1)
+        attempt_job=$(submit "$stage" "$attempt" ${dependency[@]+"${dependency[@]}"} \
+                      ${resume[@]+"${resume[@]}"} "data/slurm/${stage}.slurm")
         jobs+=("$attempt_job")
     done
     previous="$attempt_job"

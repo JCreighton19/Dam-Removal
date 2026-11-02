@@ -39,6 +39,7 @@ from etl.common import dam_matching as dm
 from etl.common import reach_selection as rs
 from etl.common import snapping as sn
 from etl.common.config import default_case_study, load_config
+from etl.common.progress import HucProgress
 from etl.common.dams import filter_to_sampled_dams, load_dams
 from etl.common.nhdplus import find_huc8_geodatabase
 from etl.common.wbd import clip_to_watersheds, load_huc8_watershed
@@ -198,6 +199,9 @@ def main():
     parser.add_argument("--hu4", nargs="+", help="Only the case study's HUC8s in these HUC4s.")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--overrides", type=Path)
+    parser.add_argument("--resume", action="store_true",
+                        help="Skip HUC8s finished by an earlier attempt (Slurm time limit); "
+                             "without it, every chosen HUC8 is recomputed.")
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
@@ -212,8 +216,17 @@ def main():
     print(f"Case study: {cfg.name}; HUC8s: {len(huc8s)}; dams: {len(all_dams):,}; "
           f"rules: {rules}", flush=True)
 
+    progress = HucProgress(cfg, "match_dams")
+    done = set(progress.start(huc8s, args.resume))
     results, all_outlets, failed = [], [], []
     for number, huc8 in enumerate(huc8s, start=1):
+        if huc8 in done:
+            path = output_dir / f"dam_reaches_{huc8}.parquet"
+            if path.exists():   # no file: the HUC8 has no dams
+                results.append(pd.read_parquet(path))
+                all_outlets.append(pd.read_parquet(
+                    output_dir / f"dam_reservoir_outlets_{huc8}.parquet"))
+            continue
         print(f"[{number}/{len(huc8s)}] HUC8 {huc8}", flush=True)
         try:
             result = process_huc8(cfg, huc8, all_dams, rules, overrides,
@@ -224,6 +237,9 @@ def main():
             continue
         if result is None:
             print("  no dams", flush=True)
+            for prefix in ("dam_reaches", "dam_reservoir_outlets", "dam_candidates"):
+                (output_dir / f"{prefix}_{huc8}.parquet").unlink(missing_ok=True)
+            progress.mark(huc8)
             continue
         dams, outlets, candidates = result
         dams.to_parquet(output_dir / f"dam_reaches_{huc8}.parquet", index=False)
@@ -231,6 +247,7 @@ def main():
         candidates.to_parquet(output_dir / f"dam_candidates_{huc8}.parquet", index=False)
         results.append(dams)
         all_outlets.append(outlets)
+        progress.mark(huc8)
         print(f"  {dams['match_status'].value_counts().to_dict()}", flush=True)
 
     if results:

@@ -50,6 +50,7 @@ from etl.common.nhdplus import (
     missing_slim_layers,
     normalize_nhdplus_columns,
 )
+from etl.common.progress import HucProgress
 from etl.common.wbd import clip_to_watersheds, load_huc8_watershed
 from etl.snap_features import (
     BBOX_MARGIN_DEG,
@@ -257,6 +258,9 @@ def main():
     parser.add_argument("--huc8", nargs="+", help="Process these HUC8s.")
     parser.add_argument("--hu4", nargs="+", help="Process the case study's HUC8s in these HUC4s.")
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--resume", action="store_true",
+                        help="Skip HUC8s finished by an earlier attempt (Slurm time limit); "
+                             "without it, every chosen HUC8 is recomputed.")
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
@@ -271,8 +275,15 @@ def main():
     all_stations = load_candidate_stations(cfg.wqp_results_dir / "pilot_station_selection.csv")
     check_datums(all_stations)
 
+    progress = HucProgress(cfg, "station_candidates")
+    done = set(progress.start(huc8s, args.resume))
     rows, failed = [], []
     for number, huc8 in enumerate(huc8s, start=1):
+        if huc8 in done:
+            rows.append(huc8_summary(
+                huc8, pd.read_parquet(output_dir / f"station_points_{huc8}.parquet"),
+                pd.read_parquet(output_dir / f"station_candidates_{huc8}.parquet")))
+            continue
         print(f"[{number}/{len(huc8s)}] HUC8 {huc8}", flush=True)
         try:
             points, candidates = process_huc8(cfg, huc8, all_stations, rules, nhd_dir)
@@ -284,6 +295,7 @@ def main():
         points.to_parquet(output_dir / f"station_points_{huc8}.parquet", index=False)
         candidates.to_parquet(output_dir / f"station_candidates_{huc8}.parquet", index=False)
         rows.append(huc8_summary(huc8, points, candidates))
+        progress.mark(huc8)
         print(f"  {points['candidate_status'].value_counts().to_dict()}", flush=True)
 
     summary = pd.DataFrame(rows)

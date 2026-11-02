@@ -184,6 +184,9 @@ def _build_project(root):
         folder = processed / stage / CASE
         folder.mkdir(parents=True)
         frame.to_parquet(folder / f"{prefix}_{HUC8}.parquet", index=False)
+    marker = processed / "_progress" / CASE / "link_reaches" / HUC8
+    marker.parent.mkdir(parents=True)
+    marker.touch()
 
     gdb = (processed / "nhdplus_extracted" / f"NHDPLUS_H_{HUC8}_HU8_GDB"
            / f"NHDPLUS_H_{HUC8}_HU8_GDB.gdb")
@@ -288,6 +291,22 @@ def test_missing_stage_outputs_say_how_to_fall_back():
             raise AssertionError("Expected FileNotFoundError")
         except FileNotFoundError as exc:
             assert "link_source: snapped" in str(exc)
+
+
+def test_huc8s_the_stages_never_ran_on_stop_the_load():
+    # A HUC8 with no link_reaches marker (e.g. outside a --hu4 subset run) is
+    # not "no links": the load stops instead of leaving it out.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _build_project(root)
+        (root / "data" / "processed" / "_progress" / CASE / "link_reaches" / HUC8).unlink()
+        for load in (lambda cfg: lct.build_tables(cfg, [HUC8]),
+                     lambda cfg: dwr.load_confirmed_stations(cfg, 2, 3)):
+            try:
+                load(_config(root))
+                raise AssertionError("Expected ValueError")
+            except ValueError as exc:
+                assert "never processed" in str(exc) and HUC8 in str(exc)
 
 
 if __name__ == "__main__":

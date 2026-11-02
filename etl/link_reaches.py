@@ -23,6 +23,9 @@ writes data/processed/reach_links/<case_study>/ (--output-dir):
     link_comparison_<huc8>.parquet  every pair in the old or new exposure
         window (config `exposure`): change, blocker, old / new relationship
         and distance
+    digitized_<huc8>.parquet        the flowline-direction check per
+                                    dam/station reach (for the summary
+                                    when a run resumes)
     summary.csv                     per HUC8: pairs by change, usable links,
                                     digitization check
 
@@ -51,6 +54,7 @@ from etl.common import reach_links as rl
 from etl.common import reach_selection as rs
 from etl.common import water_features as wf
 from etl.common.config import default_case_study, load_config
+from etl.common.progress import HucProgress
 from etl.common.network import build_reach_graph
 from etl.common.reach_inputs import dam_id_text
 from etl.common.nhdplus import find_huc8_geodatabase
@@ -274,6 +278,28 @@ def huc8_counts(huc8, links, comparison, digitized):
     return row
 
 
+SAVED_PREFIXES = ("reach_links", "link_comparison", "digitized")
+
+
+def remove_saved(output_dir, huc8):
+    for prefix in SAVED_PREFIXES:
+        (output_dir / f"{prefix}_{huc8}.parquet").unlink(missing_ok=True)
+
+
+def read_saved(output_dir, huc8):
+    """links, comparison (or None), digitized for a HUC8 finished by an
+    earlier attempt; None if it had no dams or no stations."""
+    links_path = output_dir / f"reach_links_{huc8}.parquet"
+    if not links_path.exists():
+        return None
+    comparison_path = output_dir / f"link_comparison_{huc8}.parquet"
+    comparison = pd.read_parquet(comparison_path) if comparison_path.exists() else None
+    digitized_path = output_dir / f"digitized_{huc8}.parquet"
+    digitized = pd.read_parquet(digitized_path)["digitized_downstream"] \
+        if digitized_path.exists() else pd.Series(dtype=bool)
+    return pd.read_parquet(links_path), comparison, digitized
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -284,6 +310,9 @@ def main():
     parser.add_argument("--dam-dir", type=Path)
     parser.add_argument("--candidate-dir", type=Path)
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--resume", action="store_true",
+                        help="Skip HUC8s finished by an earlier attempt (Slurm time limit); "
+                             "without it, every chosen HUC8 is recomputed.")
     parser.add_argument("--max-km", type=float, default=None,
                         help="Stop each network search this far from the dam (default: no "
                              "limit, as the old links; a limit makes pairs beyond it look "
@@ -315,8 +344,20 @@ def main():
           f"robust reasons: {list(robust_reasons)}; {selection_rules}", flush=True)
 
     networks = Networks()
+    progress = HucProgress(cfg, "link_reaches")
+    done = set(progress.start(huc8s, args.resume))
     all_links, all_comparisons, all_digitized, counts, failed = [], [], [], [], []
     for number, huc8 in enumerate(huc8s, start=1):
+        if huc8 in done:
+            saved = read_saved(output_dir, huc8)
+            if saved is not None:   # None: no dams or no stations
+                links, comparison, digitized = saved
+                all_links.append(links)
+                if comparison is not None:
+                    all_comparisons.append(comparison)
+                all_digitized.append(digitized)
+                counts.append(huc8_counts(huc8, links, comparison, digitized))
+            continue
         try:
             result = process_huc8(huc8, station_dir, dam_dir, candidate_dir, processed,
                                   networks, limits, args.max_km, robust_reasons,
@@ -327,15 +368,21 @@ def main():
             continue
         if result is None:
             print(f"[{number}/{len(huc8s)}] HUC8 {huc8}: no dams or no stations", flush=True)
+            remove_saved(output_dir, huc8)   # outputs of an earlier run are stale
+            progress.mark(huc8)
             continue
         links, comparison, digitized, rivals = result
+        remove_saved(output_dir, huc8)
         links.to_parquet(output_dir / f"reach_links_{huc8}.parquet", index=False)
+        pd.DataFrame({"digitized_downstream": digitized.astype(bool).to_numpy()}).to_parquet(
+            output_dir / f"digitized_{huc8}.parquet", index=False)
         if comparison is not None:
             comparison.to_parquet(output_dir / f"link_comparison_{huc8}.parquet", index=False)
             all_comparisons.append(comparison)
         all_links.append(links)
         all_digitized.append(digitized)
         counts.append(huc8_counts(huc8, links, comparison, digitized))
+        progress.mark(huc8)
         old_text = "no old links" if comparison is None else \
             comparison["change"].value_counts().to_dict()
         robust = int((links["usable_reason"] == rl.ROBUST).sum())

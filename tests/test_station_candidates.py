@@ -179,6 +179,21 @@ def test_station_candidates():
         assert summary.loc[NO_PACKAGE_HUC8, "n_no_nhdplus_package"] == 1
 
 
+def test_resume_skips_finished_huc8s_and_keeps_the_summary():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _build_project(root)
+        out = _run(root)
+        first = pd.read_csv(out / "summary.csv")
+        argv = ["station_candidates.py", "--case-study", "cand_test", "--output-dir", str(out),
+                "--resume"]
+        with mock.patch.dict(os.environ, {PROJECT_ROOT_ENV_VAR: str(root)}), \
+                mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(sc, "process_huc8", side_effect=AssertionError):
+            sc.main()
+        pd.testing.assert_frame_equal(pd.read_csv(out / "summary.csv"), first)
+
+
 if __name__ == "__main__":
     tests = [
         obj for name, obj in list(globals().items())
