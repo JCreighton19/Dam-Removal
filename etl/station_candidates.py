@@ -198,6 +198,11 @@ def process_huc8(cfg, huc8, all_stations, rules, nhd_dir):
     print(f"  package {gdb_path.name}; water layers: {water}; stations: {len(stations):,}; "
           f"flowlines: {len(flowlines):,}; polygons: {len(polygons):,}; "
           f"catchments: {len(catchments):,}", flush=True)
+    if stations.empty:
+        # HUC8 in the case study for its dams only (e.g. Great Lakes shore
+        # units): write empty outputs so later stages mark it done.
+        points = _points_table(stations, huc8, gdb_path.stem, water, None)
+        return points, pd.DataFrame(columns=["huc8", STATION_ID] + cand.CANDIDATE_COLUMNS[1:])
 
     metric_crs = watershed.estimate_utm_crs(datum_name="NAD83")
     supported = stations[stations["datum_transform"] != "unsupported"]

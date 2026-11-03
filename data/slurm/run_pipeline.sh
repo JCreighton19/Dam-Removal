@@ -10,6 +10,7 @@
 #     bash data/slurm/run_pipeline.sh --to select_candidate_stations
 #     bash data/slurm/run_pipeline.sh --from snap_features --to link_dams
 #     bash data/slurm/run_pipeline.sh --from download_streams --skip snap_features,link_dams
+#     bash data/slurm/run_pipeline.sh --from station_candidates --resume
 #     bash data/slurm/run_pipeline.sh --list             # show stages
 #
 # The case study comes from case_study.env. If its config doesn't exist yet
@@ -23,7 +24,10 @@
 # next stage waits for the last attempt to succeed. Extra attempts get
 # RESUME=1, which the reach-matching stages need to skip finished HUC8s. A stage's HUC8 progress
 # markers (data/processed/_progress/<case_study>/<stage>) are cleared when
-# the stage is submitted, so a new submission recomputes it.
+# the stage is submitted, so a new submission recomputes it. With --resume,
+# the FIRST submitted stage keeps its markers and every attempt gets
+# RESUME=1, so HUC8s it already finished are skipped (later stages are
+# still recomputed, since their inputs change).
 #
 # Not included (run separately):
 #   create_env, download_huc8, unzip_huc8   one-time setup
@@ -107,6 +111,7 @@ cd "$PROJECT_ROOT"
 from_stage="${STAGES[0]}"
 to_stage="${STAGES[${#STAGES[@]}-1]}"
 skip_stages=""
+resume_first=0
 while (( $# )); do
     case "$1" in
         --list)
@@ -117,7 +122,8 @@ while (( $# )); do
         --from) from_stage="${2:?--from needs a stage name (see --list)}"; shift 2 ;;
         --to)   to_stage="${2:?--to needs a stage name (see --list)}"; shift 2 ;;
         --skip) skip_stages="${2:?--skip needs comma-separated stage names}"; shift 2 ;;
-        *) echo "Unknown argument: $1 (use --from, --to, --skip or --list)"; exit 1 ;;
+        --resume) resume_first=1; shift ;;
+        *) echo "Unknown argument: $1 (use --from, --to, --skip, --resume or --list)"; exit 1 ;;
     esac
 done
 
@@ -158,10 +164,14 @@ mkdir -p data/slurm/logs
 echo "Started:    $(date)"
 echo "Case study: $DAM_REMOVAL_CASE_STUDY"
 echo "Submitting: $from_stage -> $to_stage${skip_stages:+ (skipping $skip_stages)}"
+(( resume_first )) && echo "Resuming:   ${to_submit[0]} keeps its HUC8 progress markers"
 
 previous=""   # last job of the previous stage
+first_stage="${to_submit[0]}"
 for stage in "${to_submit[@]}"; do
-    rm -rf "data/processed/_progress/${DAM_REMOVAL_CASE_STUDY}/${stage}"
+    keep=0
+    (( resume_first )) && [[ "$stage" == "$first_stage" ]] && keep=1
+    (( keep )) || rm -rf "data/processed/_progress/${DAM_REMOVAL_CASE_STUDY}/${stage}"
     n=$(attempts_for "$stage")
     jobs=()
     attempt_job=""
@@ -177,7 +187,7 @@ for stage in "${to_submit[@]}"; do
         fi
         # ${arr[@]+...} keeps an empty array safe under `set -u` on older bash.
         resume=()
-        (( attempt > 1 )) && resume=(--export=ALL,RESUME=1)
+        if (( attempt > 1 || keep )); then resume=(--export=ALL,RESUME=1); fi
         attempt_job=$(submit "$stage" "$attempt" ${dependency[@]+"${dependency[@]}"} \
                       ${resume[@]+"${resume[@]}"} "data/slurm/${stage}.slurm")
         jobs+=("$attempt_job")

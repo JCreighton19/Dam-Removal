@@ -135,6 +135,10 @@ def process_huc8(huc8, candidate_dir, nhd_dir, rules, overrides):
     points[STATION_ID] = points[STATION_ID].astype(str)
     candidates[STATION_ID] = candidates[STATION_ID].astype(str)
     candidates["NHDPlusID"] = candidates["NHDPlusID"].astype("Int64")
+    if points.empty:   # HUC8 with dams but no stations; link_reaches marks it done
+        return points.assign(snap_status=pd.Series(dtype="object"),
+                             snap_reason=pd.Series(dtype="object"),
+                             snap_evidence=pd.Series(dtype="object"))
 
     decisions = rs.decide_stations(points, candidates, rules, STATION_ID)
     decisions = apply_overrides(decisions, points[STATION_ID], overrides)
