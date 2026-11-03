@@ -67,6 +67,14 @@ Added 2026-10-26
    changes and detection limits across the removal.
 12. Refuses to run when a context table references stations wq_station
    doesn't have (left from an earlier snapping or linking run).
+
+Added 2026-11-02
+----------------
+13. station_flow_permanence / dam_flow_permanence (perennial, intermittent,
+   ephemeral, unknown; NHD FCode of each reach) and qc_non_perennial (either
+   is intermittent or ephemeral; null when a code is unknown) come from the
+   link_features view. Carried, not applied; the mixed model excludes
+   qc_non_perennial rows by default (perennial streams as the main analysis).
 """
 
 from __future__ import annotations
@@ -111,6 +119,9 @@ SCHEMA = {
     "years_from_removal": "int16",
     "drainage_area_ratio": "float64",
     "upstream_in_former_reservoir": "boolean",
+    "station_flow_permanence": "string",
+    "dam_flow_permanence": "string",
+    "qc_non_perennial": "boolean",
     # Exposure
     "exposure_status": "string",
     "assigned_AR_ID": "string",
@@ -226,6 +237,9 @@ SELECT
     r.years_from_removal,
     lf.drainage_area_ratio,
     lf.upstream_in_former_reservoir,
+    lf.station_flow_permanence,
+    lf.dam_flow_permanence,
+    lf.qc_non_perennial,
     CASE
         WHEN r.side = 'downstream' AND e.assigned_AR_ID = r.AR_ID THEN e.exposure_status
         WHEN r.side = 'downstream' AND e.assigned_AR_ID IS NOT NULL THEN 'assigned_to_other_removal'
@@ -461,6 +475,12 @@ def main():
           .round(2).to_string())
     print(f"  upstream pairs possibly in the former reservoir: "
           f"{int(pairs['upstream_in_former_reservoir'].fillna(False).sum())}")
+    print("\nFlow permanence (pairs; station reach x dam reach):")
+    print(pairs.groupby(["station_flow_permanence", "dam_flow_permanence"], dropna=False)
+          .size().to_string())
+    flagged = pairs[pairs["qc_non_perennial"].fillna(False).astype(bool)]
+    print(f"  qc_non_perennial pairs: {len(flagged):,} ({flagged['AR_ID'].nunique()} dams); "
+          f"rows: {int(table['qc_non_perennial'].fillna(False).sum()):,}")
     print("\nDrainage area flags (rows):")
     print(table["drainage_area_flag"].value_counts(dropna=False).to_string())
 

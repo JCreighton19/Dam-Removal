@@ -233,7 +233,8 @@ def test_load_core_tables_from_reach_links():
     assert d1["Dam_Name"] == "Dam One" and d1["Year_built"] == 1900 and d1["NABI_ID"] == "N1"
     assert d1["snap_reason"] == "reservoir_outlet" and d1["match_method"] == "evidence_rules"
     assert d1["reach_slope"] == 0.002 and d1["reach_totdasqkm"] == 90.0
-    assert d1["reach_feature_type"] == 460 and not d1["qc_far_snap"]
+    assert d1["reach_feature_type"] == 460 and d1["reach_feature_code"] == 46006
+    assert not d1["qc_far_snap"]
     assert abs(d1.geometry.x + 69.81) < 1e-4 and abs(d1.geometry.y - 45.0) < 1e-4
     d3 = dams.loc["3"]
     assert d3["qc_far_snap"] and pd.isna(d3["reach_slope"]) and pd.isna(d3["reach_totdasqkm"])

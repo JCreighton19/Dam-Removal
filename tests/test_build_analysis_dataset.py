@@ -49,11 +49,14 @@ def _core_tables(directory):
         "River": ["R1", "R2"], "State": ["ME", "NY"], "Dam_Height_ft": [10.0, None],
         "Year_built": pd.array([1900, None], dtype="Int16"), "Original_Use": ["Mill", None],
         "reach_totdasqkm": [20.0, 10.0], "reach_slope": [0.01, None],
+        "reach_feature_code": pd.array([46006, 46006], dtype="Int32"),
     })
     stations = pd.DataFrame({"station_id": ["DOWN", "UP", "OLD"], "snap_fraction": [0.5] * 3,
                              "qc_far_snap": [False, False, True],
                              "qc_near_unsuitable_flowline": False, "qc_non_riverine_name": False,
-                             "reach_totdasqkm": [50.0, 15.0, 30.0]})
+                             "reach_totdasqkm": [50.0, 15.0, 30.0],
+                             "reach_feature_code": pd.array([46006, 46007, None],
+                                                            dtype="Int32")})
     links = pd.DataFrame({
         "AR_ID": ["D1", "D1", "D2"], "station_id": ["DOWN", "UP", "OLD"],
         "relationship": ["downstream", "upstream", "downstream"],
@@ -175,6 +178,11 @@ def test_rows_and_context_joins():
         # Link features: station / dam area (DOWN 50/20, OLD 30/10).
         assert (down["drainage_area_ratio"] == 2.5).all() and (old["drainage_area_ratio"] == 3).all()
         assert table["upstream_in_former_reservoir"].isna().all()  # no upstream rows
+        # Flow permanence: DOWN and D1 perennial; OLD's reach has no FCode.
+        assert (down["station_flow_permanence"] == "perennial").all()
+        assert (down["dam_flow_permanence"] == "perennial").all()
+        assert (down["qc_non_perennial"] == False).all()  # noqa: E712
+        assert old["station_flow_permanence"].isna().all() and old["qc_non_perennial"].isna().all()
 
         # Flags carried, not applied; a truncated area never enters as a value.
         assert old["qc_far_snap"].all() and not down["qc_far_snap"].any()

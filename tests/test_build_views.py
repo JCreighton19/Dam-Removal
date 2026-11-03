@@ -33,13 +33,15 @@ def _with_qc(stations):
         stations[column] = False
     if "reach_totdasqkm" not in stations:
         stations["reach_totdasqkm"] = 100.0
+    if "reach_feature_code" not in stations:
+        stations["reach_feature_code"] = pd.array([46006] * len(stations), dtype="Int32")
     return stations
 
 
 def _with_reach(dams):
     """The dam reach columns link_features reads."""
     for column, value in [("reach_totdasqkm", 100.0), ("reach_slope", 0.001),
-                          ("Dam_Height_ft", 10.0)]:
+                          ("Dam_Height_ft", 10.0), ("reach_feature_code", 46006)]:
         if column not in dams:
             dams[column] = value
     return dams
@@ -69,6 +71,8 @@ def write_tables(directory):
         "station_id": ["DOWN", "UP", "SAME_BELOW", "SAME_ABOVE", "NOYEAR"],
         "snap_fraction": [0.5, 0.5, 0.8, 0.1, 0.5],
         "reach_totdasqkm": [250.0, 40.0, 100.0, 100.0, -9999.0],
+        # perennial, intermittent, artificial path, StreamRiver without a category
+        "reach_feature_code": pd.array([46006, 46003, 55800, 46000, None], dtype="Int32"),
     }))
     links = pd.DataFrame({
         "AR_ID": ["D1", "D1", "D1", "D1", "D2"],
@@ -280,6 +284,29 @@ def test_link_features():
     assert abs(f.loc["UP", "backwater_km"] - 3.048) < 1e-9
     assert f.loc["UP", "upstream_in_former_reservoir"] == True  # noqa: E712  2 km < 3.05 km
     assert pd.isna(f.loc["DOWN", "upstream_in_former_reservoir"])  # downstream: not applicable
+
+
+def test_flow_permanence():
+    with tempfile.TemporaryDirectory() as tmp, build(Path(tmp)) as con:
+        f = con.sql("SELECT * FROM link_features").df().set_index("station_id")
+    assert f["station_flow_permanence"].to_dict() == {
+        "DOWN": "perennial", "UP": "intermittent", "SAME_BELOW": "perennial",
+        "SAME_ABOVE": "unknown"}
+    assert (f["dam_flow_permanence"] == "perennial").all()
+    assert f.loc["DOWN", "qc_non_perennial"] == False  # noqa: E712
+    assert f.loc["SAME_BELOW", "qc_non_perennial"] == False  # noqa: E712  artificial path
+    assert f.loc["UP", "qc_non_perennial"] == True  # noqa: E712
+    assert pd.isna(f.loc["SAME_ABOVE", "qc_non_perennial"])  # unknown: not flagged either way
+
+
+def test_flow_permanence_sql_maps_codes():
+    with duckdb.connect() as con:
+        got = con.sql(f"""
+            SELECT code, {bv.flow_permanence_sql('code')} AS p
+            FROM (VALUES (46006), (46003), (46007), (55800), (46000), (NULL)) t(code)
+        """).fetchall()
+    assert got == [(46006, "perennial"), (46003, "intermittent"), (46007, "ephemeral"),
+                   (55800, "perennial"), (46000, "unknown"), (None, None)]
 
 
 def test_stale_derived_tables_are_reported():

@@ -29,8 +29,10 @@ Views
 - removal_link: removal_link_all within the link distance limits (the link
   part of measurement_window; every view below uses it).
 - link_features: per link in removal_link, the drainage-area ratio
-  (station / dam NHDPlus area) and, for upstream stations, whether they may
-  sit in the former reservoir (within dam height / reach slope of the dam).
+  (station / dam NHDPlus area), for upstream stations whether they may
+  sit in the former reservoir (within dam height / reach slope of the dam),
+  and the flow permanence of the station's and the dam's reach (NHD FCode;
+  qc_non_perennial when either is intermittent or ephemeral).
 - pair_competing_removals: per dam-station pair, the other removals linked
   to the station whose removal year falls inside the pair's window.
 - measurement_exposure: one row per measurement downstream of at least one
@@ -97,6 +99,28 @@ DEFAULT_MIN_DISTANCE_RATIO = 2.0
 # links every connected station (the behavior before 2026-10-26).
 DEFAULT_MAX_DOWNSTREAM_KM = None
 DEFAULT_MAX_UPSTREAM_KM = None
+
+# NHDFlowline FCode -> flow permanence (link_features). The matched reaches
+# are FType 460 StreamRiver or 558 ArtificialPath. An artificial path runs
+# through a lake, reservoir or wide river, so it counts as perennial; 46000
+# (StreamRiver without a hydrographic category) and any other code are
+# 'unknown'. NHD's intermittent / ephemeral coding is known to be
+# unreliable in places (the arid West especially), so it is a flag, not a
+# filter: models decide (advisor, 2026-11-02: perennial streams are the main
+# analysis).
+FLOW_PERMANENCE = {
+    46006: "perennial",
+    55800: "perennial",
+    46003: "intermittent",
+    46007: "ephemeral",
+}
+NON_PERENNIAL = ("intermittent", "ephemeral")
+
+
+def flow_permanence_sql(column):
+    """SQL CASE mapping an FCode column to FLOW_PERMANENCE (null stays null)."""
+    whens = " ".join(f"WHEN {int(code)} THEN '{label}'" for code, label in FLOW_PERMANENCE.items())
+    return f"CASE WHEN {column} IS NULL THEN NULL ELSE CASE {column} {whens} ELSE 'unknown' END END"
 
 
 def _sql_number(value):
@@ -227,7 +251,9 @@ ORDER BY dams_eligible DESC, parameter_std;
 """
 
 # Built after ELIGIBILITY_VIEWS; they need qc_settings and the snapping
-# columns of wq_station (load_core_tables after the 2026-10-23 snapping).
+# columns of wq_station (load_core_tables after the 2026-10-23 snapping) and
+# reach_feature_code of wq_station / dam_removal (load_core_tables after
+# 2026-11-02).
 EXPOSURE_QC_VIEWS = """
 -- Drainage-area ratio: how much of the station's water passed the dam
 -- (about 1: mostly the dam's; 50: the dam drains ~2%). NHDPlus areas at
@@ -246,7 +272,9 @@ WITH areas AS (
         CASE WHEN d.reach_totdasqkm > 0 THEN d.reach_totdasqkm END AS dam_drainage_area_km2,
         CASE WHEN s.reach_totdasqkm > 0 THEN s.reach_totdasqkm END AS station_drainage_area_km2,
         d.Dam_Height_ft * 0.3048 / CASE WHEN d.reach_slope > 0 THEN d.reach_slope END / 1000
-            AS backwater_km
+            AS backwater_km,
+        d.reach_feature_code AS dam_reach_fcode,
+        s.reach_feature_code AS station_reach_fcode
     FROM removal_link l
     JOIN dam_removal d USING (AR_ID)
     JOIN wq_station s USING (station_id)
@@ -255,7 +283,17 @@ SELECT
     *,
     station_drainage_area_km2 / dam_drainage_area_km2 AS drainage_area_ratio,
     CASE WHEN side = 'upstream' THEN network_distance_km <= backwater_km END
-        AS upstream_in_former_reservoir
+        AS upstream_in_former_reservoir,
+    __STATION_PERMANENCE__ AS station_flow_permanence,
+    __DAM_PERMANENCE__ AS dam_flow_permanence,
+    -- True when either reach is intermittent or ephemeral, false when both
+    -- are perennial, null otherwise (a code missing or 'unknown').
+    CASE
+        WHEN station_flow_permanence IN __NON_PERENNIAL__
+          OR dam_flow_permanence IN __NON_PERENNIAL__ THEN true
+        WHEN station_flow_permanence = 'perennial' AND dam_flow_permanence = 'perennial'
+            THEN false
+    END AS qc_non_perennial
 FROM areas;
 
 -- Other removals linked to the same station whose removal year is inside
@@ -343,6 +381,12 @@ FROM wq_station s
 LEFT JOIN sc USING (station_id)
 CROSS JOIN qc_settings q;
 """
+EXPOSURE_QC_VIEWS = (
+    EXPOSURE_QC_VIEWS
+    .replace("__STATION_PERMANENCE__", flow_permanence_sql("station_reach_fcode"))
+    .replace("__DAM_PERMANENCE__", flow_permanence_sql("dam_reach_fcode"))
+    .replace("__NON_PERENNIAL__", "(" + ", ".join(f"'{v}'" for v in NON_PERENNIAL) + ")")
+)
 
 
 def table_view_sql(table, path):

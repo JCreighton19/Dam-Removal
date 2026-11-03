@@ -109,6 +109,7 @@ SCHEMAS = {
         "snap_reason": "string",
         "snap_evidence": "string",
         "reach_feature_type": "Int16",
+        "reach_feature_code": "Int32",
         "reach_gnis_name": "string",
         "reach_totdasqkm": "float64",
         "reach_slope": "float64",
@@ -138,6 +139,7 @@ SCHEMAS = {
         "snap_reason": "string",
         "snap_evidence": "string",
         "reach_feature_type": "Int16",
+        "reach_feature_code": "Int32",
         "reach_gnis_name": "string",
         "reach_totdasqkm": "float64",
         "reach_slope": "float64",
@@ -285,6 +287,8 @@ def snap_columns(frame, label):
         "snap_reason": to_text(src("snap_reason")),
         "snap_evidence": to_text(src("snap_evidence")),
         "reach_feature_type": pd.to_numeric(src("reach_ftype"), errors="coerce").astype("Int16"),
+        # FCode: FType plus flow permanence (46006 perennial, 46003 intermittent, ...).
+        "reach_feature_code": pd.to_numeric(src("reach_fcode"), errors="coerce").astype("Int32"),
         "reach_gnis_name": to_text(src("reach_gnis_name")),
         # NHDPlus placeholders (-9999, -9998) are already null; any left are dropped here.
         "reach_totdasqkm": to_float(src("reach_totdasqkm")).where(lambda v: v > 0),

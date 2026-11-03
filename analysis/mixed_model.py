@@ -82,7 +82,10 @@ SETTINGS = {
     "control_exposure": ["upstream_control"],
     "exclude_former_reservoir": True,
     # Boolean flag columns whose true rows are dropped, e.g. ["qc_saline"].
-    "exclude_flags": [],
+    # qc_non_perennial: the station's or dam's reach is intermittent or
+    # ephemeral in NHD; perennial streams are the main analysis (advisor,
+    # 2026-11-02). Unknown permanence (null) is kept. Set [] to include them.
+    "exclude_flags": ["qc_non_perennial"],
     # Continuous covariates, standardized (mean 0, SD 1) within each fit.
     # Rows missing any of them are dropped (counted in rows_dropped_missing).
     "covariates": ["air_temp_mean_c", "precip_prev_month_mm"],

@@ -45,6 +45,7 @@ def _snap_attrs(n, **overrides):
         "snap_reason": ["name_match"] * n,
         "snap_evidence": ["name_match"] * n,
         "reach_ftype": [460] * n,
+        "reach_fcode": [46006] * n,
         "reach_gnis_name": ["Test River"] * n,
         "reach_totdasqkm": [120.5] * n,
         "reach_slope": [0.002] * n,
@@ -246,7 +247,7 @@ def test_main_writes_all_tables_matching_the_spec():
         assert set(stations["state_code"]) == {"23"}
         assert set(stations["county_code"]) == {"005"}
         s2 = stations.set_index("station_id").loc["S2"]
-        assert s2["reach_gnis_name"] == "Test River" and s2["reach_feature_type"] == 460
+        assert s2["reach_gnis_name"] == "Test River" and s2["reach_feature_type"] == 460 and s2["reach_feature_code"] == 46006
         assert s2["reach_totdasqkm"] == 120.5 and s2["qc_far_snap"]
         assert s2["reported_drainage_area_km2"] == 50.0 and s2["match_method"] == "scored_candidates"
         assert stations.set_index("station_id").loc["S3", "qc_non_riverine_name"]

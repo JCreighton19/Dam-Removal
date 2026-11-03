@@ -25,6 +25,7 @@ def row(**kw):
             "sample_fraction_std": None, "side": "downstream", "period": "pre",
             "sample_date": "2010-06-01", "month": 6, "result_value_std": 10.0,
             "exposure_status": "assigned_sole", "upstream_in_former_reservoir": None,
+            "qc_non_perennial": False,
             "air_temp_mean_c": 20.0, "precip_prev_month_mm": 50.0}
     return {**base, **kw}
 
@@ -74,6 +75,20 @@ def test_roles():
         "treated", "excluded", "control", "excluded", "excluded"]
     kept = mm.assign_roles(df, {**SETTINGS, "exclude_former_reservoir": False})
     assert kept.tolist()[3] == "control"
+
+
+def test_non_perennial_excluded_by_default():
+    df = pd.DataFrame([
+        row(),                                                    # perennial: treated
+        row(qc_non_perennial=True),                               # excluded
+        row(qc_non_perennial=None),                               # unknown: kept
+        row(side="upstream", exposure_status="upstream_control",
+            qc_non_perennial=True),                               # excluded
+    ])
+    assert mm.assign_roles(df, SETTINGS).tolist() == [
+        "treated", "excluded", "treated", "excluded"]
+    kept = mm.assign_roles(df, {**SETTINGS, "exclude_flags": []})
+    assert kept.tolist() == ["treated", "treated", "treated", "control"]
 
 
 def test_daily_collapse_and_log_scale():
