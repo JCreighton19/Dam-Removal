@@ -25,6 +25,17 @@ PARAMETERS = {
     "Orthophosphate": "orthophosphate",
     "Phosphorus": "phosphorus",
     "Total dissolved solids": "tds",
+    # Added 2026-11-02 (advisor: suspended sediment and stream flow). SSC and
+    # TSS are kept apart: TSS subsamples the bottle and under-reads sand, so
+    # the two aren't comparable (Gray et al. 2000).
+    "Suspended Sediment Concentration (SSC)": "ssc",
+    "Total suspended solids": "tss",
+    # Discharge measured with a sample (USGS 00061; "Flow" from other
+    # agencies). Daily means ("Stream flow, mean. daily") are a different
+    # quantity and are left out; continuous gauge records come from NWIS,
+    # not WQP.
+    "Stream flow, instantaneous": "discharge",
+    "Flow": "discharge",
 }
 
 DO_SATURATION_UNITS = {"%", "%saturatn"}
@@ -41,15 +52,19 @@ STANDARD_UNITS = {
     "orthophosphate": "mg/L as P",
     "phosphorus": "mg/L as P",
     "tds": "mg/L",
+    "ssc": "mg/L",
+    "tss": "mg/L",
+    "discharge": "ft3/s",
 }
 
 # No meaningful sample fraction: sample_fraction_std is null for these.
 FIELD_PARAMETERS = {
     "water_temp", "specific_conductance", "dissolved_oxygen",
-    "do_saturation", "ph", "turbidity",
+    "do_saturation", "ph", "turbidity", "discharge",
 }
-# TDS is dissolved by definition, so its fraction label carries no meaning.
-NO_FRACTION_PARAMETERS = FIELD_PARAMETERS | {"tds"}
+# TDS is dissolved and SSC / TSS suspended by definition, so their fraction
+# labels carry no meaning.
+NO_FRACTION_PARAMETERS = FIELD_PARAMETERS | {"tds", "ssc", "tss"}
 
 # Agency labels for the same two fractions: filtered (Dissolved) or not (Total).
 FRACTION_ALIASES = {
@@ -97,6 +112,12 @@ PLAUSIBLE_RANGES = {
     "orthophosphate": (0.0, 50.0),
     "phosphorus": (0.0, 50.0),
     "tds": (0.0, 70000.0),
+    # Hyperconcentrated flows reach several hundred thousand mg/L.
+    "ssc": (0.0, 600000.0),
+    "tss": (0.0, 600000.0),
+    # Above the largest recorded U.S. river flows; negative (tidal) flows are
+    # dropped, since the study is of rivers.
+    "discharge": (0.0, 5000000.0),
 }
 
 # --------------------------------------------------
@@ -131,6 +152,9 @@ PCODE_UNITS = {
     "63676": "NTRU",
     "63680": "FNU",
     "70300": "mg/l",
+    "80154": "mg/l",     # SSC
+    "00530": "mg/l",     # TSS
+    "00061": "ft3/s",    # discharge, instantaneous
 }
 
 # STORET reports pH without a unit.
@@ -156,7 +180,7 @@ def _build_conversions():
     """(parameter_std, normalized unit) -> (factor, unit_basis_assumed)."""
     conversions = {}
 
-    for parameter in ("dissolved_oxygen", "tds", *_N_NUTRIENTS, *_P_NUTRIENTS):
+    for parameter in ("dissolved_oxygen", "tds", "ssc", "tss", *_N_NUTRIENTS, *_P_NUTRIENTS):
         # A bare mg/L nutrient doesn't say as N / as P: assumed and flagged.
         assumed = parameter in _N_NUTRIENTS + _P_NUTRIENTS
         conversions[(parameter, "mg/l")] = (1.0, assumed)
@@ -176,6 +200,14 @@ def _build_conversions():
     # NTU, NTRU and FNU have no conversion; treated as comparable (3.6.4).
     for unit in ("ntu", "ntru", "fnu"):
         conversions[("turbidity", unit)] = (1.0, False)
+
+    # Discharge to ft3/s.
+    for unit in ("ft3/s", "ft3/sec", "cfs"):
+        conversions[("discharge", unit)] = (1.0, False)
+    for unit in ("m3/s", "m3/sec", "cms"):
+        conversions[("discharge", unit)] = (35.3147, False)
+    conversions[("discharge", "gpm")] = (0.0022280, False)   # US gal / min
+    conversions[("discharge", "mgd")] = (1.547229, False)    # million US gal / day
 
     conversions[("water_temp", "degc")] = (1.0, False)
     conversions[("ph", "stdunits")] = (1.0, False)

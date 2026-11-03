@@ -143,6 +143,32 @@ ROWS = {
         "ResultSampleFractionText": "Total", "ResultMeasureValue": "<0.5",
         "ResultMeasure/MeasureUnitCode": "mg/l as P",
     },
+    # Suspended sediment and discharge (added 2026-11-02).
+    "keep_ssc": {
+        "ProviderName": "NWIS", "CharacteristicName": "Suspended Sediment Concentration (SSC)",
+        "USGSPCode": "80154", "ResultSampleFractionText": "Suspended",
+        "ResultMeasureValue": "125", "ResultMeasure/MeasureUnitCode": None,
+    },
+    "keep_tss": {
+        "CharacteristicName": "Total suspended solids", "ResultSampleFractionText": "Non-filterable",
+        "ResultMeasureValue": "40", "ResultMeasure/MeasureUnitCode": "mg/L",
+    },
+    "keep_discharge_cfs": {
+        "ProviderName": "NWIS", "CharacteristicName": "Stream flow, instantaneous",
+        "USGSPCode": "00061", "ResultMeasureValue": "350", "ResultMeasure/MeasureUnitCode": "ft3/s",
+    },
+    "keep_flow_m3s": {
+        "CharacteristicName": "Flow", "ResultMeasureValue": "2",
+        "ResultMeasure/MeasureUnitCode": "m3/sec",
+    },
+    "daily_mean_flow": {
+        "CharacteristicName": "Stream flow, mean. daily", "ResultMeasureValue": "300",
+        "ResultMeasure/MeasureUnitCode": "ft3/s",
+    },
+    "negative_flow": {
+        "CharacteristicName": "Stream flow, instantaneous", "ResultMeasureValue": "-5",
+        "ResultMeasure/MeasureUnitCode": "ft3/s",
+    },
 }
 
 KEPT = sorted(label for label in ROWS if label.startswith("keep_"))
@@ -251,6 +277,19 @@ def test_main_applies_every_rule():
         assert pd.isna(row.loc["keep_nitrate_blank_fraction", "sample_fraction_std"])
         assert pd.isna(row.loc["keep_tds_dissolved", "sample_fraction_std"])
         assert row.loc["keep_sc_routine", "activity_type"] == "Sample-Routine"
+
+        # SSC / TSS kept apart, no fraction; SSC unit from its pcode.
+        assert row.loc["keep_ssc", "parameter_std"] == "ssc"
+        assert row.loc["keep_ssc", "result_value_std"] == 125
+        assert row.loc["keep_ssc", "result_unit_std"] == "mg/L"
+        assert pd.isna(row.loc["keep_ssc", "sample_fraction_std"])
+        assert row.loc["keep_tss", "parameter_std"] == "tss"
+        assert pd.isna(row.loc["keep_tss", "sample_fraction_std"])
+        # Discharge in ft3/s; daily means and negative flows are not kept.
+        assert row.loc["keep_discharge_cfs", "parameter_std"] == "discharge"
+        assert row.loc["keep_discharge_cfs", "result_value_std"] == 350
+        assert abs(row.loc["keep_flow_m3s", "result_value_std"] - 70.6294) < 1e-9
+        assert row.loc["keep_flow_m3s", "result_unit_std"] == "ft3/s"
 
 
 def test_failed_batches_stop_the_run():

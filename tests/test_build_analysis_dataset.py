@@ -78,6 +78,16 @@ def _core_tables(directory):
     for column in ["method_id", "method_context", "result_unit_raw", "detection_limit_unit"]:
         measurements[column] = pd.array([None] * len(measurements), dtype="string")
     measurements["detection_limit"] = None
+    # Two discharge readings at DOWN on 2016-06-01 (median 300 ft3/s). One
+    # sample per side is too few for a discharge pair, so they add no rows.
+    flow = measurements.iloc[:2].copy()
+    flow["sample_date"] = pd.to_datetime(["2016-06-01"] * 2).date
+    flow["station_id"] = "DOWN"
+    flow["measurement_id"] = [1000, 1001]
+    flow["parameter_std"] = "discharge"
+    flow["result_value_std"] = [200.0, 400.0]
+    flow["result_unit_std"] = "ft3/s"
+    measurements = pd.concat([measurements, flow], ignore_index=True)
     tables = {
         "dam_removal": dams, "wq_station": stations, "dam_station_link": links,
         "huc8_watershed": pd.DataFrame({"huc8": ["01010101"]}),
@@ -178,6 +188,11 @@ def test_rows_and_context_joins():
         # Link features: station / dam area (DOWN 50/20, OLD 30/10).
         assert (down["drainage_area_ratio"] == 2.5).all() and (old["drainage_area_ratio"] == 3).all()
         assert table["upstream_in_former_reservoir"].isna().all()  # no upstream rows
+        # Same-day discharge: only DOWN's 2016-06-01 rows (two repeats) have it.
+        flow_rows = table[table["has_same_day_discharge"]]
+        assert len(flow_rows) == 2 and (flow_rows["sample_date"] == pd.Timestamp("2016-06-01")).all()
+        assert (flow_rows["discharge_same_day_cfs"] == 300.0).all()
+        assert table.loc[~table["has_same_day_discharge"], "discharge_same_day_cfs"].isna().all()
         # Flow permanence: DOWN and D1 perennial; OLD's reach has no FCode.
         assert (down["station_flow_permanence"] == "perennial").all()
         assert (down["dam_flow_permanence"] == "perennial").all()

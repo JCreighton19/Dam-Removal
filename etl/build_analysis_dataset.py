@@ -45,9 +45,12 @@ Added 2026-10-23 (spec 3.11, "Exposure and quality flags")
 7. Exposure: every row keeps its dam (rule A), and exposure_status says
    whether the measurement is assigned to this dam as its nearest upstream
    removal in space and time (measurement_exposure view). Filter
-   exposure_status IN ('assigned_sole', 'assigned_nearest') for one
-   exposure per measurement. Competing or unresolved cases are flagged,
-   not forced; other_removals_in_window lists the other removals for audit.
+   exposure_status IN build_views.ASSIGNED_STATUSES ('assigned_sole',
+   'assigned_nearest', 'assigned_overlapping') for one exposure per
+   measurement. Ties and unknown distances are flagged, not forced;
+   other_removals_in_window lists the other removals for audit. (Before
+   2026-11-02 a removal overlapping in time made the measurement
+   competing_timing, unassigned; it is now assigned_overlapping.)
    An assignment is not evidence that the removal caused a change.
 8. Station flags (station_qc view) and the drainage-area flag are carried,
    not applied. upstream_area_km2 is null unless drainage_area_flag = 'ok',
@@ -75,6 +78,12 @@ Added 2026-11-02
    is intermittent or ephemeral; null when a code is unknown) come from the
    link_features view. Carried, not applied; the mixed model excludes
    qc_non_perennial rows by default (perennial streams as the main analysis).
+14. discharge_same_day_cfs: median discharge (wq_measurement parameter
+   discharge, measured with a sample) at the same station on the sample's
+   day, and has_same_day_discharge. Suspended sediment means little without
+   the flow it was carried by (advisor, 2026-11-02), so the mixed model
+   keeps SSC / TSS rows only where it is known; it is also a flow covariate
+   for any parameter. Discrete WQP flows only, not continuous gauge records.
 """
 
 from __future__ import annotations
@@ -88,7 +97,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import duckdb
 
 from etl.build_daily_measurements import daily_ids
-from etl.build_views import add_view
+from etl.build_views import ASSIGNED_STATUSES, add_view
 from etl.common.config import default_case_study, load_config
 from etl.common.io import require_file
 from etl.common.warehouse import (DERIVED_TABLES, schema_errors, stale_reference_errors,
@@ -97,7 +106,7 @@ from etl.common.warehouse import (DERIVED_TABLES, schema_errors, stale_reference
 REQUIRED_TABLES = ["station_watershed", "land_cover", "land_cover_codes", "climate"]
 
 EXPOSURE_STATUSES = [
-    "assigned_sole", "assigned_nearest", "assigned_to_other_removal", "competing_timing",
+    "assigned_sole", "assigned_nearest", "assigned_overlapping", "assigned_to_other_removal",
     "competing_distance", "unresolved_distance_unknown", "upstream_control",
     "upstream_control_exposed", "unresolved_side",
 ]
@@ -143,6 +152,9 @@ SCHEMA = {
     "method_id": "string",
     "detection_limit": "float64",
     "detection_limit_unit": "string",
+    # Flow on the sample's day (choice 14)
+    "discharge_same_day_cfs": "float64",
+    "has_same_day_discharge": "bool",
     # Dam
     "dam_name": "string",
     "river": "string",
@@ -211,6 +223,13 @@ land_groups AS (
     JOIN land_cover_codes c USING (class_code)
     GROUP BY ALL
 ),
+-- Choice 14: discharge measured at the station on the sample's day.
+discharge_day AS (
+    SELECT station_id, sample_date, median(result_value_std) AS discharge_cfs
+    FROM wq_measurement
+    WHERE parameter_std = 'discharge' AND NOT is_censored
+    GROUP BY station_id, sample_date
+),
 -- Choice 4: last NLCD year before removal, else the nearest one.
 baseline AS (
     SELECT p.AR_ID, p.station_id, g.year AS land_cover_year
@@ -270,6 +289,8 @@ SELECT
     m.method_id,
     m.detection_limit,
     m.detection_limit_unit,
+    q_day.discharge_cfs AS discharge_same_day_cfs,
+    q_day.discharge_cfs IS NOT NULL AS has_same_day_discharge,
     r.dam_name,
     d.River AS river,
     d.State AS state,
@@ -304,6 +325,7 @@ LEFT JOIN link_features lf ON lf.AR_ID = r.AR_ID AND lf.station_id = r.station_i
 LEFT JOIN measurement_exposure e ON e.measurement_id = r.measurement_id
 LEFT JOIN pair_competing_removals pc ON pc.AR_ID = r.AR_ID AND pc.station_id = r.station_id
 LEFT JOIN station_qc q ON q.station_id = r.station_id
+LEFT JOIN discharge_day q_day ON q_day.station_id = r.station_id AND q_day.sample_date = r.sample_date
 LEFT JOIN station_watershed sw ON sw.station_id = r.station_id
 LEFT JOIN climate c
        ON c.station_id = r.station_id
@@ -381,7 +403,7 @@ def validate(table, expected_rows, daily_ids_written):
         errors.append(f"unexpected exposure_status values {bad}")
     if table["exposure_status"].isna().any():
         errors.append("null exposure_status")
-    assigned = table["exposure_status"].isin(["assigned_sole", "assigned_nearest"])
+    assigned = table["exposure_status"].isin(ASSIGNED_STATUSES)
     if (table.loc[assigned, "assigned_AR_ID"] != table.loc[assigned, "AR_ID"]).any():
         errors.append("assigned rows whose assigned_AR_ID differs from AR_ID")
     if (table.loc[assigned].duplicated("measurement_id")).any():
@@ -481,6 +503,11 @@ def main():
     flagged = pairs[pairs["qc_non_perennial"].fillna(False).astype(bool)]
     print(f"  qc_non_perennial pairs: {len(flagged):,} ({flagged['AR_ID'].nunique()} dams); "
           f"rows: {int(table['qc_non_perennial'].fillna(False).sum()):,}")
+    with_flow = table.groupby("parameter_std")["has_same_day_discharge"].agg(["size", "sum"])
+    with_flow = with_flow[with_flow["sum"] > 0].rename(columns={"size": "rows",
+                                                                 "sum": "with_same_day_discharge"})
+    print("\nRows with discharge measured the same day (parameters that have any):")
+    print(with_flow.to_string() if len(with_flow) else "  none")
     print("\nDrainage area flags (rows):")
     print(table["drainage_area_flag"].value_counts(dropna=False).to_string())
 

@@ -173,23 +173,27 @@ def test_thresholds_and_rollups():
 # Exposure scenarios (window 5 years each side). Distances in km.
 #   ST_SOLE  below A only                                     -> assigned_sole
 #   ST_NEAR  below A (1 km, 2010) and F (10 km, 2017)          -> 2013: assigned_nearest A
-#   ST_DIST  below A (1 km, 2010) and G (1.5 km, 2018)         -> 2014: competing_distance
-#   ST_TIME  below A (1 km, 2010) and H (20 km, 2012)          -> competing_timing
+#   ST_DIST  below A (1 km, 2010) and G (1.5 km, 2018)         -> 2014: assigned_nearest A
+#            (competing_distance with min_distance_ratio 2)
+#   ST_TIE   below A (1 km, 2010) and G (1 km, 2018)           -> 2014: competing_distance
+#   ST_TIME  below A (1 km, 2010) and H (20 km, 2012)          -> assigned_overlapping A
 EXPOSURE_LINKS = [
     ("A", "ST_SOLE", 1.0), ("A", "ST_NEAR", 1.0), ("F", "ST_NEAR", 10.0),
-    ("A", "ST_DIST", 1.0), ("G", "ST_DIST", 1.5), ("A", "ST_TIME", 1.0), ("H", "ST_TIME", 20.0),
+    ("A", "ST_DIST", 1.0), ("G", "ST_DIST", 1.5), ("A", "ST_TIE", 1.0), ("G", "ST_TIE", 1.0),
+    ("A", "ST_TIME", 1.0), ("H", "ST_TIME", 20.0),
 ]
 EXPOSURE_YEARS = {"A": 2010, "F": 2017, "G": 2018, "H": 2012}
 
 
-def build_exposure(directory):
+def build_exposure(directory, **settings):
     dams = _with_reach(pd.DataFrame({
         "AR_ID": list(EXPOSURE_YEARS), "Dam_Name": list(EXPOSURE_YEARS),
         "Year_Removed": pd.array(list(EXPOSURE_YEARS.values()), dtype="Int16"),
         "snap_fraction": 0.5,
     }))
     stations = _with_qc(pd.DataFrame({
-        "station_id": ["ST_SOLE", "ST_NEAR", "ST_DIST", "ST_TIME"], "snap_fraction": 0.5}))
+        "station_id": ["ST_SOLE", "ST_NEAR", "ST_DIST", "ST_TIE", "ST_TIME"],
+        "snap_fraction": 0.5}))
     links = pd.DataFrame(EXPOSURE_LINKS, columns=["AR_ID", "station_id", "network_distance_km"])
     links["relationship"] = "downstream"
     measurements = _measurements([
@@ -197,6 +201,7 @@ def build_exposure(directory):
         ("ST_NEAR", 2013, "water_temp", 10.0), ("ST_NEAR", 2008, "water_temp", 10.0),
         ("ST_NEAR", 2020, "water_temp", 10.0),
         ("ST_DIST", 2014, "water_temp", 10.0),
+        ("ST_TIE", 2014, "water_temp", 10.0),
         ("ST_TIME", 2008, "water_temp", 10.0),
         # Saline: median 4500 > 3000. ST_NEAR is fresh; the others have no conductance.
         ("ST_SOLE", 2012, "specific_conductance", 4000.0),
@@ -214,29 +219,39 @@ def build_exposure(directory):
         frame.to_parquet(directory / f"{name}.parquet", index=False)
     db_path = directory / "warehouse.duckdb"
     bv.build_database(db_path, directory, years_before=5, years_after=5,
-                      min_samples=1, min_years=1)
+                      min_samples=1, min_years=1, **settings)
     return duckdb.connect(str(db_path), read_only=True)
 
 
-def test_exposure_assignment():
-    with tempfile.TemporaryDirectory() as tmp, build_exposure(Path(tmp)) as con:
+def _exposure(**settings):
+    with tempfile.TemporaryDirectory() as tmp, build_exposure(Path(tmp), **settings) as con:
         exposure = con.sql("""
             SELECT station_id, year(m.sample_date) AS year, e.exposure_status, e.assigned_AR_ID,
                    e.nearest_AR_ID, e.next_AR_ID
             FROM measurement_exposure e JOIN wq_measurement m USING (measurement_id, station_id)
             WHERE m.parameter_std = 'water_temp'
         """).df()
-    got = {(r.station_id, r.year): (r.exposure_status, None if pd.isna(r.assigned_AR_ID)
-                                    else r.assigned_AR_ID, r.nearest_AR_ID)
-           for r in exposure.itertuples()}
-    assert got == {
+    return {(r.station_id, r.year): (r.exposure_status, None if pd.isna(r.assigned_AR_ID)
+                                     else r.assigned_AR_ID, r.nearest_AR_ID)
+            for r in exposure.itertuples()}
+
+
+def test_exposure_assignment():
+    assert _exposure() == {
         ("ST_SOLE", 2012): ("assigned_sole", "A", "A"),
         ("ST_NEAR", 2013): ("assigned_nearest", "A", "A"),   # F is 10x as far
         ("ST_NEAR", 2008): ("assigned_sole", "A", "A"),      # outside F's window
         ("ST_NEAR", 2020): ("assigned_sole", "F", "F"),      # outside A's window
-        ("ST_DIST", 2014): ("competing_distance", None, "A"),
-        ("ST_TIME", 2008): ("competing_timing", None, "A"),  # H removed inside A's window
+        ("ST_DIST", 2014): ("assigned_nearest", "A", "A"),   # nearer wins (ratio 1)
+        ("ST_TIE", 2014): ("competing_distance", None, "A"),  # exact tie
+        ("ST_TIME", 2008): ("assigned_overlapping", "A", "A"),  # H removed inside A's window
     }
+
+
+def test_exposure_distance_ratio_from_settings():
+    got = _exposure(min_distance_ratio=2)
+    assert got[("ST_DIST", 2014)] == ("competing_distance", None, "A")  # 1.5 km <= 2 x 1 km
+    assert got[("ST_NEAR", 2013)] == ("assigned_nearest", "A", "A")
 
 
 def test_pair_competing_removals_lists_other_removals():

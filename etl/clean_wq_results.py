@@ -236,6 +236,9 @@ def _print_counts(title, series, limit=20):
 
 def apply_filters(df, station_ids, log):
     """Scope to mapped parameters and known stations, then filters 1-8 (3.6.2)."""
+    _print_counts("Most common characteristics not in the 3.6.1 mapping (dropped)",
+                  df.loc[~df["CharacteristicName"].isin(rules.PARAMETERS), "CharacteristicName"],
+                  limit=25)
     df = log.drop(df, ~df["CharacteristicName"].isin(rules.PARAMETERS),
                   "Parameter not in the 3.6.1 mapping")
     df = log.drop(df, ~df["MonitoringLocationIdentifier"].str.strip().isin(station_ids),

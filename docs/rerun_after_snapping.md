@@ -103,5 +103,5 @@ What to expect in the logs:
 ## 6. After the run
 
 - Re-run `notebooks/warehouse_qa.ipynb` and `notebooks/preprocessing_audit.ipynb` and compare with the backup.
-- One exposure per measurement: `WHERE exposure_status IN ('assigned_sole', 'assigned_nearest')`. Rows with `competing_*` or `unresolved_*` are flagged, not dropped. An assignment says which known removal is nearest upstream within the window; it is not evidence that the removal caused a change.
+- One exposure per measurement: `WHERE exposure_status IN ('assigned_sole', 'assigned_nearest', 'assigned_overlapping')` (since 2026-11-02; `assigned_overlapping` replaced `competing_timing`). Rows with `competing_distance` or `unresolved_*` are flagged, not dropped. An assignment says which known removal is nearest upstream within the window; it is not evidence that the removal caused a change.
 - Delete the backup once the new outputs are checked.

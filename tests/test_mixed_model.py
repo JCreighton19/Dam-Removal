@@ -25,7 +25,7 @@ def row(**kw):
             "sample_fraction_std": None, "side": "downstream", "period": "pre",
             "sample_date": "2010-06-01", "month": 6, "result_value_std": 10.0,
             "exposure_status": "assigned_sole", "upstream_in_former_reservoir": None,
-            "qc_non_perennial": False,
+            "qc_non_perennial": False, "has_same_day_discharge": False,
             "air_temp_mean_c": 20.0, "precip_prev_month_mm": 50.0}
     return {**base, **kw}
 
@@ -65,16 +65,20 @@ def simulate(n_dams=20, seed=0):
 def test_roles():
     df = pd.DataFrame([
         row(),                                                    # treated
-        row(exposure_status="competing_timing"),                  # excluded
+        row(exposure_status="competing_distance"),                # excluded: tie
         row(side="upstream", exposure_status="upstream_control"),  # control
         row(side="upstream", exposure_status="upstream_control",
             upstream_in_former_reservoir=True),                   # excluded: in reservoir
         row(side="upstream", exposure_status="upstream_control_exposed"),  # excluded
+        row(exposure_status="assigned_overlapping"),              # treated
     ])
     assert mm.assign_roles(df, SETTINGS).tolist() == [
-        "treated", "excluded", "control", "excluded", "excluded"]
+        "treated", "excluded", "control", "excluded", "excluded", "treated"]
     kept = mm.assign_roles(df, {**SETTINGS, "exclude_former_reservoir": False})
     assert kept.tolist()[3] == "control"
+    strict = mm.assign_roles(df, {**SETTINGS, "treated_exposure": ["assigned_sole",
+                                                                  "assigned_nearest"]})
+    assert strict.tolist()[5] == "excluded"
 
 
 def test_non_perennial_excluded_by_default():
@@ -89,6 +93,19 @@ def test_non_perennial_excluded_by_default():
         "treated", "excluded", "treated", "excluded"]
     kept = mm.assign_roles(df, {**SETTINGS, "exclude_flags": []})
     assert kept.tolist() == ["treated", "treated", "treated", "control"]
+
+
+def test_ssc_needs_same_day_discharge():
+    df = pd.DataFrame([
+        row(parameter_std="ssc", has_same_day_discharge=True),   # treated
+        row(parameter_std="ssc"),                                # excluded: no flow that day
+        row(parameter_std="tss", has_same_day_discharge=None),   # excluded: unknown
+        row(),                                                   # water_temp: not required
+    ])
+    assert mm.assign_roles(df, SETTINGS).tolist() == [
+        "treated", "excluded", "excluded", "treated"]
+    kept = mm.assign_roles(df, {**SETTINGS, "require_same_day_discharge": []})
+    assert kept.tolist() == ["treated"] * 4
 
 
 def test_daily_collapse_and_log_scale():

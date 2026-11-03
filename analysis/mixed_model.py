@@ -17,7 +17,8 @@ Design
 ------
 1. Roles, as in notebooks/analysis_robustness.ipynb:
    - treated: downstream, and this dam is the measurement's assigned
-     removal (exposure_status assigned_sole / assigned_nearest);
+     removal (exposure_status assigned_sole / assigned_nearest /
+     assigned_overlapping);
    - control: upstream of this dam, not downstream of another removal in
      its window (upstream_control), not possibly in the former reservoir.
    Every other row is left out.
@@ -72,13 +73,17 @@ from etl.common.config import default_case_study, get_project_root
 SETTINGS = {
     # Series (parameter, or "parameter (fraction)") to model.
     "series": ["water_temp", "dissolved_oxygen", "ph", "specific_conductance", "turbidity",
-               "phosphorus (Total)", "orthophosphate (Dissolved)", "tds"],
+               "phosphorus (Total)", "orthophosphate (Dissolved)", "tds", "ssc", "tss"],
     # Modeled as log10 (values clipped at LOG_FLOOR first).
     "log_parameters": ["turbidity", "specific_conductance", "nitrate", "ammonia",
-                       "orthophosphate", "phosphorus", "tds"],
+                       "orthophosphate", "phosphorus", "tds", "ssc", "tss", "discharge"],
     "log_floor": 1e-3,
     # Roles (design 1).
-    "treated_exposure": ["assigned_sole", "assigned_nearest"],
+    # assigned_overlapping: nearest removal, but another upstream removal
+    # falls inside its window (advisor, 2026-11-02: keep such stations,
+    # associate them with the closest removal). Remove it for the
+    # sensitivity check without them.
+    "treated_exposure": ["assigned_sole", "assigned_nearest", "assigned_overlapping"],
     "control_exposure": ["upstream_control"],
     "exclude_former_reservoir": True,
     # Boolean flag columns whose true rows are dropped, e.g. ["qc_saline"].
@@ -86,6 +91,10 @@ SETTINGS = {
     # ephemeral in NHD; perennial streams are the main analysis (advisor,
     # 2026-11-02). Unknown permanence (null) is kept. Set [] to include them.
     "exclude_flags": ["qc_non_perennial"],
+    # Parameters kept only on days with discharge measured at the station
+    # (has_same_day_discharge): suspended sediment needs the flow it was
+    # carried by to be interpreted (advisor, 2026-11-02). [] keeps them all.
+    "require_same_day_discharge": ["ssc", "tss"],
     # Continuous covariates, standardized (mean 0, SD 1) within each fit.
     # Rows missing any of them are dropped (counted in rows_dropped_missing).
     "covariates": ["air_temp_mean_c", "precip_prev_month_mm"],
@@ -112,7 +121,9 @@ def read_measurements(path, settings=SETTINGS):
     """analysis_measurement (.parquet or .csv), only the columns the model uses."""
     path = Path(path)
     columns = list(dict.fromkeys(REQUIRED_COLUMNS + settings["covariates"]
-                                 + settings["exclude_flags"]))
+                                 + settings["exclude_flags"]
+                                 + (["has_same_day_discharge"]
+                                    if settings.get("require_same_day_discharge") else [])))
     if path.suffix == ".parquet":
         df = pd.read_parquet(path)
     else:
@@ -137,6 +148,9 @@ def assign_roles(df, settings=SETTINGS):
     flagged = pd.Series(False, index=df.index)
     for flag in settings["exclude_flags"]:
         flagged |= df[flag].fillna(False).astype(bool)
+    if needs_flow := settings.get("require_same_day_discharge"):
+        flagged |= (df["parameter_std"].isin(needs_flow)
+                    & ~df["has_same_day_discharge"].fillna(False).astype(bool))
     treated = (df["side"] == "downstream") & df["exposure_status"].isin(settings["treated_exposure"])
     control = ((df["side"] == "upstream") & df["exposure_status"].isin(settings["control_exposure"])
                & ~in_reservoir)

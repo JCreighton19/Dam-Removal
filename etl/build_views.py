@@ -47,7 +47,7 @@ Thresholds come from the config's optional `eligibility` block
 (min_samples, min_years per side; defaults 3 and 2), the window from
 `wq_window`, the saline threshold from `qc: {saline_sc_us_cm}` (default
 3000) and the exposure settings from `exposure:` -- min_distance_ratio
-(default 2), and max_downstream_km / max_upstream_km, the farthest a station
+(default 1), and max_downstream_km / max_upstream_km, the farthest a station
 can be from a dam along the network to be linked to it (default: no limit;
 docs/warehouse_spec.md section 5, "Link distance limits"). dam_station_link
 itself stays complete. Change them and re-run this script; the stages after
@@ -92,9 +92,20 @@ DEFAULT_MIN_YEARS = 2
 # saline; fresh water is usually well under 1,500 (preprocessing audit).
 DEFAULT_SALINE_SC = 3000
 # A measurement is assigned to its nearest upstream removal only if the
-# next one is more than this many times as far (preprocessing audit,
-# section 9).
-DEFAULT_MIN_DISTANCE_RATIO = 2.0
+# next one is more than this many times as far. 1 (since 2026-11-02): the
+# nearest wins whenever it is strictly nearer; only exact ties stay
+# competing_distance (advisor: associate a station below several removals
+# with the closest one upstream rather than excluding it). The
+# preprocessing audit (section 9) used 2; set exposure.min_distance_ratio: 2
+# in the config to go back.
+DEFAULT_MIN_DISTANCE_RATIO = 1.0
+
+# exposure_status values that assign a measurement to one removal
+# (measurement_exposure). assigned_overlapping: the nearest removal, but
+# another removal upstream of the station also falls inside its window, so
+# its before/after contrast may include that removal's effects; drop it from
+# a model's treated statuses for a sensitivity check.
+ASSIGNED_STATUSES = ("assigned_sole", "assigned_nearest", "assigned_overlapping")
 # Farthest a station can be from a dam (network km) to be linked to it. None
 # links every connected station (the behavior before 2026-10-26).
 DEFAULT_MAX_DOWNSTREAM_KM = None
@@ -317,9 +328,10 @@ GROUP BY p.AR_ID, p.station_id;
 
 -- Candidates: removals upstream of the measurement's station whose window
 -- (removal year +/- wq_window) holds the sample year. The nearest by
--- network distance is assigned unless another upstream removal falls in
--- its window (competing_timing), the next is not clearly farther
--- (competing_distance), or a distance is unknown.
+-- network distance is assigned unless the next is not clearly farther
+-- (competing_distance) or a distance is unknown. When another upstream
+-- removal falls inside the nearest one's window (timing_conflict), the
+-- measurement is still assigned, as assigned_overlapping.
 CREATE VIEW measurement_exposure AS
 WITH candidates AS (
     SELECT
@@ -346,15 +358,16 @@ SELECT
     n.*,
     p.n_other_upstream_removals_in_window > 0 AS timing_conflict,
     CASE
-        WHEN p.n_other_upstream_removals_in_window > 0 THEN 'competing_timing'
         WHEN n.n_candidates = 1 THEN 'assigned_sole'
         WHEN n.nearest_distance_km IS NULL OR n.next_distance_km IS NULL
             THEN 'unresolved_distance_unknown'
         WHEN n.next_distance_km <= q.exposure_min_distance_ratio * n.nearest_distance_km
             THEN 'competing_distance'
         ELSE 'assigned_nearest'
-    END AS exposure_status,
-    CASE WHEN exposure_status IN ('assigned_sole', 'assigned_nearest')
+    END AS distance_status,
+    CASE WHEN timing_conflict AND distance_status IN ('assigned_sole', 'assigned_nearest')
+         THEN 'assigned_overlapping' ELSE distance_status END AS exposure_status,
+    CASE WHEN exposure_status IN __ASSIGNED__
          THEN n.nearest_AR_ID END AS assigned_AR_ID
 FROM nearest n
 JOIN pair_competing_removals p ON p.AR_ID = n.nearest_AR_ID AND p.station_id = n.station_id
@@ -386,6 +399,7 @@ EXPOSURE_QC_VIEWS = (
     .replace("__STATION_PERMANENCE__", flow_permanence_sql("station_reach_fcode"))
     .replace("__DAM_PERMANENCE__", flow_permanence_sql("dam_reach_fcode"))
     .replace("__NON_PERENNIAL__", "(" + ", ".join(f"'{v}'" for v in NON_PERENNIAL) + ")")
+    .replace("__ASSIGNED__", "(" + ", ".join(f"'{v}'" for v in ASSIGNED_STATUSES) + ")")
 )
 
 
