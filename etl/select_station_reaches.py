@@ -88,9 +88,19 @@ def place_on_reaches(points, decisions, candidates, gdb_path):
     lon, lat = points["LongitudeMeasure"], points["LatitudeMeasure"]
     bbox = (lon.min() - BBOX_MARGIN_DEG, lat.min() - BBOX_MARGIN_DEG,
             lon.max() + BBOX_MARGIN_DEG, lat.max() + BBOX_MARGIN_DEG)
-    lines = read_layer(gdb_path, "NHDFlowline", ["NHDPlusID", "FType", "GNIS_Name"], bbox)
-    lines["NHDPlusID"] = wf.clean_nhdplus_id(lines["NHDPlusID"])
-    lines = lines.dropna(subset=["NHDPlusID"]).drop_duplicates("NHDPlusID").set_index("NHDPlusID")
+    def flowlines(**where):
+        found = read_layer(gdb_path, "NHDFlowline", ["NHDPlusID", "FType", "GNIS_Name"], **where)
+        found["NHDPlusID"] = wf.clean_nhdplus_id(found["NHDPlusID"])
+        return found.dropna(subset=["NHDPlusID"])
+
+    lines = flowlines(bbox=bbox)
+    # Stage 2 reads the whole HUC8, so a reach chosen through a large water
+    # polygon (e.g. Great Lakes open water) can lie outside the stations'
+    # bbox; read those by ID.
+    outside = sorted(set(chosen) - set(lines["NHDPlusID"]))
+    if outside:
+        lines = pd.concat([lines, flowlines(nhdplus_ids=outside).to_crs(lines.crs)])
+    lines = lines.drop_duplicates("NHDPlusID").set_index("NHDPlusID")
     missing = sorted(set(chosen) - set(lines.index))
     if missing:
         raise ValueError(f"Chosen or override reach(es) not in {gdb_path.name} near the "

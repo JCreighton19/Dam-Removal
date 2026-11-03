@@ -76,15 +76,19 @@ def _layer_names(path):
     return {str(name).lower(): str(name) for name, _ in pyogrio.list_layers(path)}
 
 
-def read_layer(path, layer, columns, bbox=None, geometry=True):
+def read_layer(path, layer, columns, bbox=None, geometry=True, nhdplus_ids=None):
     """The columns of `layer` that exist, named as requested whatever
     their case in the package (missing ones added as NA), clipped to bbox
-    (layer CRS) when given."""
+    (layer CRS) when given, and limited to these NHDPlusIDs when given."""
     name = _layer_names(path).get(layer.lower())
     if name is None:
         return None
     fields = {str(f).lower(): str(f) for f in pyogrio.read_info(path, layer=name)["fields"]}
-    frame = pyogrio.read_dataframe(path, layer=name, bbox=bbox, read_geometry=geometry,
+    where = None
+    if nhdplus_ids is not None:
+        id_list = ", ".join(str(int(i)) for i in nhdplus_ids)
+        where = f'"{fields["nhdplusid"]}" IN ({id_list})'
+    frame = pyogrio.read_dataframe(path, layer=name, bbox=bbox, read_geometry=geometry, where=where,
                                    columns=[fields[c.lower()] for c in columns
                                             if c.lower() in fields])
     frame = normalize_nhdplus_columns(frame).rename(
