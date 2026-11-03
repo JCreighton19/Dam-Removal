@@ -68,6 +68,8 @@ The case study is set in `data/slurm/case_study.env`: `PILOT_N_DAMS=all` runs ev
 
 **8-hour job limit.** Stages that resume where they stopped (downloads, unzipping, and the per-HUC8 snap/link stages) are submitted as several attempts; each extra attempt picks up after a time-out and finishes in minutes if there's nothing left (`--list` shows the counts). HUC8s with no NHDPlus HR coverage are skipped with a warning and left out of later stages. If a stage fails, every later job in the chain is cancelled.
 
+**Speeding up a queued `match_dams` / `link_reaches`.** Their attempts run the HUC8s one at a time (~3 min each nationally). `bash data/slurm/parallel_huc8.sh --stage match_dams --after <last attempt> --next <next stage's first job> --dry-run` plans side jobs that run the end of the HUC8 list in parallel, plus a final attempt the next stage then waits for; drop `--dry-run` to submit. See the top of the script for the options.
+
 **Re-runs overwrite, downloads are reused.** Submitting a stage clears its progress markers, so it recomputes every HUC8 and replaces its outputs in place (snapped features, links, warehouse tables), with no automatic backup; back up first (see the runbook below). The download stages are the exception: `download_wqp_results`, `download_nlcd` and `download_climate` fetch only what isn't already on disk.
 
 **Don't hold `warehouse.duckdb` open while the chain runs.** Several stages (`build_views`, `build_station_watershed`, the land-cover and climate loads) write to it, and DuckDB refuses the write if another process, such as a notebook, has the file open, even read-only. In notebooks, read the Parquet files directly or open the database only inside a `with` block.

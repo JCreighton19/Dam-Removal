@@ -99,6 +99,36 @@ def read_layer(path, layer, columns, bbox=None, geometry=True, nhdplus_ids=None)
     return frame
 
 
+_package_tables_cache = {"key": None, "value": None}
+
+
+def package_tables(gdb_path):
+    """The package's whole flowline VAA table (NHDPlusID, TotDASqKm,
+    divergence; None if missing) and flow table. They have no geometry, so
+    a bbox can't clip them and each read covers the whole package (an HU4).
+    Consecutive HUC8s usually share a package, so the last one read is kept
+    (keyed by path, size and modification time) instead of re-reading it
+    for every HUC8."""
+    stat = Path(gdb_path).stat()
+    key = (str(Path(gdb_path).resolve()), stat.st_size, stat.st_mtime_ns)
+    if _package_tables_cache["key"] != key:
+        _package_tables_cache["key"] = _package_tables_cache["value"] = None  # free the old one
+        vaa = read_layer(gdb_path, "NHDPlusFlowlineVAA", ["NHDPlusID", "TotDASqKm", "Divergence"],
+                         geometry=False)
+        if vaa is not None:
+            vaa = pd.DataFrame({"NHDPlusID": wf.clean_nhdplus_id(vaa["NHDPlusID"]),
+                                "TotDASqKm": vaa["TotDASqKm"],
+                                # 0 none, 1 main path, 2 minor path of a divergence
+                                "divergence": pd.to_numeric(vaa["Divergence"], errors="coerce")
+                                }).drop_duplicates("NHDPlusID")
+        flow = pd.DataFrame(read_layer(gdb_path, "NHDPlusFlow", ["FromNHDPID", "ToNHDPID"],
+                                       geometry=False))
+        _package_tables_cache.update(key=key, value=(vaa, flow))
+    vaa, flow = _package_tables_cache["value"]
+    # Copies, so a caller changing them can't change the kept tables.
+    return (None if vaa is None else vaa.copy()), flow.copy()
+
+
 def load_package(gdb_path, bbox):
     """Flowlines (with drainage area and their water polygon), water
     polygons, catchments and the flow table near bbox."""
@@ -110,14 +140,8 @@ def load_package(gdb_path, bbox):
     flowlines["NHDPlusID"] = wf.clean_nhdplus_id(flowlines["NHDPlusID"])
     flowlines["FType"] = pd.to_numeric(flowlines["FType"], errors="coerce")
     flowlines = flowlines.dropna(subset=["NHDPlusID"]).drop_duplicates("NHDPlusID")
-    vaa = read_layer(gdb_path, "NHDPlusFlowlineVAA", ["NHDPlusID", "TotDASqKm", "Divergence"],
-                     geometry=False)
+    vaa, flow = package_tables(gdb_path)
     if vaa is not None:
-        vaa = pd.DataFrame({"NHDPlusID": wf.clean_nhdplus_id(vaa["NHDPlusID"]),
-                            "TotDASqKm": vaa["TotDASqKm"],
-                            # 0 none, 1 main path, 2 minor path of a divergence
-                            "divergence": pd.to_numeric(vaa["Divergence"], errors="coerce")
-                            }).drop_duplicates("NHDPlusID")
         flowlines = flowlines.merge(vaa, on="NHDPlusID", how="left")
     else:
         flowlines["TotDASqKm"] = pd.NA
@@ -154,8 +178,7 @@ def load_package(gdb_path, bbox):
         "catchment_id": wf.clean_nhdplus_id(catchments["NHDPlusID"]),
         "sourcefc": catchments["SourceFC"].astype("string").str.strip().str.lower(),
     }, geometry=catchments.geometry.values, crs=catchments.crs)
-    flow = read_layer(gdb_path, "NHDPlusFlow", ["FromNHDPID", "ToNHDPID"], geometry=False)
-    return flowlines, polygons, catchments, pd.DataFrame(flow), water
+    return flowlines, polygons, catchments, flow, water
 
 
 # --------------------------------------------------

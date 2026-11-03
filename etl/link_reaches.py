@@ -348,7 +348,10 @@ def main():
     done = set(progress.start(huc8s, args.resume))
     all_links, all_comparisons, all_digitized, counts, failed = [], [], [], [], []
     for number, huc8 in enumerate(huc8s, start=1):
-        if huc8 in done:
+        # With --resume the marker is checked again here too, so a HUC8 that a
+        # parallel job (data/slurm/parallel_huc8.sh) finished after this run started
+        # is not recomputed.
+        if huc8 in done or (args.resume and progress.done(huc8)):
             saved = read_saved(output_dir, huc8)
             if saved is not None:   # None: no dams or no stations
                 links, comparison, digitized = saved

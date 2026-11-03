@@ -220,7 +220,10 @@ def main():
     done = set(progress.start(huc8s, args.resume))
     results, all_outlets, failed = [], [], []
     for number, huc8 in enumerate(huc8s, start=1):
-        if huc8 in done:
+        # With --resume the marker is checked again here too, so a HUC8 that a
+        # parallel job (data/slurm/parallel_huc8.sh) finished after this run started
+        # is not recomputed.
+        if huc8 in done or (args.resume and progress.done(huc8)):
             path = output_dir / f"dam_reaches_{huc8}.parquet"
             if path.exists():   # no file: the HUC8 has no dams
                 results.append(pd.read_parquet(path))
