@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import geopandas as gpd
 import pandas as pd
 import pyogrio
-from shapely.geometry import LineString, box
+from shapely.geometry import LineString, Point, box
 
 from etl import match_dams as md
 from etl.common import dam_matching as dm
@@ -128,6 +128,33 @@ def test_split_ids_terminal_outlet():
     # attribute 'split'").
     assert dm._split_ids("12;13") == [12, 13]
     assert dm._split_ids(None) == [] and dm._split_ids(float("nan")) == []
+
+
+def test_huc8_where_no_dam_has_a_candidate():
+    # HUC8 04240002 (one dam, nothing within the search radius) failed with
+    # KeyError 'point_index': an empty candidate table has an object-dtype
+    # eligible_ftype, which pandas read as a column selection.
+    metric = "EPSG:32618"
+    points = gpd.GeoDataFrame({"AR_ID": ["D_LAKE"]}, geometry=[Point(500000, 5000000)],
+                              crs=metric)
+    flowlines = gpd.GeoDataFrame({
+        "NHDPlusID": [1], "GNIS_Name": ["Far River"], "FType": [460], "FCode": [46006],
+        "wbarea_id": [None], "totdasqkm": [10.0], "divergence": [0],
+        "path_polygon_layer": [None], "path_polygon_ftype": [None]},
+        geometry=[LineString([(520000, 5000000), (521000, 5000000)])], crs=metric)
+    polygons = gpd.GeoDataFrame({"permanent_id": pd.Series(dtype=str),
+                                 "polygon_layer": pd.Series(dtype=str),
+                                 "polygon_ftype": pd.Series(dtype="Int64"),
+                                 "polygon_fdate": pd.Series(dtype="datetime64[ns]")},
+                                geometry=[], crs=metric)
+    catchments = gpd.GeoDataFrame({"catchment_id": pd.Series(dtype="Int64"),
+                                   "sourcefc": pd.Series(dtype=str)}, geometry=[], crs=metric)
+    flow = pd.DataFrame({"FromNHDPID": [1.0], "ToNHDPID": [0.0]})
+    decisions, outlets, candidates = dm.match_dams(
+        points, flowlines, polygons, catchments, flow, {0: "Lake Brook"}, {0: 2010.0},
+        dm.DamRules())
+    assert candidates.empty and outlets.empty
+    assert len(decisions) == 1 and decisions.loc[0, "status"] == "rejected"
 
 
 def test_match_dams_end_to_end():

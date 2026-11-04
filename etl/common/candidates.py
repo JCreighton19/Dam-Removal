@@ -253,7 +253,9 @@ def _point_summary(points, in_polygon, in_catchment, candidates):
     out["point_catchment_sourcefc"] = catchment["sourcefc"].reindex(out.index)
     out["in_sink_catchment"] = (out["point_catchment_sourcefc"] == SINK_SOURCE).fillna(False)
     out["n_candidates"] = candidates.groupby("point_index").size().reindex(out.index, fill_value=0)
-    eligible = candidates[candidates["eligible_ftype"]]
+    # astype(bool): with no candidates at all the column is an empty object
+    # Series, which pandas would read as a column selection, not a filter.
+    eligible = candidates[candidates["eligible_ftype"].astype(bool)]
     out["n_eligible"] = eligible.groupby("point_index").size().reindex(out.index, fill_value=0)
     nearest = eligible.drop_duplicates("point_index").set_index("point_index")
     out["nearest_eligible_id"] = nearest["NHDPlusID"].reindex(out.index).astype("Int64")
