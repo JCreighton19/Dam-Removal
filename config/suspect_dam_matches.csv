@@ -1,0 +1,13 @@
+AR_ID,dam_name,river,state,dam_drainage_area_km2,max_drainage_area_ratio,evidence,status
+NJ-019,Calco Dam (Diffusion Weir),Raritan River,NJ,0.002,9633939,"On a large named river but matched reach drains 0.002 km2; stations 2.5 km downstream",likely_mismatch
+MN-037,Hickson Dam,Red River of the North,MN; ND,0.044,221643,"Mainstem dam on a reach draining 0.04 km2",likely_mismatch
+CT-023,Moosup Dam #1,Moosup River,CT,0.006,286092,"Named river dam on a reach draining 0.006 km2",likely_mismatch
+VT-039,Kidder Hill Dam,Saxtons River,VT,0.067,217869,"Named river dam on a reach draining 0.07 km2",likely_mismatch
+NC-018,Lassiter Mill Dam,Uwharrie River,NC,0.023,39596,"Named river dam on a reach draining 0.02 km2",likely_mismatch
+MD-011,Octoraro Dam,Octoraro Creek,MD,0.757,94012,"Creek draining hundreds of km2; matched reach drains 0.76 km2",likely_mismatch
+OH-091,Lowellville Dam,Mahoning River,OH,0.977,2865,"Station 0.38 km downstream drains ~2,800 km2; dam reach 0.98 km2",likely_mismatch
+NC-020,Upper Swepsonville Dam (Puryear Dam),Haw River,NC,1.285,2039,"Haw River dam on a reach draining 1.3 km2",likely_mismatch
+CA-174,Grenada Irrigation District Dam,Shasta River,CA,0.195,6306,"Shasta River dam on a reach draining 0.2 km2",likely_mismatch
+CT-035,Norton Paper Mill Dam,Jeremy River,CT,0.140,1856,"Jeremy River dam on a reach draining 0.14 km2",likely_mismatch
+OH-048,German Farm Dam,Auglaize River,OH,0.241,3556,"Named river dam on a reach draining 0.24 km2; less certain",possible_mismatch
+PA-254,Castleview Lower Dam,Shenango River,PA,1.324,1546,"Named river dam on a reach draining 1.3 km2; less certain",possible_mismatch

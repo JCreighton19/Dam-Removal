@@ -53,6 +53,10 @@ Design
 5. Confidence intervals use a t distribution with dams - 1 degrees of
    freedom, since the dams are the independent units.
 
+Distance and reservoir-size models (Stage 3, 2026-11-05) are in
+analysis/distance_models.py, which reuses these roles and daily values;
+the two models here are unchanged.
+
 Changing the model
 ------------------
 Everything a design change should touch is in SETTINGS below (roles,
@@ -113,6 +117,9 @@ SETTINGS = {
     # treated row in the warehouse window. A modeling restriction only: it
     # never changes station-to-dam assignment or exposure status.
     "max_downstream_km": 10,
+    # Extra pair-level columns carried through the daily collapse (design 2)
+    # for other analyses (analysis/distance_models.py); [] for these models.
+    "carry_columns": [],
 }
 
 REQUIRED_COLUMNS = ["AR_ID", "station_id", "parameter_std", "sample_fraction_std", "side",
@@ -137,6 +144,7 @@ def read_measurements(path, settings=SETTINGS):
                                  + (["network_distance_km"]
                                     if settings.get("max_downstream_km") is not None else [])
                                  + settings["exclude_flags"]
+                                 + settings.get("carry_columns", [])
                                  + (["has_same_day_discharge"]
                                     if settings.get("require_same_day_discharge") else [])))
     if path.suffix == ".parquet":
@@ -189,7 +197,8 @@ def prepare(df, settings=SETTINGS):
                    log_scale=log)
 
     key = ["AR_ID", "station_id", "series", "sample_date"]
-    first = ["parameter_std", "role", "period", "month", "log_scale"] + settings["covariates"]
+    first = (["parameter_std", "role", "period", "month", "log_scale"] + settings["covariates"]
+             + [c for c in settings.get("carry_columns", []) if c not in key])
     daily = (df.groupby(key, as_index=False, sort=False)
              .agg(y=("y", "median"), **{c: (c, "first") for c in first}))
     daily["post"] = (daily["period"] == "post").astype(int)
