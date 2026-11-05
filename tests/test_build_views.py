@@ -301,6 +301,23 @@ def test_link_features():
     assert pd.isna(f.loc["DOWN", "upstream_in_former_reservoir"])  # downstream: not applicable
 
 
+def test_slope_at_nhdplus_minimum_gives_unknown_backwater():
+    # 10 ft on slope 1e-5 would be a 305 km "reservoir" swallowing UP (2 km).
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        write_tables(directory)
+        dams = pd.read_parquet(directory / "dam_removal.parquet")
+        dams["reach_slope"] = bv.MIN_BACKWATER_SLOPE
+        dams.to_parquet(directory / "dam_removal.parquet", index=False)
+        db_path = directory / "warehouse.duckdb"
+        bv.build_database(db_path, directory, years_before=5, years_after=5,
+                          min_samples=3, min_years=2)
+        with duckdb.connect(str(db_path), read_only=True) as con:
+            f = con.sql("SELECT * FROM link_features").df().set_index("station_id")
+    assert pd.isna(f.loc["UP", "backwater_km"])
+    assert pd.isna(f.loc["UP", "upstream_in_former_reservoir"])
+
+
 def test_flow_permanence():
     with tempfile.TemporaryDirectory() as tmp, build(Path(tmp)) as con:
         f = con.sql("SELECT * FROM link_features").df().set_index("station_id")

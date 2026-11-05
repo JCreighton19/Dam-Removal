@@ -127,6 +127,14 @@ FLOW_PERMANENCE = {
 }
 NON_PERENNIAL = ("intermittent", "ephemeral")
 
+# backwater_km (dam height / reach slope) needs a real slope. NHDPlus gives
+# flat or uncomputable reaches a minimum slope of 1e-5, which turns a 3 m dam
+# into a 300 km "reservoir" and marks every upstream control as inside it
+# (stage 1 audit, 2026-11-04: 212 of 1,777 dams, backwater up to 3,292 km).
+# Slopes at or below this are treated as unknown: backwater_km and
+# upstream_in_former_reservoir are null for those dams.
+MIN_BACKWATER_SLOPE = 1e-5
+
 
 def flow_permanence_sql(column):
     """SQL CASE mapping an FCode column to FLOW_PERMANENCE (null stays null)."""
@@ -272,7 +280,8 @@ EXPOSURE_QC_VIEWS = """
 -- backwater_km: rough reservoir length, dam height / reach slope; an
 -- upstream station within it may have been in the former reservoir, i.e.
 -- affected by the removal rather than a control (preprocessing audit,
--- section 6).
+-- section 6). Null when the slope is at the NHDPlus minimum
+-- (MIN_BACKWATER_SLOPE): the length is unknown, not huge.
 CREATE VIEW link_features AS
 WITH areas AS (
     SELECT
@@ -282,7 +291,8 @@ WITH areas AS (
         l.network_distance_km,
         CASE WHEN d.reach_totdasqkm > 0 THEN d.reach_totdasqkm END AS dam_drainage_area_km2,
         CASE WHEN s.reach_totdasqkm > 0 THEN s.reach_totdasqkm END AS station_drainage_area_km2,
-        d.Dam_Height_ft * 0.3048 / CASE WHEN d.reach_slope > 0 THEN d.reach_slope END / 1000
+        d.Dam_Height_ft * 0.3048
+            / CASE WHEN d.reach_slope > __MIN_BACKWATER_SLOPE__ THEN d.reach_slope END / 1000
             AS backwater_km,
         d.reach_feature_code AS dam_reach_fcode,
         s.reach_feature_code AS station_reach_fcode
@@ -400,6 +410,7 @@ EXPOSURE_QC_VIEWS = (
     .replace("__DAM_PERMANENCE__", flow_permanence_sql("dam_reach_fcode"))
     .replace("__NON_PERENNIAL__", "(" + ", ".join(f"'{v}'" for v in NON_PERENNIAL) + ")")
     .replace("__ASSIGNED__", "(" + ", ".join(f"'{v}'" for v in ASSIGNED_STATUSES) + ")")
+    .replace("__MIN_BACKWATER_SLOPE__", repr(MIN_BACKWATER_SLOPE))
 )
 
 

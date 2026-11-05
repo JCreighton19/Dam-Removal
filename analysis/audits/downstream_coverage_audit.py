@@ -57,7 +57,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import pandas as pd
 
 from analysis.audit_utils import connect, save_output, series_sql
-from etl.build_views import DEFAULT_MIN_SAMPLES, DEFAULT_MIN_YEARS
+from etl.build_views import DEFAULT_MIN_SAMPLES, DEFAULT_MIN_YEARS, MIN_BACKWATER_SLOPE
 from etl.common.config import default_case_study, load_config
 from etl.common.warehouse import warehouse_dir
 
@@ -83,7 +83,8 @@ def coverage_sql(max_upstream_km):
     return f"""
     WITH backwater AS (
         SELECT AR_ID,
-               Dam_Height_ft * 0.3048 / CASE WHEN reach_slope > 0 THEN reach_slope END / 1000
+               Dam_Height_ft * 0.3048
+                   / CASE WHEN reach_slope > {MIN_BACKWATER_SLOPE!r} THEN reach_slope END / 1000
                    AS backwater_km
         FROM dam_removal
     ),
