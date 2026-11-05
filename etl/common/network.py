@@ -8,7 +8,7 @@ graph from the exact same rules.
 Assumption carried over from both originals, and worth re-stating: this
 treats `FromNHDPID -> ToNHDPID` as the downstream direction. That was
 spot-checked visually against mapped flow direction in
-`notebooks/stream_network_exploration.ipynb`; it has not been validated
+`notebooks/exploration/stream_network_exploration.ipynb`; it has not been validated
 against the official NHDPlus documentation.
 """
 

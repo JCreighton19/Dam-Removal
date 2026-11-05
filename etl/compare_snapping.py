@@ -17,7 +17,7 @@ does) and the new decision (snap_diagnostics_<huc8>.csv):
 
 Known failures, with what the new run decided for each:
 - KNOWN_WRONG_STATIONS: confirmed on the wrong reach on the audit map
-  (notebooks/preprocessing_audit.ipynb, section 14);
+  (notebooks/qa/preprocessing_audit.ipynb, section 14);
 - with --audit-dir: the audit's dam_snap_check.csv and
   station_snap_check.csv verdicts ('likely wrong', 'check').
 

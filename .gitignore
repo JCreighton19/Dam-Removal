@@ -2,7 +2,7 @@
 data/raw/
 
 # Local test notebook
-notebooks/local_eda.ipynb
+notebooks/analysis/local_eda.ipynb
 
 # Processed data: ignore everything except the HUC4 list
 data/processed/*

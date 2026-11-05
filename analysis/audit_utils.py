@@ -1,4 +1,4 @@
-"""Helpers for notebooks/preprocessing_audit.ipynb, a read-only data-quality audit.
+"""Helpers for notebooks/qa/preprocessing_audit.ipynb, a read-only data-quality audit.
 
 Nothing here writes to the warehouse:
 - connect() opens an in-memory DuckDB database whose views point at the

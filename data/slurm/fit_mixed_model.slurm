@@ -9,7 +9,7 @@
 # Fits the mixed-effects removal models (analysis/mixed_model.py) on
 # analysis_measurement and writes data/processed/mixed_model/<case_study>/
 # (read-only on the warehouse; run after build_analysis_dataset).
-# Results: notebooks/mixed_model_results.ipynb.
+# Results: notebooks/analysis/mixed_model_results.ipynb.
 
 set -euo pipefail
 

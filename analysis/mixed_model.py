@@ -2,7 +2,7 @@
 Mixed-effects models of the dam-removal effect, one fit per water-quality
 series (parameter + fraction), on analysis_measurement.
 
-Read by notebooks/mixed_model_results.ipynb. Nothing is written to the
+Read by notebooks/analysis/mixed_model_results.ipynb. Nothing is written to the
 warehouse; outputs go to data/processed/mixed_model/<case_study>/.
 
 Usage
@@ -15,7 +15,7 @@ Locally, on an exported CSV (data/slurm/export_analysis_csv.slurm):
 
 Design
 ------
-1. Roles, as in notebooks/analysis_robustness.ipynb:
+1. Roles, as in notebooks/analysis/analysis_robustness.ipynb:
    - treated: downstream, and this dam is the measurement's assigned
      removal (exposure_status assigned_sole / assigned_nearest /
      assigned_overlapping);
@@ -278,7 +278,7 @@ def fit_check(warning_text):
     """'ok', or 'check' when the Hessian isn't positive definite. That usually
     comes with a random-effect variance estimated at 0 (harmless: the effect
     doesn't vary that way), but the interval should then be compared with the
-    dam-bootstrap estimate of notebooks/analysis_robustness.ipynb."""
+    dam-bootstrap estimate of notebooks/analysis/analysis_robustness.ipynb."""
     return "check" if "Hessian" in warning_text else "ok"
 
 

@@ -30,7 +30,7 @@ wq_window:
 # section 5, "Link distance limits"). dam_station_link keeps every link;
 # these limit the ones eligibility, exposure and the analysis dataset use.
 # Small-dam effects are local (warming fades within ~1-2 km, Zaidel et al.
-# 2021), and the DAR sensitivity analysis (notebooks/dar_sensitivity.ipynb)
+# 2021), and the DAR sensitivity analysis (notebooks/qa/dar_sensitivity.ipynb)
 # found distance does nearly all the filtering. Remove a limit (or set it to
 # null) to link every connected station, e.g. for that sensitivity analysis.
 # 2026-11-04: downstream widened from 10 to 30 km so the distance models can

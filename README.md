@@ -30,7 +30,8 @@ analysis/        Helpers for the preprocessing audit notebook (audit_utils.py)
 data/slurm/      One Slurm job per pipeline stage; case_study.env selects the config
 docs/            Warehouse spec (warehouse_spec.md), re-run runbook
                  (rerun_after_snapping.md), pipeline flowchart
-notebooks/       Exploration, QA and audit notebooks
+notebooks/       qa/, analysis/ and exploration/ notebooks; notebooks/README.md says
+                 what each is for and when to run it
 tests/           Lightweight tests, runnable with `python tests/<file>.py` or pytest
 ```
 
@@ -119,7 +120,7 @@ HU4="..." sbatch data/slurm/match_dams.slurm                # 4: dams: reservoir
 HU4="..." sbatch data/slurm/link_reaches.slurm              # 5: link dams to stations on the new reaches, compare with current links
 ```
 
-**Checking a run.** `notebooks/warehouse_qa.ipynb` checks the core and cleaned tables (row counts, key integrity, maps). `notebooks/preprocessing_audit.ipynb` audits `analysis_measurement` for duplicates, misplaced stations, outliers and competing removals; it needs the full chain to have finished, about 32 GB of memory, and it writes its flag tables to `data/processed/preprocessing_audit/<case_study>/`. `notebooks/warehouse_integrity.ipynb` checks that no derived table is stale (from an earlier snapping or linking run), that no sample is future-dated, what the link distance limits keep, and raw-to-cleaned retention before vs after removal. `notebooks/analysis_robustness.ipynb` estimates the before/after change with one exposure per measurement, dam-level averages, a matched upstream control, measurement-consistency checks and a by-dam event study. Set `CASE_STUDY` at the top of each notebook.
+**Checking a run.** `notebooks/qa/warehouse_qa.ipynb` checks the core and cleaned tables (row counts, key integrity, maps). `notebooks/qa/preprocessing_audit.ipynb` audits `analysis_measurement` for duplicates, misplaced stations, outliers and competing removals; it needs the full chain to have finished, about 32 GB of memory, and it writes its flag tables to `data/processed/preprocessing_audit/<case_study>/`. `notebooks/qa/warehouse_integrity.ipynb` checks that no derived table is stale (from an earlier snapping or linking run), that no sample is future-dated, what the link distance limits keep, and raw-to-cleaned retention before vs after removal. `notebooks/analysis/analysis_robustness.ipynb` estimates the before/after change with one exposure per measurement, dam-level averages, a matched upstream control, measurement-consistency checks and a by-dam event study. Set `CASE_STUDY` at the top of each notebook.
 
 ## Warehouse
 

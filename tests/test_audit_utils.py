@@ -1,4 +1,4 @@
-"""Checks for analysis/audit_utils.py (helpers of notebooks/preprocessing_audit.ipynb).
+"""Checks for analysis/audit_utils.py (helpers of notebooks/qa/preprocessing_audit.ipynb).
 
 Robust z-scores on tiny in-memory tables (MAD, MeanAD fallback, constant,
 sparse and not-evaluable groups), unit-factor matching, name matching, the
