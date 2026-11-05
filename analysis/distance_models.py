@@ -99,7 +99,9 @@ Design (agreed 2026-11-05)
    mde80_*: the minimum detectable effect, (t_0.975 + t_0.80) x SE: the
    true effect this fit would detect (two-sided 5%) 80% of the time. An
    inconclusive estimate means "smaller than about this, or none".
-9. effects_at.csv: the effect and its 95% CI at 1, 5, 10, 20, 30 km (scaled:
+9. dams_used.csv: which dams each fitted model used (stations and days by
+   role), for maps (notebooks/analysis/distance_model_results.ipynb).
+   effects_at.csv: the effect and its 95% CI at 1, 5, 10, 20, 30 km (scaled:
    0.5-20 reservoir lengths; size: the 10th / 50th / 90th percentile dam;
    dilution: also at ratios 2, 10, 100), only inside the fit's observed
    range, with the other modifiers at their reference. A wide interval
@@ -674,10 +676,20 @@ def fit_one(restricted, series, spec, settings, counts=None, reference_km=5.0,
             "rows": complete, "refs": refs, "effect": effect}
 
 
+def dams_used(rows, series, spec):
+    """One row per dam in a fitted model: its stations and days by role."""
+    out = rows.groupby("AR_ID").agg(
+        treated_stations=("station_id", lambda s: s[rows.loc[s.index, "role"].eq("treated")].nunique()),
+        control_stations=("station_id", lambda s: s[rows.loc[s.index, "role"].eq("control")].nunique()),
+        days=("y", "size")).reset_index()
+    return out.assign(series=series, spec=spec, design=SPECS[spec]["design"])
+
+
 def fit_all(daily, specs, settings, exclude_dams=(), max_dar=None, reference_km=5.0,
             size_variable="proxy", re_mode="intercepts", reml=True, common_sample=False,
-            lrt_bootstrap=99, lrt_workers=1):
-    """Every series x spec. Returns (results, coefficients, effects_at)."""
+            lrt_bootstrap=99, lrt_workers=1, dams_out=None):
+    """Every series x spec. Returns (results, coefficients, effects_at); with a
+    list as dams_out, also appends each fitted model's dams_used() frame."""
     restricted, counts = restrict(daily, exclude_dams, max_dar)
     results, coefficients, effects_at = [], [], []
     for series in settings["series"]:
@@ -689,6 +701,8 @@ def fit_all(daily, specs, settings, exclude_dams=(), max_dar=None, reference_km=
             results.append(row)
             coefficients += fitted["coefficients"]
             effects_at += fitted["effects_at"]
+            if dams_out is not None and not row.get("error"):
+                dams_out.append(dams_used(fitted["rows"], series, spec))
             if row.get("error"):
                 kind = "skipped" if row["error"].startswith("fewer") else "FAILED"
                 detail = f"{row['dams']} dams" if kind == "skipped" else row["error"][:100]
@@ -791,10 +805,14 @@ def main():
           f"common sample: {args.common_sample}; ML: {args.ml}")
     print(f"Daily values (treated + control): {len(daily):,}; dams: {daily['AR_ID'].nunique()}")
     print("\nEffect at the reference [95% CI], and the modifier slope:")
+    dams = []
     results, coefficients, effects_at = fit_all(
         daily, args.specs, settings, exclude, args.max_dar, args.reference_km,
         args.size_variable, args.re, not args.ml, args.common_sample,
-        args.lrt_bootstrap, args.workers)
+        args.lrt_bootstrap, args.workers, dams_out=dams)
+    (pd.concat(dams, ignore_index=True) if dams else
+     pd.DataFrame(columns=["AR_ID", "treated_stations", "control_stations", "days", "series",
+                           "spec", "design"])).to_csv(out_dir / "dams_used.csv", index=False)
 
     results.to_csv(out_dir / "results.csv", index=False)
     coefficients.to_csv(out_dir / "coefficients.csv", index=False)
@@ -805,7 +823,8 @@ def main():
          "excluded_dams": exclude, "size_variable": args.size_variable,
          "reference_km": args.reference_km, "re": args.re, "common_sample": args.common_sample,
          "ml": args.ml}, indent=2, default=str))
-    print(f"\nWrote results.csv, coefficients.csv, effects_at.csv, settings.json to {out_dir}")
+    print(f"\nWrote results.csv, coefficients.csv, effects_at.csv, dams_used.csv, settings.json "
+          f"to {out_dir}")
 
 
 if __name__ == "__main__":

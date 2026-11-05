@@ -197,6 +197,12 @@ def test_command_line_run_writes_outputs():
         results = pd.read_csv(tmp / "out" / "results.csv")
         assert set(results["spec"]) == set(dm.DEFAULT_SPECS)
         assert (results["dams"] == 23).all()                     # D00 excluded
+        used = pd.read_csv(tmp / "out" / "dams_used.csv")
+        assert set(used["spec"]) == set(dm.DEFAULT_SPECS) and "D00" not in set(used["AR_ID"])
+        baci = used[used["spec"] == "baci_distance"]
+        assert len(baci) == 23 and (baci["control_stations"] == 1).all() \
+            and (baci["treated_stations"] == 2).all()
+        assert (used.loc[used["design"] == "before_after", "control_stations"] == 0).all()
         for name in ("coefficients.csv", "effects_at.csv", "settings.json"):
             assert (tmp / "out" / name).exists()
 

@@ -135,13 +135,22 @@ def test_results_notebook_runs_on_the_outputs():
     with tempfile.TemporaryDirectory() as tmp:
         model_dir = Path(tmp)
         build_fixture(model_dir)
+        # A small dam table for the map (names and coordinates).
+        pd.DataFrame({"AR_ID": [f"D{d:02d}" for d in range(24)], "Dam_Name": "Test dam",
+                      "River": "River", "State": "ME", "Year_Removed": 2010,
+                      "Latitude": np.linspace(40, 45, 24), "Longitude": np.linspace(-75, -70, 24)}) \
+            .to_parquet(model_dir / "dam_removal.parquet", index=False)
         nb = nbformat.read(notebook, as_version=4)
-        with mock.patch.dict(os.environ, {"DAM_REMOVAL_MODEL_DIR": str(model_dir)}):
+        with mock.patch.dict(os.environ, {"DAM_REMOVAL_MODEL_DIR": str(model_dir),
+                                          "DAM_REMOVAL_WAREHOUSE_DIR": str(model_dir)}):
             NotebookClient(nb, timeout=300, kernel_name="python3",
                            resources={"metadata": {"path": str(notebook.parent)}}).execute()
     errors = [o for c in nb.cells if c.cell_type == "code" for o in c.get("outputs", [])
               if o.get("output_type") == "error"]
     assert not errors, errors[0].get("evalue")
+    html = " ".join(str(o.get("data", {}).get("text/html", "")) for c in nb.cells
+                    if c.cell_type == "code" for o in c.get("outputs", []))
+    assert "leaflet" in html.lower() and "All dams (24)" in html     # the map rendered
 
 
 if __name__ == "__main__":
