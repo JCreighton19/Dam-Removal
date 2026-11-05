@@ -15,6 +15,8 @@ their first code cell. They need the data on the cluster, except
 5. `analysis/analysis_eda.ipynb`
 6. `analysis/analysis_robustness.ipynb`
 7. `sbatch data/slurm/fit_mixed_model.slurm`, then `analysis/mixed_model_results.ipynb`
+8. `data/slurm/fit_distance_models.slurm` and `fit_stage4.slurm`, then
+   `analysis/distance_model_results.ipynb`
 
 ## `qa/`: check the warehouse before analysis
 
@@ -32,6 +34,7 @@ their first code cell. They need the data on the cluster, except
 | `analysis_eda.ipynb` | Explores `analysis_measurement` before modeling: coverage, pre/post balance, value distributions, pooled before/after comparisons | `build_analysis_dataset` |
 | `analysis_robustness.ipynb` | Before/after with one exposure per measurement, dam-level averages, a matched upstream control, measurement-consistency checks, by-dam event study | `build_analysis_dataset` |
 | `mixed_model_results.ipynb` | Reads the outputs of `analysis/mixed_model.py` (fits nothing itself, opens in seconds) | `fit_mixed_model` |
+| `distance_model_results.ipynb` | Stages 3-4: how each effect changes with distance downstream and with reservoir size; sensitivity runs, random-effects choice, leave-one-dam-out and bootstrap, raw vs scaled distance, pH upstream / downstream split, minimum detectable effects. Reads `stage3/` and `stage4/` outputs; fits nothing | `fit_distance_models` (RE=auto and RE=intercepts), `fit_stage4` |
 | `local_eda.ipynb` | Quick local EDA on the exported CSV (`analysis_measurement_all_removals.csv` at the repo root, from `data/slurm/export_analysis_csv.slurm`). Not in git (`.gitignore`) | `export_analysis_csv` |
 
 ## `exploration/`: early source exploration (historical)

@@ -25,18 +25,21 @@ SETTINGS = {**mm.SETTINGS, "series": ["water_temp"], "max_downstream_km": 30,
 SLOPE = -0.8
 
 
-def simulate(n_dams=24, seed=1, missing_size_every=0, raw=False, station_sd=0.5):
+def simulate(n_dams=24, seed=1, missing_size_every=0, raw=False, station_sd=0.5,
+             effect_sd=0.0):
     rng = np.random.default_rng(seed)
     rows = []
     for d in range(n_dams):
         dam_level = rng.normal(0, 2)
+        dam_shift = rng.normal(0, effect_sd) if effect_sd else 0.0   # dam-specific effect
         proxy = None if missing_size_every and d % missing_size_every == 0 else 10 ** rng.uniform(2, 5)
         stations = [("upstream", "upstream_control", 3.0, 0.8)]
         stations += [("downstream", "assigned_sole", float(km), float(10 ** rng.uniform(0, 2)))
                      for km in rng.uniform(0.3, 25, size=2)]
         for i, (side, status, km, dar) in enumerate(stations):
             station_level = rng.normal(0, station_sd)
-            effect = (2 + SLOPE * (np.log1p(km) - np.log1p(5))) if side == "downstream" else 0
+            effect = (2 + dam_shift + SLOPE * (np.log1p(km) - np.log1p(5))) \
+                if side == "downstream" else 0
             for year in [y for y in range(-5, 6) if y != 0]:
                 post = year > 0
                 for month in (2, 5, 8, 11):
@@ -56,6 +59,7 @@ def simulate(n_dams=24, seed=1, missing_size_every=0, raw=False, station_sd=0.5)
                         "backwater_km": 0.5 + d % 4, "reservoir_volume_proxy": proxy,
                         "reservoir_polygon_area_km2": None, "reservoir_polygon_timing": None,
                         "dam_drainage_area_km2": 10 ** rng.uniform(0.5, 2.5) if i == 0 else None,
+                        "removal_year": 2010, "years_from_removal": year,
                     })
     df = pd.DataFrame(rows)
     # Dam drainage area is a dam constant.
@@ -192,6 +196,73 @@ def test_singular_flag_reads_the_final_variances():
     flat = results.iloc[0]
     assert flat["singular"] and "station" in flat["near_zero_terms"]
     assert flat["var_station"] < 1e-3 * flat["var_residual"]
+
+
+def test_auto_random_effects_follow_the_data():
+    # Same effect at every dam: the dam slope of the effect is ~0, auto uses intercepts.
+    same, _, _ = dm.fit_all(simulate(), ["baci_distance"], SETTINGS, re_mode="auto")
+    assert same.iloc[0]["re_choice"].startswith("intercepts")
+    assert same.iloc[0]["lrt_p"] >= 0.05 or "~0" in same.iloc[0]["re_choice"]
+    assert same.iloc[0]["re_structure"].startswith("dam intercepts")
+    # Dams differ in their effect: slopes are kept, and the interval widens.
+    varied = simulate(effect_sd=1.0)
+    slopes, _, _ = dm.fit_all(varied, ["baci_distance"], SETTINGS, re_mode="auto")
+    flat, _, _ = dm.fit_all(varied, ["baci_distance"], SETTINGS, re_mode="intercepts")
+    assert slopes.iloc[0]["re_choice"].startswith("slopes (LRT p")
+    assert slopes.iloc[0]["var_dam_post_downstream"] > 0.3
+    assert slopes.iloc[0]["effect_se"] > 2 * flat.iloc[0]["effect_se"]
+
+
+def test_boundary_lrt_uses_bootstrap_when_chi_square_is_not_decisive():
+    # Small real dam-to-dam variation: chi-square p (an upper bound) is 0.12.
+    varied, _, _ = dm.fit_all(simulate(n_dams=16, seed=1, effect_sd=0.1), ["baci_distance"],
+                              SETTINGS, re_mode="auto", lrt_bootstrap=39)
+    row = varied.iloc[0]
+    assert row["lrt_p_chi2"] > 0.05 and row["lrt_p_method"].startswith("parametric bootstrap")
+    assert row["lrt_p"] < row["lrt_p_chi2"]          # the boundary-correct p is smaller
+    assert row["lrt_bootstrap_draws"] >= 35
+    # No dam-to-dam variation: the bootstrap p stays large and intercepts are kept.
+    null, _, _ = dm.fit_all(simulate(n_dams=16, seed=1), ["baci_distance"], SETTINGS,
+                            re_mode="auto", lrt_bootstrap=39)
+    row = null.iloc[0]
+    assert row["lrt_p"] >= 0.2 and row["re_choice"].startswith("intercepts")
+    # Decisive chi-square: no simulation needed.
+    clear, _, _ = dm.fit_all(simulate(effect_sd=1.0), ["baci_distance"], SETTINGS,
+                             re_mode="auto", lrt_bootstrap=39)
+    assert clear.iloc[0]["lrt_p_method"].startswith("chi-square (upper bound")
+
+
+def test_minimum_detectable_effect():
+    assert abs(dm.mde(1.0, 30) - (dm.stats.t.ppf(0.975, 29) + dm.stats.t.ppf(0.8, 29))) < 1e-12
+    results, _, at = dm.fit_all(simulate(), ["baci_distance"], SETTINGS)
+    row = results.iloc[0]
+    assert abs(row["mde80_effect"] - dm.mde(row["effect_se"], row["dams"])) < 1e-12
+    assert row["mde80_modifier"] > 0 and (at["mde80"] > 0).all()
+    assert np.isfinite(row["cov_effect_modifier"])
+
+
+def test_common_sample_and_ml_make_specs_comparable():
+    daily = simulate()
+    # Some dams lack backwater_km: scaled distance alone would fit fewer dams.
+    daily.loc[daily["AR_ID"].isin(["D01", "D02", "D03"]), "backwater_km"] = np.nan
+    plain, _, _ = dm.fit_all(daily, ["baci_distance", "baci_scaled_distance"], SETTINGS)
+    assert plain.set_index("spec")["dams"].tolist() == [24, 21]
+    common, _, _ = dm.fit_all(daily, ["baci_distance", "baci_scaled_distance"], SETTINGS,
+                              reml=False, common_sample=True)
+    common = common.set_index("spec")
+    assert common["dams"].tolist() == [21, 21] and common["days"].nunique() == 1
+    assert common["aic"].notna().all() and not common["reml"].any()
+    assert "aic" not in plain or plain["aic"].isna().all()
+
+
+def test_fixed_references_are_reused():
+    daily = simulate()
+    rows = mm.model_rows(daily, "baci", SETTINGS)
+    _, refs, _ = dm.add_modifiers(rows, "baci_distance")
+    subset = rows[rows["AR_ID"] != "D00"]
+    _, own, _ = dm.add_modifiers(subset, "baci_distance")
+    _, fixed, _ = dm.add_modifiers(subset, "baci_distance", fixed_refs=refs)
+    assert fixed["reference_dar"] == refs["reference_dar"] != own["reference_dar"]
 
 
 if __name__ == "__main__":
