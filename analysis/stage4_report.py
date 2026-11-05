@@ -84,6 +84,9 @@ SESOI_BASIS = ("analyst-selected practical-significance threshold (provisional);
                "not an environmental or regulatory standard")
 SESOI_MULTIPLIERS = [0.5, 0.75, 1.0, 1.5, 2.0]
 PRIMARY = ("primary", "auto")              # (run, random effects) of the main results
+# Series fit as checks on sampling conditions, not as findings
+# (distance_models.py design 10). No threshold: detected / inconclusive only.
+DIAGNOSTIC_SERIES = ["discharge"]
 DISTANCE_SPECS = {"baci_distance": "BACI", "before_after_distance": "before/after"}
 SENSITIVITY_RUNS = ["primary", "dar_le_100", "dar_le_10", "dar_le_2", "keep_suspects"]
 
@@ -156,7 +159,7 @@ def load_runs(stage3_dir):
 # --------------------------------------------------
 
 SUMMARY_COLUMNS = [
-    "run", "re", "series", "spec", "design", "dams", "stations", "treated_stations", "days",
+    "run", "re", "series", "purpose", "spec", "design", "dams", "stations", "treated_stations", "days",
     "sample_flag", "km_min", "km_max", "unit", "log_scale", "re_structure", "re_choice",
     "lrt_p", "singular", "near_zero_terms", "fit_check", "converged",
     "effect_at_reference", "effect_ci_low", "effect_ci_high", "mde80_effect", "effect_class",
@@ -173,6 +176,8 @@ def model_summary(results):
     out = results.copy()
     out["sesoi"] = out["series"].map(SESOI)
     out["sesoi_label"] = out["series"].map(sesoi_label)
+    out["purpose"] = np.where(out["series"].isin(DIAGNOSTIC_SERIES),
+                              "sampling-conditions check", "water-quality effect")
     out["effect_class"] = [classify(e, lo, hi, s) for e, lo, hi, s in zip(
         out.get("effect_at_reference"), out.get("effect_ci_low"), out.get("effect_ci_high"),
         out["sesoi"])]
@@ -194,6 +199,8 @@ def effects_by_distance(effects):
     out["design"] = np.where(out["spec"].str.startswith("baci"), "BACI", "before/after")
     out["sesoi"] = out["series"].map(SESOI)
     out["sesoi_label"] = out["series"].map(sesoi_label)
+    out["purpose"] = np.where(out["series"].isin(DIAGNOSTIC_SERIES),
+                              "sampling-conditions check", "water-quality effect")
     out["effect_class"] = [classify(e, lo, hi, s) for e, lo, hi, s in zip(
         out["estimate"], out["ci_low"], out["ci_high"], out["sesoi"])]
     out["primary"] = (out["run"] == PRIMARY[0]) & (out["re"] == PRIMARY[1])
@@ -432,12 +439,19 @@ def main():
     summary = tables["model_summary"]
     primary = summary[(summary["run"] == PRIMARY[0]) & (summary["re"] == PRIMARY[1])
                       & summary["error"].fillna("").eq("")]
+    check = primary[primary["purpose"].eq("sampling-conditions check")]
+    primary = primary[~primary["purpose"].eq("sampling-conditions check")]
     print(f"Model outputs: {model_dir}\nReport: {out_dir}\n")
     print("Primary distance models (effect at 5 km, distance slope):")
     print(primary[["series", "spec", "dams", "re_choice", "effect_at_reference", "effect_ci_low",
                    "effect_ci_high", "mde80_effect", "effect_class", "modifier_slope",
                    "modifier_ci_low", "modifier_ci_high", "slope_class"]]
           .round(4).to_string(index=False))
+    print("\nDischarge check (a 'detected' change means samples after removal were taken at "
+          "different flows; not a finding):")
+    print(check[["series", "spec", "dams", "effect_at_reference", "effect_ci_low",
+                 "effect_ci_high", "effect_class"]].round(4).to_string(index=False)
+          if len(check) else "  no discharge fits (too few dams with flow measured)")
     if len(tables["distance_comparison"]):
         print("\nRaw vs scaled distance (same sample, ML):")
         print(tables["distance_comparison"][["series", "design", "dams", "same_sample",

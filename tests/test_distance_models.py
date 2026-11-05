@@ -74,6 +74,20 @@ def test_existing_specs_unchanged():
     assert mm.SETTINGS["carry_columns"] == [] and mm.SETTINGS["max_downstream_km"] == 10
 
 
+def test_discharge_check_is_added_without_touching_the_existing_models():
+    assert "discharge" in dm.default_series() and "discharge" not in mm.SETTINGS["series"]
+    assert dm.default_series()[:len(mm.SETTINGS["series"])] == mm.SETTINGS["series"]
+    # Discharge is fit like any series (log10, same roles and rows).
+    raw = simulate(raw=True)
+    raw["parameter_std"] = "discharge"
+    raw["result_value_std"] = 10 ** (1 + raw["result_value_std"] / 20)
+    settings = {**SETTINGS, "series": ["discharge"]}
+    daily = mm.prepare(raw, settings)
+    assert daily["log_scale"].all()
+    results, _, _ = dm.fit_all(daily, ["baci_distance"], settings)
+    assert results.iloc[0]["error"] == "" and results.iloc[0]["unit"] == "log10 ft3/s"
+
+
 def test_distance_is_downstream_only_and_zero_km_is_safe():
     daily = pd.DataFrame({
         "AR_ID": "D1", "station_id": ["U", "A", "B"], "role": ["control", "treated", "treated"],

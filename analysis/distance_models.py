@@ -107,6 +107,16 @@ Design (agreed 2026-11-05)
    carries cov_effect_modifier so a curve at any distance can be drawn
    (analysis/stage4_report.py).
 
+10. Discharge check (added 2026-11-05): discharge (instantaneous flow
+   measured with a sample, ft3/s, log10) is fit like the water-quality
+   series. It is a check on sampling conditions, not a finding: small dam
+   removals rarely change mean flow, so a "discharge effect" means the
+   downstream samples after removal were taken at different flows than
+   before (relative to the controls), and flow-sensitive results (turbidity,
+   sediment, conductance, DO) could partly reflect that. The existing
+   mixed_model.py series are unchanged; DIAGNOSTIC_SERIES are only added
+   here when --series isn't given.
+
 Observational associations: an effect here is a before/after difference
 assigned to a removal, not proof that the removal caused it.
 """
@@ -141,6 +151,8 @@ SIZE_VARIABLES = {
 CARRY = ["network_distance_km", "drainage_area_ratio", "backwater_km", "reservoir_volume_proxy",
          "reservoir_polygon_area_km2", "reservoir_polygon_timing", "dam_drainage_area_km2",
          "removal_year", "years_from_removal"]
+# Fit with the water-quality series, but read as checks (design 10).
+DIAGNOSTIC_SERIES = ["discharge"]
 DEFAULT_SPECS = ["baci_distance", "before_after_distance",
                  "baci_scaled_distance", "before_after_scaled_distance"]
 RE_MODES = ["intercepts", "slopes", "auto"]
@@ -736,12 +748,16 @@ def base_parser(description):
     return parser
 
 
+def default_series():
+    """The mixed model's series plus the diagnostic ones (design 10)."""
+    return list(dict.fromkeys(mm.SETTINGS["series"] + DIAGNOSTIC_SERIES))
+
+
 def load_daily(args):
     """(daily values, settings, excluded dams) for the parsed options."""
     settings = {**mm.SETTINGS, "max_downstream_km": args.max_km, "carry_columns": CARRY,
                 "min_dams": args.min_dams, "exploratory_below": args.exploratory_below}
-    if args.series:
-        settings["series"] = args.series
+    settings["series"] = args.series or default_series()
     if args.input is None:
         from etl.common.config import load_config
         from etl.common.warehouse import warehouse_dir

@@ -33,6 +33,17 @@ def test_classify():
     assert rep.classify(np.nan, 0, 1, 0.5) == ""
 
 
+def test_discharge_is_labeled_a_check_without_a_threshold():
+    results = pd.DataFrame({"series": ["discharge", "water_temp"], "spec": "baci_distance",
+                            "effect_at_reference": [0.2, 0.0], "effect_ci_low": [0.1, -0.1],
+                            "effect_ci_high": [0.3, 0.1]})
+    summary = rep.model_summary(results).set_index("series")
+    assert summary.loc["discharge", "purpose"] == "sampling-conditions check"
+    assert summary.loc["water_temp", "purpose"] == "water-quality effect"
+    assert summary.loc["discharge", "effect_class"] == "detected"
+    assert pd.isna(summary.loc["discharge", "sesoi"])            # no threshold for a check
+
+
 def _run(model_dir, source, run, re_mode, *extra):
     argv = ["distance_models.py", "--case-study", "test", "--input", str(source),
             "--output-dir", str(model_dir / "stage3" / f"{run}__{re_mode}"),
