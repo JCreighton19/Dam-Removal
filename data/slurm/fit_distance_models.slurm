@@ -27,6 +27,11 @@
 #   dar_le_100, dar_le_10, dar_le_2
 #                  distance models on treated rows with ratio <= the limit
 #   keep_suspects  distance models with the suspect dam matches kept in
+#   primary_dam_slopes, size_dam_slopes
+#                  the same with dam random slopes on the effect terms (falls
+#                  back to intercepts if they don't fit; see re_structure):
+#                  how much the intervals depend on assuming one effect for
+#                  every dam
 
 set -uo pipefail
 
@@ -48,8 +53,10 @@ declare -A ARGS=(
     [dar_le_10]="--specs $DISTANCE --max-dar 10"
     [dar_le_2]="--specs $DISTANCE --max-dar 2"
     [keep_suspects]="--specs $DISTANCE --keep-suspect-dams"
+    [primary_dam_slopes]="--specs $DISTANCE --dam-slopes"
+    [size_dam_slopes]="--specs baci_size before_after_size --dam-slopes"
 )
-RUNS="${RUNS:-primary dilution size_proxy size_polygon dar_le_100 dar_le_10 dar_le_2 keep_suspects}"
+RUNS="${RUNS:-primary dilution size_proxy size_polygon dar_le_100 dar_le_10 dar_le_2 keep_suspects primary_dam_slopes size_dam_slopes}"
 
 echo "Job started: $(date)"
 echo "Case study: $DAM_REMOVAL_CASE_STUDY; runs: $RUNS"

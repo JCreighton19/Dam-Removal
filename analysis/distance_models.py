@@ -56,8 +56,13 @@ Design (agreed 2026-11-05)
    Dams without either value are dropped and counted; nothing is imputed.
 7. Random effects: dam and station random intercepts (no dam random slopes
    unless --dam-slopes). If that fit fails, the station term is dropped;
-   re_structure says which was used. singular flags a variance estimated at
-   ~0; fit_check flags a non-positive-definite Hessian.
+   re_structure says which was used. Each results row carries the final
+   variances (var_residual, var_dam_*, var_station); singular /
+   near_zero_terms flag any below 0.001 x the residual variance (estimated at
+   ~0, so that random effect could be dropped). fit_check 'check' = the
+   Hessian at the final estimates isn't positive definite.
+   singular_warning_during_fit only records statsmodels' warning, which can
+   come from intermediate optimizer steps.
 8. Intervals: t with dams - 1 degrees of freedom (dams are the
    independent units). A model is fit with at least --min-dams dams (10);
    below --exploratory-below (15) it is flagged exploratory.
@@ -250,7 +255,10 @@ def fit(rows, terms, effect, settings, dam_slopes=False):
         raise RuntimeError(f"{effect['base']} does not vary")
     formula = formula_for(terms, covariates)
     station = {"station": "0 + C(station_id)"}
-    attempts = [("dam + station intercepts", None, station), ("dam intercepts", None, None)]
+    # re_formula "1" is required: with vc_formula and re_formula None,
+    # statsmodels fits no dam random intercept, only the station components
+    # (found 2026-11-05; the first Stage 3 cluster run had this).
+    attempts = [("dam + station intercepts", "1", station), ("dam intercepts", "1", None)]
     if dam_slopes:
         slope = "~ post" if effect["base"] == "post" else "~ post + post_downstream"
         attempts = [("dam slopes + station intercepts", slope, station)] + attempts
@@ -272,12 +280,28 @@ def fit(rows, terms, effect, settings, dam_slopes=False):
     raise RuntimeError(" | ".join(errors))
 
 
-def is_singular(result, tolerance=1e-6):
-    """A random-effect variance estimated at ~0 (relative to the residual)."""
+def variance_components(result, near_zero=1e-3):
+    """The final random-effect variances, and which are near zero.
+
+    Returns {'var_residual', 'var_dam_<term>' per dam random effect,
+    'var_station' (when fit), 'singular', 'near_zero_terms'}. A variance
+    below near_zero x the residual variance counts as estimated at ~0: the
+    fit is on the boundary (singular), so that random effect isn't supported
+    by the data and the structure could be simplified. statsmodels' warning
+    "Random effects covariance is singular" is raised during the optimizer's
+    intermediate steps too, so it alone doesn't mean the final fit is
+    singular; this checks the final estimates."""
     scale = float(result.scale) if np.isfinite(result.scale) and result.scale > 0 else 1.0
-    variances = list(np.diag(np.asarray(result.cov_re)))
-    variances += list(np.atleast_1d(getattr(result, "vcomp", [])))
-    return any(v < tolerance * scale for v in variances)
+    cov_re = result.cov_re
+    names = [str(n) for n in getattr(cov_re, "columns", range(np.shape(cov_re)[0]))]
+    variances = {f"var_dam_{'intercept' if n in ('Group', 'Intercept') else n}": float(v)
+                 for n, v in zip(names, np.diag(np.asarray(cov_re)))}
+    vcomp = np.atleast_1d(getattr(result, "vcomp", []))
+    if len(vcomp):
+        variances["var_station"] = float(vcomp[0])
+    near = [k.removeprefix("var_") for k, v in variances.items() if v < near_zero * scale]
+    return {"var_residual": scale, **variances, "singular": bool(near),
+            "near_zero_terms": ", ".join(near)}
 
 
 def linear_effect(result, weights, dams):
@@ -361,8 +385,10 @@ def summarize(result, rows, series, spec, effect, refs, meta, settings):
                         "modifier_ci_low": s_lo, "modifier_ci_high": s_hi,
                         "modifier_p_value": 2 * stats.t.sf(abs(s_est / s_se), max(dams - 1, 1))
                         if s_se > 0 else np.nan})
-    out.update({"converged": bool(result.converged), "singular": is_singular(result),
-                "fit_check": mm.fit_check(meta.get("warnings", "")), "error": ""})
+    warning_text = meta.get("warnings", "")
+    out.update({"converged": bool(result.converged), **variance_components(result),
+                "singular_warning_during_fit": "singular" in warning_text,
+                "fit_check": mm.fit_check(warning_text), "error": ""})
 
     coefficients = []
     for name in result.fe_params.index:

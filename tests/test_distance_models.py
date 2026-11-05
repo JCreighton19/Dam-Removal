@@ -25,7 +25,7 @@ SETTINGS = {**mm.SETTINGS, "series": ["water_temp"], "max_downstream_km": 30,
 SLOPE = -0.8
 
 
-def simulate(n_dams=24, seed=1, missing_size_every=0, raw=False):
+def simulate(n_dams=24, seed=1, missing_size_every=0, raw=False, station_sd=0.5):
     rng = np.random.default_rng(seed)
     rows = []
     for d in range(n_dams):
@@ -35,7 +35,7 @@ def simulate(n_dams=24, seed=1, missing_size_every=0, raw=False):
         stations += [("downstream", "assigned_sole", float(km), float(10 ** rng.uniform(0, 2)))
                      for km in rng.uniform(0.3, 25, size=2)]
         for i, (side, status, km, dar) in enumerate(stations):
-            station_level = rng.normal(0, 0.5)
+            station_level = rng.normal(0, station_sd)
             effect = (2 + SLOPE * (np.log1p(km) - np.log1p(5))) if side == "downstream" else 0
             for year in [y for y in range(-5, 6) if y != 0]:
                 post = year > 0
@@ -181,6 +181,17 @@ def test_command_line_run_writes_outputs():
         assert (results["dams"] == 23).all()                     # D00 excluded
         for name in ("coefficients.csv", "effects_at.csv", "settings.json"):
             assert (tmp / "out" / name).exists()
+
+
+def test_singular_flag_reads_the_final_variances():
+    results, _, _ = dm.fit_all(simulate(), ["baci_distance"], SETTINGS)
+    fitted = results.iloc[0]
+    assert not fitted["singular"] and fitted["var_station"] > 0.01 and fitted["var_dam_intercept"] > 1
+    # No station-to-station differences: the station variance is estimated at ~0.
+    results, _, _ = dm.fit_all(simulate(station_sd=0.0), ["baci_distance"], SETTINGS)
+    flat = results.iloc[0]
+    assert flat["singular"] and "station" in flat["near_zero_terms"]
+    assert flat["var_station"] < 1e-3 * flat["var_residual"]
 
 
 if __name__ == "__main__":
