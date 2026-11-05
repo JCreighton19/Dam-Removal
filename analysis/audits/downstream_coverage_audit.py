@@ -18,6 +18,20 @@ station in a usable link. Two caveats, both reported:
   - link_reaches.py --max-km (Slurm MAX_KM) caps the network search; if it
     was set, links beyond it don't exist (see max_link_km below).
 
+Confluence-ambiguous stations (added 2026-11-04, Stage 2). link_reaches.py
+writes every connected pair to data/processed/reach_links/<case_study>/
+reach_links_<huc8>.parquet, usable or not. Downstream pairs whose dam is
+accepted but whose station is ambiguous only because rival reaches are as
+close (station_reason confluence_ambiguous) never reach dam_station_link,
+and their stations were downloaded only if another usable link needed
+them. confluence_blocked_by_band.csv counts those pairs by band next to the
+usable ones, and confluence_gain_by_cutoff.csv the dams that have a
+confluence-blocked downstream pair within a cutoff but no usable one, an
+upper bound on what a link_reaches rerun with a wider window could add.
+At the 10 km window the robust rule recovered 0 of 1,017 such downstream
+pairs (a station just below a confluence may be on the tributary), so
+little is expected.
+
 Distance bands (network km, downstream side): 00-05 = (0, 5], 05-10, 10-15,
 15-20, 20-30, 30+ and distance_unknown. Upper edges are inclusive, as in
 build_views.removal_link (distance <= max_downstream_km).
@@ -42,6 +56,13 @@ Outputs
                              downloaded at all)
     coverage_scope.csv       table sizes and HUC8 coverage, to check the
                              warehouse is the national build
+    confluence_blocked_by_band.csv  downstream reach_links pairs by band:
+                             usable / confluence-blocked (accepted dam) /
+                             other blocked; pairs, stations, dams, and
+                             blocked stations with any downloaded data
+    confluence_gain_by_cutoff.csv   per cutoff: dams with a usable
+                             downstream pair, and dams with only
+                             confluence-blocked ones (upper-bound gain)
 
 Run on the cluster through data/slurm/stage1_audits.slurm (AUDIT=coverage).
 """
@@ -54,11 +75,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import numpy as np
 import pandas as pd
 
 from analysis.audit_utils import connect, save_output, series_sql
 from etl.build_views import DEFAULT_MIN_SAMPLES, DEFAULT_MIN_YEARS, MIN_BACKWATER_SLOPE
+from etl.common import reach_selection as rs
 from etl.common.config import default_case_study, load_config
+from etl.common.reach_inputs import dam_id_text
 from etl.common.warehouse import warehouse_dir
 
 BAND_EDGES = [5, 10, 15, 20, 30]
@@ -83,7 +107,7 @@ def coverage_sql(max_upstream_km):
     return f"""
     WITH backwater AS (
         SELECT AR_ID,
-               Dam_Height_ft * 0.3048
+               CASE WHEN Dam_Height_ft > 0 THEN Dam_Height_ft * 0.3048 END
                    / CASE WHEN reach_slope > {MIN_BACKWATER_SLOPE!r} THEN reach_slope END / 1000
                    AS backwater_km
         FROM dam_removal
@@ -185,6 +209,74 @@ GROUP BY band ORDER BY band
 """
 
 
+CONFLUENCE_REASON = "confluence_ambiguous"
+LINK_FILE_COLUMNS = ["dam_id", "station_id", "relationship", "network_distance_km",
+                     "dam_status", "station_status", "station_reason", "usable"]
+
+
+def read_reach_links(folder):
+    """Downstream pairs of every reach_links_<huc8>.parquet, with
+    link_class: usable / confluence_blocked (accepted dam, station ambiguous
+    for confluence_ambiguous) / other_blocked."""
+    frames = []
+    for path in sorted(Path(folder).glob("reach_links_*.parquet")):
+        frame = pd.read_parquet(path)
+        frame = frame[[c for c in LINK_FILE_COLUMNS if c in frame]]
+        frames.append(frame[frame["relationship"].eq("downstream")])
+    if not frames:
+        return pd.DataFrame(columns=LINK_FILE_COLUMNS + ["link_class"])
+    links = pd.concat(frames, ignore_index=True)
+    links["dam_id"] = dam_id_text(links["dam_id"])
+    links["station_id"] = links["station_id"].astype(str)
+    links["network_distance_km"] = pd.to_numeric(links["network_distance_km"], errors="coerce")
+    usable = links["usable"].fillna(False).astype(bool)
+    confluence = (~usable & links["dam_status"].eq(rs.ACCEPTED)
+                  & links["station_status"].eq(rs.AMBIGUOUS)
+                  & links["station_reason"].eq(CONFLUENCE_REASON))
+    links["link_class"] = np.select([usable, confluence],
+                                    ["usable", "confluence_blocked"], "other_blocked")
+    return links
+
+
+def confluence_tables(links, dams_with_year, stations_with_data, cutoffs=CUTOFFS):
+    """(by band, gain by cutoff) for downstream links of dams in dam_removal
+    with a removal year."""
+    links = links[links["dam_id"].isin(dams_with_year)].copy()
+    links["band"] = band_labels(links["network_distance_km"])
+    links["has_data"] = links["station_id"].isin(stations_with_data)
+    keys = ["band", "link_class"]
+    by_band = links.groupby(keys).agg(pairs=("station_id", "size"),
+                                      stations=("station_id", "nunique"),
+                                      dams=("dam_id", "nunique"))
+    by_band["stations_with_any_data"] = (links[links["has_data"]].groupby(keys)["station_id"]
+                                         .nunique().reindex(by_band.index, fill_value=0))
+    by_band = by_band.reset_index()
+    rows = []
+    for cutoff in cutoffs:
+        within = links[links["network_distance_km"] <= cutoff]
+        usable = set(within.loc[within["link_class"].eq("usable"), "dam_id"])
+        blocked = within[within["link_class"].eq("confluence_blocked")]
+        only_blocked = set(blocked["dam_id"]) - usable
+        rows.append({"cutoff_km": cutoff, "dams_usable": len(usable),
+                     "dams_confluence_blocked_any": blocked["dam_id"].nunique(),
+                     "dams_only_confluence_blocked": len(only_blocked),
+                     "confluence_blocked_pairs": len(blocked),
+                     "confluence_blocked_stations_with_any_data":
+                         blocked.loc[blocked["has_data"], "station_id"].nunique()})
+    return by_band, pd.DataFrame(rows)
+
+
+def band_labels(distance, edges=BAND_EDGES):
+    """Python twin of band_sql: '00-05', ..., '30+', 'distance_unknown'."""
+    conditions, labels, low = [], [], 0
+    for high in edges:
+        conditions.append(distance.le(high).fillna(False).to_numpy())
+        labels.append(f"{low:02d}-{high:02d}")
+        low = high
+    out = np.select(conditions, labels, f"{edges[-1]}+")
+    return pd.Series(np.where(distance.isna(), "distance_unknown", out), index=distance.index)
+
+
 def scope(con, cfg):
     rows = {
         "case-study HUC8s (config)": len(cfg.huc8s),
@@ -232,8 +324,21 @@ def main():
     links = con.sql(LINK_CHECK_SQL).df()
     sizes = scope(con, cfg)
 
-    for name, frame in [("coverage_by_band.csv", bands), ("coverage_cumulative.csv", cumul),
-                        ("link_download_check.csv", links), ("coverage_scope.csv", sizes)]:
+    outputs = [("coverage_by_band.csv", bands), ("coverage_cumulative.csv", cumul),
+               ("link_download_check.csv", links), ("coverage_scope.csv", sizes)]
+
+    reach_links = read_reach_links(cfg.project_root / "data" / "processed" / "reach_links"
+                                   / cfg.name)
+    confluence = None
+    if len(reach_links):
+        dams_with_year = set(dam_id_text(con.sql(
+            "SELECT AR_ID FROM dam_removal WHERE Year_Removed IS NOT NULL").df()["AR_ID"]))
+        with_data = set(con.sql("SELECT DISTINCT station_id FROM wq_measurement")
+                        .df()["station_id"].astype(str))
+        confluence = confluence_tables(reach_links, dams_with_year, with_data)
+        outputs += [("confluence_blocked_by_band.csv", confluence[0]),
+                    ("confluence_gain_by_cutoff.csv", confluence[1])]
+    for name, frame in outputs:
         save_output(frame, name, out_dir)
 
     pd.set_option("display.width", 220)
@@ -251,10 +356,20 @@ def main():
     print(cumul.to_string(index=False))
     print("\n=== Coverage by band and series ===")
     print(bands[bands["series"] != "ALL"].to_string(index=False))
-    print(f"\nNote: robust_to_reach_choice links beyond the cutoff link_reaches ran with are "
-          f"not in dam_station_link, so counts beyond {current_cutoff} km are lower bounds.")
-    print(f"Wrote coverage_by_band.csv, coverage_cumulative.csv, link_download_check.csv, "
-          f"coverage_scope.csv to {out_dir}")
+    print("\nNote: robust_to_reach_choice links exist only inside the window link_reaches.py "
+          "ran with (10 km downstream in the 2026-11 national run), so counts beyond it are "
+          "lower bounds; the confluence section below sizes what is missing.")
+    print("\n=== Confluence-ambiguous downstream links (reach_links; dams with a removal "
+          "year) ===")
+    if confluence is None:
+        print("  no reach_links files found; skipped")
+    else:
+        print(confluence[0].to_string(index=False))
+        print("\nDams with only confluence-blocked downstream links within each cutoff "
+              "(upper bound on a link_reaches rerun's gain; stations with data is a lower "
+              "bound, since blocked stations were downloaded only for other links):")
+        print(confluence[1].to_string(index=False))
+    print(f"\nWrote {', '.join(name for name, _ in outputs)} to {out_dir}")
 
 
 if __name__ == "__main__":

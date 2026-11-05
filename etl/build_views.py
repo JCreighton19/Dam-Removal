@@ -84,7 +84,7 @@ TABLES = [
 # build_station_watershed.py, …). They add their own view when written; a
 # rebuild keeps any that exist.
 OPTIONAL_TABLES = ["wq_measurement_daily", "station_watershed", "station_catchment", "land_cover",
-                   "land_cover_codes", "climate", "analysis_measurement"]
+                   "land_cover_codes", "climate", "dam_reservoir", "analysis_measurement"]
 
 DEFAULT_MIN_SAMPLES = 3
 DEFAULT_MIN_YEARS = 2
@@ -131,8 +131,10 @@ NON_PERENNIAL = ("intermittent", "ephemeral")
 # flat or uncomputable reaches a minimum slope of 1e-5, which turns a 3 m dam
 # into a 300 km "reservoir" and marks every upstream control as inside it
 # (stage 1 audit, 2026-11-04: 212 of 1,777 dams, backwater up to 3,292 km).
-# Slopes at or below this are treated as unknown: backwater_km and
-# upstream_in_former_reservoir are null for those dams.
+# Slopes at or below this are treated as unknown: backwater_km,
+# reservoir_volume_proxy and upstream_in_former_reservoir are null for those
+# dams (link_features; analysis/audits/reservoir_size_audit.py uses the same
+# rule).
 MIN_BACKWATER_SLOPE = 1e-5
 
 
@@ -281,7 +283,13 @@ EXPOSURE_QC_VIEWS = """
 -- upstream station within it may have been in the former reservoir, i.e.
 -- affected by the removal rather than a control (preprocessing audit,
 -- section 6). Null when the slope is at the NHDPlus minimum
--- (MIN_BACKWATER_SLOPE): the length is unknown, not huge.
+-- (MIN_BACKWATER_SLOPE): the length is unknown, not huge. Null also
+-- without a positive dam height.
+-- reservoir_volume_proxy: height_m^2 / slope * sqrt(dam drainage area km2),
+-- a constructed size index (a wedge of height H and length H/S has a
+-- cross-section of about H^2/S; channel width grows roughly with the square
+-- root of drainage area). Not a measured volume or stored sediment; only its
+-- ranks / logs mean anything. Same height and slope rules as backwater_km.
 CREATE VIEW link_features AS
 WITH areas AS (
     SELECT
@@ -291,9 +299,13 @@ WITH areas AS (
         l.network_distance_km,
         CASE WHEN d.reach_totdasqkm > 0 THEN d.reach_totdasqkm END AS dam_drainage_area_km2,
         CASE WHEN s.reach_totdasqkm > 0 THEN s.reach_totdasqkm END AS station_drainage_area_km2,
-        d.Dam_Height_ft * 0.3048
+        CASE WHEN d.Dam_Height_ft > 0 THEN d.Dam_Height_ft * 0.3048 END
             / CASE WHEN d.reach_slope > __MIN_BACKWATER_SLOPE__ THEN d.reach_slope END / 1000
             AS backwater_km,
+        CASE WHEN d.Dam_Height_ft > 0 AND d.reach_slope > __MIN_BACKWATER_SLOPE__
+                  AND d.reach_totdasqkm > 0
+             THEN pow(d.Dam_Height_ft * 0.3048, 2) / d.reach_slope * sqrt(d.reach_totdasqkm)
+        END AS reservoir_volume_proxy,
         d.reach_feature_code AS dam_reach_fcode,
         s.reach_feature_code AS station_reach_fcode
     FROM removal_link l

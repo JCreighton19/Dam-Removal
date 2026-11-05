@@ -7,45 +7,42 @@ What it measures, per dam removal
 Constructed from the warehouse (no new data):
     height_m                Dam_Height_ft x 0.3048 (null if missing or <= 0)
     backwater_km            height_m / reach_slope / 1000 -- the same formula
-                            as build_views.link_features: the length of a flat
-                            pool behind a dam of that height on a channel of
-                            that slope. Null if the slope is missing or 0.
+                            and slope rule as build_views.link_features: the
+                            length of a flat pool behind a dam of that height
+                            on a channel of that slope. Null if the slope is
+                            missing or at or below the NHDPlus minimum
+                            (build_views.MIN_BACKWATER_SLOPE, 1e-5).
     reservoir_volume_proxy  height_m^2 / reach_slope * sqrt(reach_totdasqkm),
                             in m^2 * km^0.5. An index, not a volume: a wedge
                             of height H and length H/S has a cross-section of
                             about H^2/S, and channel width grows roughly with
                             the square root of drainage area. Only its ranks /
                             logs mean anything.
-    slope_at_floor          reach_slope <= 1e-5. NHDPlus gives very flat
-                            reaches a minimum slope, which makes backwater_km
-                            and the proxy implausibly large; reported, not
-                            removed.
+    slope_at_floor          reach_slope <= 1e-5. NHDPlus gives flat or
+                            uncomputable reaches that minimum slope, which
+                            made backwater_km and the proxy implausibly large
+                            (up to 3,292 km; first national run, 2026-11-04).
+                            Since 2026-11-04 both are null for these dams, as
+                            in build_views; the flag says how many.
 
 Measured (kept separate from the constructed ones; never imputed):
     reservoir polygon       Stage 4 (match_dams.py): the NHDWaterbody whose
-                            main outlet the dam sits at (reservoir_status
-                            dam_at_outlet). Its area comes from the polygon's
-                            AreaSqKm (else its geometry in EPSG:5070).
-                            polygon_timing compares the polygon's FDate (date
-                            last edited in NHD) with Year_Removed:
-                              edited_by_removal_year  FDate year <= removal
-                                year: the mapped polygon predates the removal
-                                (or was last edited that year)
-                              edited_after_removal    may show a drained,
-                                shrunk or re-mapped reservoir
-                              date_unknown
-                            FDate is an edit date, not a survey date, so
-                            "edited_by_removal_year" is the safer subset.
+                            main outlet the dam sits at, read as in
+                            etl/common/reservoir.py (shared with
+                            build_dam_reservoir.py): area, and polygon_timing
+                            edited_by_removal_year / edited_after_removal /
+                            date_unknown from the polygon's NHD FDate.
     NID / NABD storage      optional --storage-file (CSV, or any file
                             pyogrio reads) with one row per dam: an NID id
                             column and storage / surface-area columns. Matched
-                            on the dam list's NID_ID (load_core_tables doesn't
-                            carry it, so it is read from the dam CSV), and
-                            separately on NABI_ID (only matches if the file is
-                            keyed by National Aquatic Barrier Inventory ids).
-                            Columns are detected from common NID / NABD names
-                            or set with --id-column / --storage-column /
-                            --area-column.
+                            on the dam list's NID_ID only (load_core_tables
+                            doesn't carry it, so it is read from the dam CSV).
+                            NID and NABD are both keyed by the NID id; NABI_ID
+                            is a different inventory's id and is never used
+                            for the join (before 2026-11-04 it was tried as a
+                            fallback). Columns are detected from common NID /
+                            NABD names or set with --id-column /
+                            --storage-column / --area-column.
 
 Outputs
 -------
@@ -58,6 +55,10 @@ Outputs
     reservoir_selection_bias.csv    dams with vs without each measured
                                     variable: medians of height, drainage
                                     area, slope, removal year; share analyzed
+    reservoir_collinearity.csv      dams in dam_removal: log10 correlation
+                                    and VIF of each size measure with log10
+                                    dam drainage area (the size model's
+                                    covariate; the proxy contains it)
 
 Run on the cluster through data/slurm/stage1_audits.slurm (AUDIT=reservoir).
 """
@@ -74,14 +75,16 @@ import numpy as np
 import pandas as pd
 
 from analysis.audit_utils import save_output
+from etl.build_views import MIN_BACKWATER_SLOPE
 from etl.common.config import default_case_study, load_config
 from etl.common.reach_inputs import dam_id_text
+from etl.common.reservoir import attach_polygons, polygon_timing, read_dam_reaches  # noqa: F401
+from etl.common.reservoir import reservoir_areas
 from etl.common.warehouse import warehouse_dir
 
 FT_TO_M = 0.3048
 ACRE_TO_KM2 = 0.00404686
-SLOPE_FLOOR = 1e-5
-EQUAL_AREA_CRS = "EPSG:5070"
+SLOPE_FLOOR = MIN_BACKWATER_SLOPE
 
 # Common column names in NID (2022+ national CSV) and NABD (Ostroff et al.
 # 2013) exports, matched ignoring case. Override with the CLI flags.
@@ -103,30 +106,22 @@ CONSTRUCTED = ["height_m", "backwater_km", "reservoir_volume_proxy"]
 
 def size_variables(frame):
     """height_m, backwater_km, reservoir_volume_proxy and slope_at_floor from
-    Dam_Height_ft, reach_slope and reach_totdasqkm (non-positive -> null)."""
+    Dam_Height_ft, reach_slope and reach_totdasqkm (non-positive -> null;
+    slopes at or below SLOPE_FLOOR -> null backwater and proxy, as in
+    build_views.link_features)."""
     height = pd.to_numeric(frame["Dam_Height_ft"], errors="coerce") * FT_TO_M
     height = height.where(height > 0)
     slope = pd.to_numeric(frame["reach_slope"], errors="coerce")
     slope = slope.where(slope > 0)
+    usable_slope = slope.where(slope > SLOPE_FLOOR)
     area = pd.to_numeric(frame["reach_totdasqkm"], errors="coerce")
     area = area.where(area > 0)
     return frame.assign(
         height_m=height,
-        backwater_km=height / slope / 1000,
-        reservoir_volume_proxy=height ** 2 / slope * np.sqrt(area),
+        backwater_km=height / usable_slope / 1000,
+        reservoir_volume_proxy=height ** 2 / usable_slope * np.sqrt(area),
         slope_at_floor=slope.le(SLOPE_FLOOR).astype("boolean").where(slope.notna()),
     )
-
-
-def polygon_timing(fdate, year_removed):
-    """edited_by_removal_year / edited_after_removal / date_unknown per row;
-    null where there is no polygon (fdate and year aligned Series)."""
-    year = pd.to_datetime(fdate, errors="coerce").dt.year
-    removed = pd.to_numeric(year_removed, errors="coerce")
-    out = pd.Series("date_unknown", index=fdate.index, dtype="string")
-    out[year.notna() & removed.notna() & (year <= removed)] = "edited_by_removal_year"
-    out[year.notna() & removed.notna() & (year > removed)] = "edited_after_removal"
-    return out
 
 
 # --------------------------------------------------
@@ -199,67 +194,7 @@ def measured_storage(row_ids, storage):
 # Stage 4 reservoir polygons
 # --------------------------------------------------
 
-def read_dam_reaches(folder):
-    columns = ["AR_ID", "huc8", "match_status", "reservoir_status", "reservoir_id",
-               "reservoir_ftype", "reservoir_fdate"]
-    frames = []
-    for path in sorted(Path(folder).glob("dam_reaches_*.parquet")):
-        frame = pd.read_parquet(path)
-        frames.append(frame[[c for c in columns if c in frame]])
-    if not frames:
-        return pd.DataFrame(columns=columns)
-    out = pd.concat(frames, ignore_index=True)
-    out["AR_ID"] = dam_id_text(out["AR_ID"])
-    out["huc8"] = out["huc8"].astype(str).str.zfill(8)
-    return out.drop_duplicates("AR_ID")
-
-
-def reservoir_areas(reaches, nhd_dir):
-    """polygon_area_km2 and polygon_area_source per reservoir_id, read from
-    each HUC8's NHD package (attribute AreaSqKm, else geometry area)."""
-    import pyogrio
-
-    from etl.common.nhdplus import find_huc8_geodatabase
-    from etl.common.water_features import WATERBODY_LAYER, clean_permanent_id
-
-    wanted = reaches.dropna(subset=["reservoir_id"])
-    rows, missing_packages = [], set()
-    by_package = {}
-    for huc8, group in wanted.groupby("huc8"):
-        try:
-            path = find_huc8_geodatabase(nhd_dir, huc8)
-        except FileNotFoundError:
-            missing_packages.add(huc8)
-            continue
-        by_package.setdefault(path, set()).update(clean_permanent_id(group["reservoir_id"]))
-    for path, ids in by_package.items():
-        fields = {f.lower(): f for f in pyogrio.read_info(path, layer=WATERBODY_LAYER)["fields"]}
-        columns = [fields["permanent_identifier"]] + (
-            [fields["areasqkm"]] if "areasqkm" in fields else [])
-        table = pyogrio.read_dataframe(path, layer=WATERBODY_LAYER, columns=columns,
-                                       read_geometry=False, fid_as_index=True)
-        table["reservoir_id"] = clean_permanent_id(table[fields["permanent_identifier"]])
-        table = table[table["reservoir_id"].isin(ids)]
-        if "areasqkm" in fields:
-            area = pd.to_numeric(table[fields["areasqkm"]], errors="coerce")
-            source = pd.Series("AreaSqKm", index=table.index)
-        else:
-            area = pd.Series(np.nan, index=table.index)
-            source = pd.Series("geometry_5070", index=table.index)
-        need_geometry = area.isna() | (area <= 0)
-        if need_geometry.any():
-            shapes = pyogrio.read_dataframe(path, layer=WATERBODY_LAYER, columns=[],
-                                            fids=table.index[need_geometry].to_numpy())
-            measured = shapes.to_crs(EQUAL_AREA_CRS).area.to_numpy() / 1e6
-            area.loc[need_geometry] = measured
-            source.loc[need_geometry] = "geometry_5070"
-        rows.append(pd.DataFrame({"reservoir_id": table["reservoir_id"].to_numpy(),
-                                  "polygon_area_km2": area.where(area > 0).to_numpy(),
-                                  "polygon_area_source": source.to_numpy()}))
-    out = (pd.concat(rows, ignore_index=True).drop_duplicates("reservoir_id")
-           if rows else pd.DataFrame(columns=["reservoir_id", "polygon_area_km2",
-                                              "polygon_area_source"]))
-    return out, sorted(missing_packages)
+# read_dam_reaches, reservoir_areas, attach_polygons: etl/common/reservoir.py
 
 
 # --------------------------------------------------
@@ -330,6 +265,26 @@ def selection_bias(table, groups, describe):
     return pd.DataFrame(rows)
 
 
+def collinearity(table, sizes, covariate="reach_totdasqkm", min_n=10):
+    """log10 Pearson r and VIF (1 / (1 - r^2), two predictors) between each
+    size measure and the covariate, over dams with both positive."""
+    rows = []
+    for size in sizes:
+        if size not in table:
+            continue
+        pair = table[[size, covariate]].apply(pd.to_numeric, errors="coerce")
+        pair = pair[(pair > 0).all(axis=1)]
+        row = {"size": size, "covariate": f"log10 {covariate}", "n": len(pair)}
+        if len(pair) >= min_n:
+            r = np.log10(pair[size]).corr(np.log10(pair[covariate]))
+            row.update(pearson_log10=round(r, 3),
+                       vif=round(1 / (1 - r ** 2), 2) if abs(r) < 1 else np.inf, note="")
+        else:
+            row.update(pearson_log10=np.nan, vif=np.nan, note=f"insufficient (n < {min_n})")
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 # --------------------------------------------------
 # Main
 # --------------------------------------------------
@@ -364,42 +319,29 @@ def build(cfg, storage_file=None, id_column=None, storage_column=None, area_colu
 
     reaches = read_dam_reaches(cfg.project_root / "data" / "processed" / "dam_reaches" / cfg.name)
     notes.append(f"Stage 4 dam_reaches: {len(reaches):,} dams")
-    table = table.merge(reaches.drop(columns=["huc8"]), on="AR_ID", how="left")
-    at_outlet = table["reservoir_status"].eq("dam_at_outlet")
-    table["polygon_timing"] = polygon_timing(table["reservoir_fdate"], table["Year_Removed"]) \
-        .where(at_outlet)
+    areas = None
     if read_polygons and len(reaches):
         areas, missing = reservoir_areas(reaches[reaches["reservoir_status"].eq("dam_at_outlet")],
                                          cfg.project_root / "data" / "processed"
                                          / "nhdplus_extracted")
         if missing:
             notes.append(f"HUC8s with a reservoir but no NHD package found: {missing}")
-        from etl.common.water_features import clean_permanent_id
-        table["_rid"] = clean_permanent_id(table["reservoir_id"])
-        table = table.merge(areas.rename(columns={"reservoir_id": "_rid"}), on="_rid",
-                            how="left").drop(columns="_rid")
-    else:
-        table["polygon_area_km2"] = np.nan
-        table["polygon_area_source"] = pd.NA
-    table["polygon_area_km2"] = table["polygon_area_km2"].where(at_outlet)
-    table["polygon_area_km2_pre_removal"] = table["polygon_area_km2"].where(
-        table["polygon_timing"].eq("edited_by_removal_year"))
+    table = attach_polygons(table, reaches, areas)
 
     if storage_file:
         storage, storage_notes = read_storage_file(storage_file, id_column, storage_column,
                                                    area_column)
         notes += storage_notes
         values = [c for c in storage.columns if c != "storage_id"]
-        for key in ("NID_ID", "NABI_ID"):
-            if key not in table:
-                continue
-            found, matched = measured_storage(table[key], storage)
-            table[f"storage_matched_by_{key}"] = matched
-            notes.append(f"matched on {key}: {int(matched.sum()):,} of "
-                         f"{int(table[key].notna().sum()):,} dams with a {key}")
-            for column in values:
-                table[column] = table[column].fillna(found[column]) if column in table \
-                    else found[column]
+        # NID_ID only: NID and NABD are keyed by the NID id; NABI_ID is not one.
+        if "NID_ID" not in table:
+            raise ValueError("The dam list has no NID_ID column; storage can't be matched.")
+        found, matched = measured_storage(table["NID_ID"], storage)
+        table["storage_matched_by_NID_ID"] = matched
+        notes.append(f"matched on NID_ID: {int(matched.sum()):,} of "
+                     f"{int(table['NID_ID'].notna().sum()):,} dams with a NID_ID")
+        for column in values:
+            table[column] = found[column]
     return table, notes
 
 
@@ -427,7 +369,7 @@ def main():
     measured = [c for c in ["polygon_area_km2_pre_removal", "polygon_area_km2",
                             "normal_storage_acre_ft", "nid_storage_acre_ft",
                             "max_storage_acre_ft", "nid_surface_area_km2"] if c in table]
-    flags = [c for c in ["storage_matched_by_NID_ID", "storage_matched_by_NABI_ID"] if c in table]
+    flags = [c for c in ["storage_matched_by_NID_ID"] if c in table]
     variables = (["NID_ID", "NABI_ID"] + flags + ["Dam_Height_ft", "reach_slope",
                  "reach_totdasqkm"] + CONSTRUCTED + ["slope_at_floor", "reservoir_id"]
                  + measured)
@@ -441,10 +383,15 @@ def main():
                           ["height_m", "reach_totdasqkm", "reach_slope", "Year_Removed",
                            "reservoir_volume_proxy"])
 
+    collinear = collinearity(table[table["in_analysis"]],
+                             ["reservoir_volume_proxy", "height_m", "backwater_km"] + measured,
+                             min_n=args.min_n)
+
     names = [f"{stem}{args.tag}.csv" for stem in ("reservoir_size_by_dam", "reservoir_coverage",
                                                   "reservoir_correlations",
-                                                  "reservoir_selection_bias")]
-    for name, frame in zip(names, [table, cov, cor, bias]):
+                                                  "reservoir_selection_bias",
+                                                  "reservoir_collinearity")]
+    for name, frame in zip(names, [table, cov, cor, bias, collinear]):
         save_output(frame, name, out_dir)
 
     pd.set_option("display.width", 200)
@@ -460,12 +407,15 @@ def main():
         print(analyzed["polygon_area_source"].value_counts(dropna=False).to_string())
     print("\n=== Constructed variables (dams in dam_removal) ===")
     print(analyzed[CONSTRUCTED].describe(percentiles=[0.1, 0.5, 0.9]).to_string())
-    print(f"slope at or below {SLOPE_FLOOR:g}: {int(analyzed['slope_at_floor'].sum())}; "
+    print(f"slope at or below {SLOPE_FLOOR:g} (backwater and proxy left null): "
+          f"{int(analyzed['slope_at_floor'].sum())}; "
           f"backwater_km > 50: {int((analyzed['backwater_km'] > 50).sum())}")
     print("\n=== Correlations (dams in dam_removal; log10 Pearson, Spearman) ===")
     print(cor.to_string(index=False))
     print("\n=== Selection bias (all removals) ===")
     print(bias.to_string(index=False))
+    print("\n=== Collinearity with log10 dam drainage area (dams in dam_removal) ===")
+    print(collinear.to_string(index=False))
     print(f"\nWrote {', '.join(names)} to {out_dir}")
 
 

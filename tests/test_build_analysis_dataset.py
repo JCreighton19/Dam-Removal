@@ -12,6 +12,9 @@ context join:
         Climate: temperature = month, precipitation = 10 x month.
     D2 (removed 1973): station OLD is eligible; NLCD only has 1985 and
         there is no climate, so land_cover_year is 1985 and climate is null.
+    Dam size: D1 (10 ft, slope 0.01, 20 km2) has backwater 0.3048 km and a
+        mapped reservoir (0.5 km2, edited 2010, before its removal); D2 has
+        no height or slope and no polygon, so every size column is null.
 
 Run directly: `python tests/test_build_analysis_dataset.py`
 """
@@ -28,6 +31,7 @@ import duckdb
 import pandas as pd
 
 from etl import build_analysis_dataset as bad
+from etl import build_dam_reservoir as bdr
 from etl import build_daily_measurements as bdm
 from etl import build_views as bv
 from etl.build_views import add_view
@@ -124,6 +128,23 @@ def _context_tables(directory):
     for name, frame in tables.items():
         frame.to_parquet(directory / f"{name}.parquet", index=False)
         add_view(directory / "warehouse.duckdb", name, directory / f"{name}.parquet")
+    _reservoir_table(directory)
+
+
+def _reservoir_table(directory):
+    dams = pd.read_parquet(directory / "dam_removal.parquet", columns=["AR_ID", "Year_Removed"])
+    reaches = pd.DataFrame({
+        "AR_ID": ["D1", "D2"], "huc8": ["01010101"] * 2, "match_status": ["accepted"] * 2,
+        "reservoir_status": ["dam_at_outlet", "no_reservoir_polygon"],
+        "reservoir_id": ["{r1}", None], "reservoir_ftype": [436, None],
+        "reservoir_fdate": pd.to_datetime(["2010-01-01", None]),
+    })
+    areas = pd.DataFrame({"reservoir_id": ["R1"], "polygon_area_km2": [0.5],
+                          "polygon_area_source": ["AreaSqKm"]})
+    table = bdr.build_table(dams, reaches, areas)
+    assert bdr.validate(table, dams) == []
+    table.to_parquet(directory / "dam_reservoir.parquet", index=False)
+    add_view(directory / "warehouse.duckdb", "dam_reservoir", directory / "dam_reservoir.parquet")
 
 
 def _build(root):
@@ -207,6 +228,21 @@ def test_rows_and_context_joins():
         assert old["missing_climate"].all() and not down["missing_climate"].any()
         assert not table["missing_land_cover"].any()
 
+        # Dam size (choice 15): constructed from link_features, measured from
+        # dam_reservoir, kept apart; nothing imputed for D2.
+        assert (abs(down["backwater_km"] - 0.3048) < 1e-9).all()
+        proxy = (10 * 0.3048) ** 2 / 0.01 * 20 ** 0.5
+        assert (abs(down["reservoir_volume_proxy"] - proxy) < 1e-6).all()
+        assert (down["reservoir_status"] == "dam_at_outlet").all()
+        assert (down["reservoir_polygon_area_km2"] == 0.5).all()
+        assert (down["reservoir_polygon_timing"] == "edited_by_removal_year").all()
+        assert (down["dam_drainage_area_km2"] == 20).all()
+        assert (old["reservoir_status"] == "no_reservoir_polygon").all()
+        for column in ["backwater_km", "reservoir_volume_proxy", "reservoir_polygon_area_km2",
+                       "reservoir_polygon_timing"]:
+            assert old[column].isna().all(), column
+        assert (old["dam_drainage_area_km2"] == 10).all()
+
         with duckdb.connect(str(out / "warehouse.duckdb"), read_only=True) as con:
             assert con.sql("SELECT count(*) FROM analysis_measurement").fetchone()[0] == 13
 
@@ -231,6 +267,29 @@ def test_stale_context_table_is_refused():
         climate.to_parquet(out / "climate.parquet", index=False)
         stale = bad.stale_inputs(out / "warehouse.duckdb")
         assert len(stale) == 1 and "re-run load_climate.py" in stale[0]
+
+
+def test_stale_reservoir_table_is_refused():
+    with tempfile.TemporaryDirectory() as tmp:
+        out = _build(Path(tmp))
+        # dam_reservoir from before a dam was added to dam_removal.
+        reservoir = pd.read_parquet(out / "dam_reservoir.parquet")
+        reservoir[reservoir["AR_ID"] != "D2"].to_parquet(out / "dam_reservoir.parquet",
+                                                         index=False)
+        stale = bad.stale_inputs(out / "warehouse.duckdb")
+        assert len(stale) == 1 and "re-run build_dam_reservoir.py" in stale[0]
+
+
+def test_reports_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        out = _build(Path(tmp))
+        table, _, _ = bad.build_table(out / "warehouse.duckdb")
+    size = bad.size_report(table)
+    assert "reservoir_volume_proxy" in size and "mapped by the removal year" in size
+    bands = bad.exposure_by_band_report(table)
+    assert "00-05" in bands and "assigned_sole" in bands
+    labels = bad.distance_band(pd.Series([0.0, 5.0, 5.01, 30.0, 31.0, None]))
+    assert labels.tolist() == ["00-05", "00-05", "05-10", "20-30", "30+", "unknown"]
 
 
 if __name__ == "__main__":

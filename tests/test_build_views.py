@@ -297,6 +297,8 @@ def test_link_features():
     assert f.loc["DOWN", "drainage_area_ratio"] == 2.5
     assert f.loc["UP", "drainage_area_ratio"] == 0.4
     assert abs(f.loc["UP", "backwater_km"] - 3.048) < 1e-9
+    # Size index: 10 ft (3.048 m), slope 0.001, dam area 100 km2.
+    assert abs(f.loc["UP", "reservoir_volume_proxy"] - 3.048 ** 2 / 0.001 * 10) < 1e-6
     assert f.loc["UP", "upstream_in_former_reservoir"] == True  # noqa: E712  2 km < 3.05 km
     assert pd.isna(f.loc["DOWN", "upstream_in_former_reservoir"])  # downstream: not applicable
 
@@ -315,7 +317,24 @@ def test_slope_at_nhdplus_minimum_gives_unknown_backwater():
         with duckdb.connect(str(db_path), read_only=True) as con:
             f = con.sql("SELECT * FROM link_features").df().set_index("station_id")
     assert pd.isna(f.loc["UP", "backwater_km"])
+    assert pd.isna(f.loc["UP", "reservoir_volume_proxy"])
     assert pd.isna(f.loc["UP", "upstream_in_former_reservoir"])
+
+
+def test_no_positive_height_gives_unknown_size():
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        write_tables(directory)
+        dams = pd.read_parquet(directory / "dam_removal.parquet")
+        dams["Dam_Height_ft"] = 0.0
+        dams.to_parquet(directory / "dam_removal.parquet", index=False)
+        db_path = directory / "warehouse.duckdb"
+        bv.build_database(db_path, directory, years_before=5, years_after=5,
+                          min_samples=3, min_years=2)
+        with duckdb.connect(str(db_path), read_only=True) as con:
+            f = con.sql("SELECT * FROM link_features").df().set_index("station_id")
+    assert f[["backwater_km", "reservoir_volume_proxy",
+              "upstream_in_former_reservoir"]].loc["UP"].isna().all()
 
 
 def test_flow_permanence():

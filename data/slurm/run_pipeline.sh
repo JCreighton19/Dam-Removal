@@ -56,6 +56,7 @@ STAGES=(
     clean_wq_results
     build_daily_measurements
     build_views
+    build_dam_reservoir
     build_station_watershed
     download_nlcd
     load_land_cover

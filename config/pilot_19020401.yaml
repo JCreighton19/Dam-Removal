@@ -33,8 +33,14 @@ wq_window:
 # 2021), and the DAR sensitivity analysis (notebooks/dar_sensitivity.ipynb)
 # found distance does nearly all the filtering. Remove a limit (or set it to
 # null) to link every connected station, e.g. for that sensitivity analysis.
+# 2026-11-04: downstream widened from 10 to 30 km so the distance models can
+# estimate how each parameter's effect fades with distance instead of
+# assuming a cutoff (stage 1 audit: dams with pre/post downstream data 205 at
+# 10 km -> 464 at 30 km, no natural break). analysis/mixed_model.py keeps its
+# existing models at 10 km (SETTINGS["max_downstream_km"]). Upstream
+# controls stay within 10 km: a station farther up isn't a comparable reach.
 exposure:
-  max_downstream_km: 10
+  max_downstream_km: 30
   max_upstream_km: 10
 
 # WQP CharacteristicName values of interest, seeded from the exploratory

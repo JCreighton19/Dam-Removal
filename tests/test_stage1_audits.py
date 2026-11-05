@@ -43,6 +43,8 @@ def test_size_variables_units_and_invalid_values():
     assert out.loc[2, ["height_m", "backwater_km"]].isna().all()                 # zero height
     assert pd.notna(out.loc[3, "backwater_km"]) and pd.isna(out.loc[3, "reservoir_volume_proxy"])
     assert out.loc[4, "slope_at_floor"] == True and out.loc[0, "slope_at_floor"] == False  # noqa: E712
+    # At the NHDPlus minimum slope, backwater and proxy are unknown (as in build_views).
+    assert out.loc[4, ["backwater_km", "reservoir_volume_proxy"]].isna().all()
     assert pd.isna(out.loc[1, "slope_at_floor"])
     assert out.loc[5, ["height_m", "reservoir_volume_proxy"]].isna().all()
 
@@ -146,11 +148,38 @@ def test_reservoir_build_keeps_measured_and_constructed_apart():
     assert table["normal_storage_acre_ft"].notna().sum() == 1
     assert table["storage_matched_by_NID_ID"].tolist() == [True, False, False]
     assert any("matched on NID_ID: 1 of 2" in n for n in notes)
+    # NABI_ID is never a join key, even when the file's ids look like it.
+    assert "storage_matched_by_NABI_ID" not in table
+    assert not any("NABI_ID" in n for n in notes)
 
     cov_table = res.coverage(table.reset_index(), ["normal_storage_acre_ft",
                                                    "storage_matched_by_NID_ID"],
                              {"all": pd.Series(True, index=range(3))})
     assert cov_table["with_value"].tolist() == [1, 1]
+
+
+def test_storage_never_matches_on_nabi_id():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _reservoir_project(root)
+        # A file keyed by A's NABI_ID ("N1"): must not match anything.
+        pd.DataFrame({"NIDID": ["N1"], "NORM_STOR": [999.0]}).to_csv(root / "nabd.csv",
+                                                                     index=False)
+        with mock.patch.dict(os.environ, {PROJECT_ROOT_ENV_VAR: str(root)}):
+            table, _ = res.build(load_config(CASE), storage_file=root / "nabd.csv",
+                                 read_polygons=False)
+    assert table["normal_storage_acre_ft"].isna().all()
+    assert not table["storage_matched_by_NID_ID"].any()
+
+
+def test_collinearity_with_drainage_area():
+    area = np.array([1, 10, 100, 1000, 10, 100, 1000, 1, 100, 10, 1000, 1.0])
+    table = pd.DataFrame({"reach_totdasqkm": area, "proxy": area ** 2,
+                          "noise": np.resize([5.0, 1.0, 3.0, 2.0], 12), "few": [1.0] + [None] * 11})
+    out = res.collinearity(table, ["proxy", "noise", "few", "absent"]).set_index("size")
+    assert out.loc["proxy", "pearson_log10"] == 1 and out.loc["proxy", "vif"] > 1000
+    assert out.loc["noise", "vif"] < 5 and out.loc["noise", "n"] == 12
+    assert "insufficient" in out.loc["few", "note"] and "absent" not in out.index
 
 
 # --------------------------------------------------
@@ -189,6 +218,50 @@ def test_coverage_counts_from_unlimited_views():
 
     link = links.set_index("band").loc["00-05"]
     assert link["links"] == 2 and link["links_with_window_data"] == 2
+
+
+def test_band_labels_match_band_sql():
+    distance = pd.Series([0.0, 0.1, 5.0, 5.01, 30.0, 31.0, None])
+    assert cov.band_labels(distance).tolist() == ["00-05", "00-05", "00-05", "05-10", "20-30",
+                                                  "30+", "distance_unknown"]
+
+
+def test_confluence_blocked_links():
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        pd.DataFrame({
+            "dam_id": [1.0, 1.0, 2.0, 2.0, 3.0, 9.0],
+            "station_id": ["U1", "C1", "C2", "O1", "C3", "C9"],
+            "relationship": ["downstream"] * 5 + ["downstream"],
+            "network_distance_km": [4.0, 12.0, 18.0, 3.0, 25.0, 2.0],
+            "dam_status": ["accepted", "accepted", "accepted", "ambiguous", "accepted",
+                           "accepted"],
+            "station_status": ["accepted", "ambiguous", "ambiguous", "accepted", "ambiguous",
+                               "ambiguous"],
+            "station_reason": [None, "confluence_ambiguous", "confluence_ambiguous", None,
+                               "far_without_support", "confluence_ambiguous"],
+            "usable": [True, False, False, False, False, False],
+        }).to_parquet(folder / "reach_links_01010001.parquet", index=False)
+        pd.DataFrame({"dam_id": [1.0], "station_id": ["X"], "relationship": ["upstream"],
+                      "network_distance_km": [1.0], "dam_status": ["accepted"],
+                      "station_status": ["ambiguous"], "station_reason": ["confluence_ambiguous"],
+                      "usable": [False]}).to_parquet(folder / "reach_links_01010002.parquet",
+                                                     index=False)
+        links = cov.read_reach_links(folder)
+    assert len(links) == 6                                        # the upstream pair is left out
+    assert links.set_index("station_id")["link_class"].to_dict() == {
+        "U1": "usable", "C1": "confluence_blocked", "C2": "confluence_blocked",
+        "O1": "other_blocked", "C3": "other_blocked", "C9": "confluence_blocked"}
+    # Dam 9 has no removal year (not in the set): left out.
+    by_band, gain = cov.confluence_tables(links, {"1", "2", "3"}, {"C2"})
+    gain = gain.set_index("cutoff_km")
+    assert gain.loc[10, "dams_usable"] == 1 and gain.loc[10, "dams_only_confluence_blocked"] == 0
+    # Within 20 km: dam 2's only downstream links are blocked (C2 confluence).
+    assert gain.loc[20, "dams_only_confluence_blocked"] == 1
+    assert gain.loc[20, "confluence_blocked_pairs"] == 2
+    assert gain.loc[20, "confluence_blocked_stations_with_any_data"] == 1
+    row = by_band.set_index(["band", "link_class"]).loc[("15-20", "confluence_blocked")]
+    assert row["pairs"] == 1 and row["stations_with_any_data"] == 1
 
 
 if __name__ == "__main__":

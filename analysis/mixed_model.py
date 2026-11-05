@@ -21,7 +21,15 @@ Design
      assigned_overlapping);
    - control: upstream of this dam, not downstream of another removal in
      its window (upstream_control), not possibly in the former reservoir.
-   Every other row is left out.
+   Every other row is left out. Treated rows farther downstream than
+   SETTINGS["max_downstream_km"] are left out too (2026-11-04): the
+   warehouse's exposure window was widened to 30 km for the distance
+   models, and this keeps the existing models on the 10 km they were fit
+   with. It restricts rows only; station-to-dam assignment and exposure
+   status come from the warehouse unchanged. (Exposure is judged over the
+   wider window, so a few measurements change status: e.g. an upstream
+   control 15-30 km below another recent removal is now
+   upstream_control_exposed and no longer a control.)
 2. One value per dam, station, series and day (the median), so same-day
    repeats and continuous loggers don't count as extra evidence. Skewed
    parameters (LOG_PARAMETERS) are modeled as log10.
@@ -100,6 +108,11 @@ SETTINGS = {
     "covariates": ["air_temp_mean_c", "precip_prev_month_mm"],
     # A model is fit only with at least this many dams (with both roles, for baci).
     "min_dams": 5,
+    # Treated (downstream) rows farther than this network distance (km) are
+    # left out (design 1); rows with no distance too. None keeps every
+    # treated row in the warehouse window. A modeling restriction only: it
+    # never changes station-to-dam assignment or exposure status.
+    "max_downstream_km": 10,
 }
 
 REQUIRED_COLUMNS = ["AR_ID", "station_id", "parameter_std", "sample_fraction_std", "side",
@@ -121,6 +134,8 @@ def read_measurements(path, settings=SETTINGS):
     """analysis_measurement (.parquet or .csv), only the columns the model uses."""
     path = Path(path)
     columns = list(dict.fromkeys(REQUIRED_COLUMNS + settings["covariates"]
+                                 + (["network_distance_km"]
+                                    if settings.get("max_downstream_km") is not None else [])
                                  + settings["exclude_flags"]
                                  + (["has_same_day_discharge"]
                                     if settings.get("require_same_day_discharge") else [])))
@@ -152,6 +167,9 @@ def assign_roles(df, settings=SETTINGS):
         flagged |= (df["parameter_std"].isin(needs_flow)
                     & ~df["has_same_day_discharge"].fillna(False).astype(bool))
     treated = (df["side"] == "downstream") & df["exposure_status"].isin(settings["treated_exposure"])
+    if (limit := settings.get("max_downstream_km")) is not None:
+        distance = pd.to_numeric(df["network_distance_km"], errors="coerce")
+        treated &= distance.le(float(limit)).fillna(False).astype(bool)
     control = ((df["side"] == "upstream") & df["exposure_status"].isin(settings["control_exposure"])
                & ~in_reservoir)
     return pd.Series(np.select([treated & ~flagged, control & ~flagged],

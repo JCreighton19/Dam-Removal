@@ -13,6 +13,7 @@ warehouse.duckdb views, so every rule lives in one place:
 - station_watershed (build_station_watershed.py)
 - land_cover, land_cover_codes (load_land_cover.py)
 - climate (load_climate.py)
+- dam_reservoir (build_dam_reservoir.py)
 
 Design choices (agreed 2026-10-19)
 ----------------------------------
@@ -84,6 +85,26 @@ Added 2026-11-02
    the flow it was carried by (advisor, 2026-11-02), so the mixed model
    keeps SSC / TSS rows only where it is known; it is also a flow covariate
    for any parameter. Discrete WQP flows only, not continuous gauge records.
+
+Added 2026-11-04 (reservoir size; Stage 2 of the reservoir / distance work)
+---------------------------------------------------------------------------
+15. Dam size, three kinds kept apart and never imputed (null = unknown):
+   - constructed, from link_features: backwater_km (dam height / reach
+     slope, a rough reservoir length) and reservoir_volume_proxy
+     (height_m^2 / slope * sqrt(dam drainage area), a size index, not a
+     measured volume or stored sediment). Both null without a positive
+     height, or when the reach slope is at the NHDPlus minimum
+     (build_views.MIN_BACKWATER_SLOPE): the old backwater for those dams
+     was up to 3,292 km.
+   - measured, from dam_reservoir: reservoir_status, and
+     reservoir_polygon_area_km2 / reservoir_polygon_timing for dams at a
+     mapped reservoir outlet. Use timing edited_by_removal_year for an
+     area mapped before the removal.
+   - dam_drainage_area_km2 (the dam reach's NHDPlus TotDASqKm), the size
+     model's river-size covariate: larger rivers have larger reservoirs
+     (advisor), and the proxy contains it.
+   main() prints how many dams have each, and downstream exposure status
+   by distance band (overlapping removals grow with the distance window).
 """
 
 from __future__ import annotations
@@ -95,6 +116,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import duckdb
+import pandas as pd
 
 from etl.build_daily_measurements import daily_ids
 from etl.build_views import ASSIGNED_STATUSES, add_view
@@ -104,6 +126,12 @@ from etl.common.warehouse import (DERIVED_TABLES, schema_errors, stale_reference
                                   warehouse_dir, write_parquet_atomic)
 
 REQUIRED_TABLES = ["station_watershed", "land_cover", "land_cover_codes", "climate"]
+# Choice 15; built by build_dam_reservoir.py (after build_views.py).
+RESERVOIR_TABLE = "dam_reservoir"
+
+# Downstream distance bands for the exposure report (network km, upper edge
+# inclusive, as in build_views.removal_link).
+DISTANCE_BANDS = [0, 5, 10, 15, 20, 30]
 
 EXPOSURE_STATUSES = [
     "assigned_sole", "assigned_nearest", "assigned_overlapping", "assigned_to_other_removal",
@@ -163,6 +191,13 @@ SCHEMA = {
     "year_built": "Int16",
     "dam_age_at_removal": "Int16",
     "original_use": "string",
+    # Dam size (choice 15): constructed, measured, river size
+    "backwater_km": "float64",
+    "reservoir_volume_proxy": "float64",
+    "reservoir_status": "string",
+    "reservoir_polygon_area_km2": "float64",
+    "reservoir_polygon_timing": "string",
+    "dam_drainage_area_km2": "float64",
     # Station quality flags (none applied)
     "qc_far_snap": "boolean",
     "qc_near_unsuitable_flowline": "boolean",
@@ -298,6 +333,12 @@ SELECT
     d.Year_built AS year_built,
     r.removal_year - d.Year_built AS dam_age_at_removal,
     d.Original_Use AS original_use,
+    lf.backwater_km,
+    lf.reservoir_volume_proxy,
+    dr.reservoir_status,
+    dr.polygon_area_km2 AS reservoir_polygon_area_km2,
+    dr.polygon_timing AS reservoir_polygon_timing,
+    lf.dam_drainage_area_km2,
     q.qc_far_snap,
     q.qc_near_unsuitable_flowline,
     q.qc_non_riverine_name,
@@ -322,6 +363,7 @@ FROM rows r
 JOIN wq_measurement m USING (measurement_id)
 JOIN dam_removal d ON d.AR_ID = r.AR_ID
 LEFT JOIN link_features lf ON lf.AR_ID = r.AR_ID AND lf.station_id = r.station_id
+LEFT JOIN dam_reservoir dr ON dr.AR_ID = r.AR_ID
 LEFT JOIN measurement_exposure e ON e.measurement_id = r.measurement_id
 LEFT JOIN pair_competing_removals pc ON pc.AR_ID = r.AR_ID AND pc.station_id = r.station_id
 LEFT JOIN station_qc q ON q.station_id = r.station_id
@@ -359,10 +401,19 @@ def sql_path(path):
 
 def stale_inputs(db_path):
     """Messages for context tables left from an earlier snapping or linking
-    run (they reference stations wq_station no longer has)."""
+    run (they reference stations wq_station no longer has), and for a
+    dam_reservoir table that doesn't cover dam_removal's dams."""
     inputs = {t: stage for t, stage in DERIVED_TABLES.items() if t != "analysis_measurement"}
     with duckdb.connect(str(db_path), read_only=True) as con:
-        return stale_reference_errors(con, inputs)
+        errors = stale_reference_errors(con, inputs)
+        n = con.sql(f"""
+            SELECT count(*) FROM dam_removal
+            WHERE AR_ID NOT IN (SELECT AR_ID FROM {RESERVOIR_TABLE})
+        """).fetchone()[0]
+    if n:
+        errors.append(f"{RESERVOIR_TABLE}: {n:,} dam_removal AR_ID(s) missing; stale, "
+                      "re-run build_dam_reservoir.py")
+    return errors
 
 
 def build_table(db_path):
@@ -414,6 +465,15 @@ def validate(table, expected_rows, daily_ids_written):
         errors.append("drainage_area_ratio <= 0")
     if table.loc[table["side"].ne("upstream"), "upstream_in_former_reservoir"].notna().any():
         errors.append("upstream_in_former_reservoir set for a station that isn't upstream")
+    for column in ["backwater_km", "reservoir_volume_proxy", "reservoir_polygon_area_km2",
+                   "dam_drainage_area_km2"]:
+        if (table[column] <= 0).any():
+            errors.append(f"{column} <= 0")
+    if table["reservoir_volume_proxy"].notna().gt(table["backwater_km"].notna()).any():
+        errors.append("reservoir_volume_proxy without backwater_km (slope / height rules differ)")
+    if table.loc[table["reservoir_status"].ne("dam_at_outlet").fillna(True),
+                 "reservoir_polygon_area_km2"].notna().any():
+        errors.append("reservoir_polygon_area_km2 set for a dam not at a reservoir outlet")
     return errors
 
 
@@ -427,6 +487,54 @@ def coverage_report(table):
     lines = [f"  {c:<22} {v:5.1f}% of rows" for c, v in filled.items()]
     lines.append(f"  dam-station pairs whose land cover is from after removal: {after}")
     return "\n".join(lines)
+
+
+def size_report(table):
+    """Dams with each size variable (choice 15), over all dams in the table
+    and over dams with downstream rows."""
+    dams = table.drop_duplicates("AR_ID")
+    downstream = set(table.loc[table["side"].eq("downstream"), "AR_ID"])
+    pre = dams["reservoir_polygon_area_km2"].where(
+        dams["reservoir_polygon_timing"].eq("edited_by_removal_year"))
+    columns = {"dam_height_ft": dams["dam_height_ft"],
+               "backwater_km": dams["backwater_km"],
+               "reservoir_volume_proxy": dams["reservoir_volume_proxy"],
+               "reservoir_polygon_area_km2": dams["reservoir_polygon_area_km2"],
+               "  mapped by the removal year": pre,
+               "dam_drainage_area_km2": dams["dam_drainage_area_km2"]}
+    is_down = dams["AR_ID"].isin(downstream)
+    lines = [f"  {'':<30} {'all dams':>14} {'downstream':>14}",
+             f"  {'dams':<30} {len(dams):>14,} {int(is_down.sum()):>14,}"]
+    for name, values in columns.items():
+        n_all, n_down = int(values.notna().sum()), int(values[is_down].notna().sum())
+        pct_all = 100 * n_all / len(dams) if len(dams) else 0
+        pct_down = 100 * n_down / is_down.sum() if is_down.any() else 0
+        lines.append(f"  {name:<30} {n_all:>7,} {pct_all:5.1f}% {n_down:>7,} {pct_down:5.1f}%")
+    return "\n".join(lines)
+
+
+def distance_band(distance, edges=DISTANCE_BANDS):
+    """'00-05', '05-10', ... and '30+' beyond the last edge; 'unknown' when
+    null (upper edges inclusive)."""
+    labels = [f"{lo:02d}-{hi:02d}" for lo, hi in zip(edges[:-1], edges[1:])]
+    out = pd.cut(distance, bins=edges + [float("inf")], labels=labels + [f"{edges[-1]}+"],
+                 right=True, include_lowest=True).astype("string")
+    return out.fillna("unknown")
+
+
+def exposure_by_band_report(table):
+    """Downstream rows by exposure_status and distance band, and dams with
+    assigned rows per band: how overlapping and competing removals grow
+    with distance."""
+    down = table[table["side"].eq("downstream")]
+    if down.empty:
+        return "  no downstream rows"
+    band = distance_band(down["network_distance_km"])
+    rows = pd.crosstab(down["exposure_status"], band, margins=True, margins_name="all")
+    dams = down[down["exposure_status"].isin(ASSIGNED_STATUSES)].groupby(
+        band[down["exposure_status"].isin(ASSIGNED_STATUSES)])["AR_ID"].nunique()
+    return (rows.to_string() + "\n\n  dams with assigned rows per band:\n"
+            + dams.to_string())
 
 
 def exposure_report(table):
@@ -455,6 +563,8 @@ def main():
                            "warehouse.duckdb (run build_views.py first)")
     for table in REQUIRED_TABLES:
         require_file(output_dir / f"{table}.parquet", f"{table} table (run the step 5 stages first)")
+    require_file(output_dir / f"{RESERVOIR_TABLE}.parquet",
+                 f"{RESERVOIR_TABLE} table (run build_dam_reservoir.py after build_views.py)")
     require_file(output_dir / "wq_measurement_daily.parquet",
                  "wq_measurement_daily table (run build_daily_measurements.py first)")
 
@@ -487,6 +597,10 @@ def main():
     print(coverage_report(table))
     print("\nExposure (assigned_* rows give one exposure per measurement):")
     print(exposure_report(table))
+    print("\nDownstream rows by exposure status and distance band (km):")
+    print(exposure_by_band_report(table))
+    print("\nDam size variables (dams with a value; choice 15, nothing imputed):")
+    print(size_report(table))
     print("\nRows with station flags (not applied):")
     for column in ["qc_far_snap", "qc_near_unsuitable_flowline", "qc_non_riverine_name",
                    "qc_saline"]:

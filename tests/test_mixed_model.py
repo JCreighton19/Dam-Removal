@@ -25,6 +25,7 @@ def row(**kw):
             "sample_fraction_std": None, "side": "downstream", "period": "pre",
             "sample_date": "2010-06-01", "month": 6, "result_value_std": 10.0,
             "exposure_status": "assigned_sole", "upstream_in_former_reservoir": None,
+            "network_distance_km": 2.0,
             "qc_non_perennial": False, "has_same_day_discharge": False,
             "air_temp_mean_c": 20.0, "precip_prev_month_mm": 50.0}
     return {**base, **kw}
@@ -79,6 +80,23 @@ def test_roles():
     strict = mm.assign_roles(df, {**SETTINGS, "treated_exposure": ["assigned_sole",
                                                                   "assigned_nearest"]})
     assert strict.tolist()[5] == "excluded"
+
+
+def test_downstream_distance_restriction():
+    df = pd.DataFrame([
+        row(network_distance_km=10.0),                            # treated: limit inclusive
+        row(network_distance_km=10.5),                            # excluded: beyond 10 km
+        row(network_distance_km=None),                            # excluded: unknown distance
+        row(side="upstream", exposure_status="upstream_control",
+            network_distance_km=25.0),                            # control: limit is downstream only
+    ])
+    assert mm.SETTINGS["max_downstream_km"] == 10                 # existing models unchanged
+    assert mm.assign_roles(df, SETTINGS).tolist() == [
+        "treated", "excluded", "excluded", "control"]
+    wide = mm.assign_roles(df, {**SETTINGS, "max_downstream_km": None})
+    assert wide.tolist() == ["treated", "treated", "treated", "control"]
+    # Exposure status is read, never rewritten, by the restriction.
+    assert df["exposure_status"].tolist()[:3] == ["assigned_sole"] * 3
 
 
 def test_non_perennial_excluded_by_default():
