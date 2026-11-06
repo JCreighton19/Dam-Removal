@@ -639,11 +639,12 @@ def summarize(result, rows, series, spec, effect, refs, meta, settings, reml=Tru
     return out, coefficients, effects_at
 
 
-def fit_one(restricted, series, spec, settings, counts=None, reference_km=5.0,
-            size_variable="proxy", re_mode="intercepts", reml=True, common_sample=False,
-            fixed_refs=None, lrt_bootstrap=99, lrt_workers=1):
-    """One series x spec. Returns a dict: row (results row, with 'error' when
-    skipped or failed), coefficients, effects_at, result (or None), rows."""
+def model_frame(restricted, series, spec, settings, reference_km=5.0, size_variable="proxy",
+                common_sample=False, fixed_refs=None):
+    """The exact rows one series x spec is fit on, without fitting (also read
+    by notebooks/analysis/model_input_eda.ipynb). Returns (rows, refs, meta):
+    meta counts the dams before the modifiers and the rows dropped for a
+    missing modifier or covariate."""
     design = SPECS[spec]["design"]
     base_rows = mm.model_rows(restricted[restricted["series"] == series], design, settings)
     if common_sample:
@@ -652,10 +653,21 @@ def fit_one(restricted, series, spec, settings, counts=None, reference_km=5.0,
                                            fixed_refs)
     rows = mm.model_rows(rows, design, settings)
     complete = rows.dropna(subset=settings["covariates"])
-    meta = {**(counts or {}), "dams_before_modifier": base_rows["AR_ID"].nunique(),
+    meta = {"dams_before_modifier": base_rows["AR_ID"].nunique(),
             "rows_dropped_missing_modifier": n_modifier,
-            "rows_dropped_missing_covariates": len(rows) - len(complete),
-            "re_mode": re_mode, "common_sample": common_sample}
+            "rows_dropped_missing_covariates": len(rows) - len(complete)}
+    return complete, refs, meta
+
+
+def fit_one(restricted, series, spec, settings, counts=None, reference_km=5.0,
+            size_variable="proxy", re_mode="intercepts", reml=True, common_sample=False,
+            fixed_refs=None, lrt_bootstrap=99, lrt_workers=1):
+    """One series x spec. Returns a dict: row (results row, with 'error' when
+    skipped or failed), coefficients, effects_at, result (or None), rows."""
+    design = SPECS[spec]["design"]
+    complete, refs, frame_meta = model_frame(restricted, series, spec, settings, reference_km,
+                                             size_variable, common_sample, fixed_refs)
+    meta = {**(counts or {}), **frame_meta, "re_mode": re_mode, "common_sample": common_sample}
     head = {"series": series, "spec": spec, "design": design,
             "dams": complete["AR_ID"].nunique(), "days": len(complete), **meta}
     empty = {"coefficients": [], "effects_at": [], "result": None, "rows": complete,

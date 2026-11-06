@@ -155,6 +155,17 @@ def test_missing_size_is_dropped_and_counted_not_imputed():
     assert row["sample_flag"] == ""                            # 16 dams: at or above 15
 
 
+def test_model_frame_is_the_fitted_rows():
+    daily = simulate(missing_size_every=3)
+    for spec in ["baci_distance", "before_after_scaled_distance", "baci_size"]:
+        rows, refs, meta = dm.model_frame(daily, "water_temp", spec, SETTINGS)
+        fitted = dm.fit_one(daily, "water_temp", spec, SETTINGS)
+        # fit_one then adds its interaction columns to the same rows.
+        pd.testing.assert_frame_equal(rows, fitted["rows"][rows.columns])
+        assert refs == fitted["refs"]
+        assert meta["dams_before_modifier"] == fitted["row"]["dams_before_modifier"]
+
+
 def test_small_samples_are_flagged_or_skipped():
     results, _, _ = dm.fit_all(simulate(n_dams=12), ["baci_distance"], SETTINGS)
     assert results.iloc[0]["sample_flag"].startswith("exploratory")
