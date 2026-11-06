@@ -18,6 +18,9 @@ their first code cell. They need the data on the cluster, except
 8. `sbatch data/slurm/fit_mixed_model.slurm`, then `analysis/mixed_model_results.ipynb`
 9. `data/slurm/fit_distance_models.slurm` and `fit_stage4.slurm`, then
    `analysis/distance_model_results.ipynb`
+10. `RUNS="audit_10km audit_30km"`, then `RUNS="time time_ml time_pretrend"` and
+    `RUNS="modifiers modifiers_unadjusted"` with `fit_distance_models.slurm`, then
+    `analysis/time_and_modifier_results.ipynb`
 
 ## `qa/`: check the warehouse before analysis
 
@@ -37,6 +40,7 @@ their first code cell. They need the data on the cluster, except
 | `model_input_eda.ipynb` | EDA on the exact rows the models are fit on (rebuilt with `mixed_model.prepare` / `model_rows` and `distance_models.model_frame`, fits nothing): where `analysis_measurement` rows are excluded and why, sample size per model, a map of the model dams (BACI vs before/after only, a layer per measure; reads the warehouse `dam_removal` table for coordinates), concentration in a few dams, pre/post balance (month, provider, censoring, turbidity unit), outliers, a model-free dam-level BACI check, distance / dilution spread, size, dam / watershed / climate characteristics of the model dams, stations and days (height, age, use, reservoir size, upstream area, land cover, climate; BACI vs before/after-only vs not-modeled dams, treated vs control stations), covariate shifts, and a checklist. `DAM_REMOVAL_ANALYSIS_INPUT` reads another file | `build_analysis_dataset` |
 | `mixed_model_results.ipynb` | Reads the outputs of `analysis/mixed_model.py` (fits nothing itself, opens in seconds) | `fit_mixed_model` |
 | `distance_model_results.ipynb` | Stages 3-4: how each effect changes with distance downstream and with reservoir size; sensitivity runs, random-effects choice, leave-one-dam-out and bootstrap, raw vs scaled distance, pH upstream / downstream split, minimum detectable effects. Reads `stage3/` and `stage4/` outputs; fits nothing | `fit_distance_models` (RE=auto and RE=intercepts), `fit_stage4` |
+| `time_and_modifier_results.ipynb` | How the BACI effect changes with years since removal (year 1, years 2–3, years 4–5 vs one effect for all 5 years, pre-trend check) and which dam / watershed characteristics go with bigger or smaller effects (availability, correlations, screen with q-values, adjusted vs unadjusted, combined model, fit checks). Reads `stage5/`; fits nothing | `fit_distance_models.slurm` stage5 runs |
 | `local_eda.ipynb` | Quick local EDA on the exported CSV (`analysis_measurement_all_removals.csv` at the repo root, from `data/slurm/export_analysis_csv.slurm`). Not in git (`.gitignore`) | `export_analysis_csv` |
 
 ## `exploration/`: early source exploration (historical)
