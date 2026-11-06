@@ -38,6 +38,33 @@
 #   common_sample  raw vs reservoir-length-scaled distance on exactly the same
 #                  dams and days, maximum likelihood, intercepts for both (so
 #                  AIC compares the distance terms, not random effects)
+#
+# Time since removal and dam / watershed characteristics (designs 11-12 of
+# analysis/distance_models.py; added 2026-11-06). Not in the default RUNS:
+# name them. They write to stage5/<run>__<RE>/, which the Stage 4 report
+# doesn't read.
+#   audit_10km, audit_30km
+#                  no fits: time_coverage_by_year/_bin.csv (which time bins the
+#                  data support) and modifier_audit.csv / modifier_correlations.csv
+#                  (availability, missingness, collinearity). Run first; minutes.
+#   time           binary BACI and before/after (the benchmark: the mixed_model.py
+#                  formulas) next to the time-since-removal models, 10 km
+#   time_ml        the same by maximum likelihood with intercepts: the
+#                  likelihood-ratio test and AIC / BIC of time-varying vs constant
+#                  effect (time_comparison.csv)
+#   time_pretrend  BACI with the pre period split (late pre = reference): the early
+#                  pre bin is a placebo for diverging pre-removal trends
+#   modifiers      each characteristic alone as a modifier of the effect, adjusted
+#                  for distance and dilution, 30 km (modifier_screen.csv). 16 specs
+#                  x every series: the longest run; LRT_BOOT=0 skips the bootstrap
+#   modifiers_unadjusted   the same without the distance / dilution adjustment
+#   modifiers_combined     several characteristics together: set COMBINED, e.g.
+#                  COMBINED="dam_height pct_developed" RUNS=modifiers_combined sbatch ...
+#                  Check combined_check.csv (written by the run) before reading it.
+#
+#   RUNS="audit_10km audit_30km" sbatch data/slurm/fit_distance_models.slurm
+#   RUNS="time time_ml time_pretrend" sbatch data/slurm/fit_distance_models.slurm
+#   RUNS=modifiers sbatch data/slurm/fit_distance_models.slurm
 
 set -uo pipefail
 
@@ -62,6 +89,14 @@ declare -A ARGS=(
     [dar_le_2]="--specs $DISTANCE --max-dar 2"
     [keep_suspects]="--specs $DISTANCE --keep-suspect-dams"
     [common_sample]="--specs $ALL_DISTANCE --common-sample --ml --re intercepts"
+    [audit_10km]="--stage stage5 --audit-only --max-km 10"
+    [audit_30km]="--stage stage5 --audit-only"
+    [time]="--stage stage5 --spec-sets time --max-km 10"
+    [time_ml]="--stage stage5 --spec-sets time --max-km 10 --ml --re intercepts"
+    [time_pretrend]="--stage stage5 --specs baci_binary baci_time --max-km 10 --time-bins pretrend"
+    [modifiers]="--stage stage5 --spec-sets modifier_screen"
+    [modifiers_unadjusted]="--stage stage5 --spec-sets modifier_screen_unadjusted"
+    [modifiers_combined]="--stage stage5 --specs baci_x_combined before_after_x_combined --combined ${COMBINED:-}"
 )
 RUNS="${RUNS:-primary dilution size_proxy size_polygon dar_le_100 dar_le_10 dar_le_2 keep_suspects common_sample}"
 
@@ -72,9 +107,12 @@ for run in $RUNS; do
     if [[ -z "${ARGS[$run]+set}" ]]; then
         echo "Unknown run '$run'"; failed+=("$run"); continue
     fi
-    # common_sample always uses intercepts (its --re comes last and wins).
+    # Runs that fix --re intercepts (it comes last and wins) are named for it.
     name="${run}__${RE}"
-    [[ "$run" == "common_sample" ]] && name="${run}__intercepts"
+    [[ "${ARGS[$run]}" == *"--re intercepts"* ]] && name="${run}__intercepts"
+    if [[ "$run" == "modifiers_combined" && -z "${COMBINED:-}" ]]; then
+        echo "modifiers_combined needs COMBINED=\"<characteristic> ...\""; failed+=("$run"); continue
+    fi
     echo
     echo "=================== run: $name ==================="
     # ARGS is split into words on purpose.
