@@ -46,6 +46,18 @@ relying on this. Other binnings: `--time-bins yearly`, `y1-2_y3-5`, or `'pre:-5:
   both fits' `fit_check`. In the ML run (`time_ml`) it adds the likelihood-ratio test and AIC / BIC. If
   the time fit's likelihood comes out *below* the nested binary fit's, the optimizer stopped short; the
   test is then left blank with a note rather than reported.
+- **Sensitivity analyses** (labelled `analysis_role = sensitivity` in every table; they check
+  the primary results above, they don't replace them):
+  - `time_ml_slopes`: the binary vs time comparison by maximum likelihood with **dam random slopes in
+    both models**. The primary `time_ml` comparison uses intercepts only, which overstates certainty
+    where dams differ (most measures). The likelihood-ratio test and AIC / BIC are reported only when
+    both fits have identical observations (dams, stations, days) and the same fitted random-effects
+    structure (`same_random_effects`); otherwise a note says why. Where dam slopes aren't supported
+    (temperature BACI) the slopes fit can stop short of its maximum, which is flagged the same way.
+  - `time_coarse`: BACI with 1–2 / 3–5 year intervals (cluster audit: 15–16 dams with downstream and
+    upstream data per interval for temperature, DO and pH vs 12–13 with the primary 1 / 2–3 / 4–5).
+  - Every interval in `effects_at.csv` reports `treated_dams_in_bin`, `control_dams_in_bin`,
+    `dams_both_roles_in_bin` and the daily observations by role.
 - **Pre-trend check** (`time_pretrend`): pre years are split into late (−2…−1, reference) and early
   (−5…−3). The early-pre BACI term should be ~0. If it isn't, downstream and upstream were already
   diverging before removal, and the BACI effect can't be read as the removal's.
@@ -109,6 +121,7 @@ that the characteristic causes the difference.
 ```
 RUNS="audit_10km audit_30km" sbatch data/slurm/fit_distance_models.slurm   # minutes; check first
 RUNS="time time_ml time_pretrend" sbatch data/slurm/fit_distance_models.slurm
+RUNS="time_ml_slopes time_coarse" sbatch data/slurm/fit_distance_models.slurm   # sensitivity
 RUNS=modifiers sbatch data/slurm/fit_distance_models.slurm                 # longest: 16 specs x series
 ```
 

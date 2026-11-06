@@ -54,6 +54,12 @@
 #                  effect (time_comparison.csv)
 #   time_pretrend  BACI with the pre period split (late pre = reference): the early
 #                  pre bin is a placebo for diverging pre-removal trends
+#   time_ml_slopes SENSITIVITY for time_ml: the same ML comparison with dam random
+#                  slopes in both models (intercepts-only likelihoods are
+#                  overconfident where dams differ); the LRT / AIC is reported only
+#                  where both fits have the same observations and random effects
+#   time_coarse    SENSITIVITY for time: BACI with 1-2 / 3-5 year intervals instead
+#                  of 1 / 2-3 / 4-5 (more dams per interval)
 #   modifiers      each characteristic alone as a modifier of the effect, adjusted
 #                  for distance and dilution, 30 km (modifier_screen.csv). 16 specs
 #                  x every series: the longest run; LRT_BOOT=0 skips the bootstrap
@@ -64,6 +70,7 @@
 #
 #   RUNS="audit_10km audit_30km" sbatch data/slurm/fit_distance_models.slurm
 #   RUNS="time time_ml time_pretrend" sbatch data/slurm/fit_distance_models.slurm
+#   RUNS="time_ml_slopes time_coarse" sbatch data/slurm/fit_distance_models.slurm
 #   RUNS=modifiers sbatch data/slurm/fit_distance_models.slurm
 
 set -uo pipefail
@@ -94,6 +101,8 @@ declare -A ARGS=(
     [time]="--stage stage5 --spec-sets time --max-km 10"
     [time_ml]="--stage stage5 --spec-sets time --max-km 10 --ml --re intercepts"
     [time_pretrend]="--stage stage5 --specs baci_binary baci_time --max-km 10 --time-bins pretrend"
+    [time_ml_slopes]="--stage stage5 --analysis-role sensitivity --spec-sets time --max-km 10 --ml --re slopes"
+    [time_coarse]="--stage stage5 --analysis-role sensitivity --specs baci_binary baci_time --max-km 10 --time-bins y1-2_y3-5"
     [modifiers]="--stage stage5 --spec-sets modifier_screen"
     [modifiers_unadjusted]="--stage stage5 --spec-sets modifier_screen_unadjusted"
     [modifiers_combined]="--stage stage5 --specs baci_x_combined before_after_x_combined --combined ${COMBINED:-}"
@@ -107,9 +116,11 @@ for run in $RUNS; do
     if [[ -z "${ARGS[$run]+set}" ]]; then
         echo "Unknown run '$run'"; failed+=("$run"); continue
     fi
-    # Runs that fix --re intercepts (it comes last and wins) are named for it.
+    # Runs that fix --re (it comes last and wins) are named for it.
     name="${run}__${RE}"
-    [[ "${ARGS[$run]}" == *"--re intercepts"* ]] && name="${run}__intercepts"
+    if [[ "${ARGS[$run]}" =~ --re[[:space:]]+([a-z]+) ]]; then
+        name="${run}__${BASH_REMATCH[1]}"
+    fi
     if [[ "$run" == "modifiers_combined" && -z "${COMBINED:-}" ]]; then
         echo "modifiers_combined needs COMBINED=\"<characteristic> ...\""; failed+=("$run"); continue
     fi

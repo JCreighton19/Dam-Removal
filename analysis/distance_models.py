@@ -142,7 +142,15 @@ Design (agreed 2026-11-05)
    before_after_binary are the existing mixed_model.py formulas (no
    modifiers) fit on the same rows, the benchmark: time_comparison.csv puts
    them side by side and, when both are fit by ML (--ml), the likelihood-
-   ratio test of time-varying vs constant effect and AIC / BIC.
+   ratio test of time-varying vs constant effect and AIC / BIC, only when
+   both have identical observations (dams, stations, days) and the same
+   fitted random-effects structure (same_random_effects).
+   Sensitivity runs (--analysis-role sensitivity; slurm time_ml_slopes and
+   time_coarse): the ML comparison with dam random slopes in both models
+   (an intercepts-only likelihood is overconfident where dams differ), and
+   coarser 1-2 / 3-5 year bins. Each effects_at row reports the treated and
+   control dams and daily observations behind its interval and the dams
+   with both roles in it (what identifies a BACI interval).
 
 12. Dam and watershed characteristics as effect modifiers (*_x_<name>,
    *_xu_<name>; added 2026-11-06). CHARACTERISTICS lists each candidate,
@@ -907,7 +915,9 @@ def wald_f(result, contrasts, dams):
 def time_effects(result, rows, spec, effect, dams):
     """Design 11: (summary columns, [(label, weights, reported)]) for a time
     spec. The average effect weights the post bins by treated post days."""
-    treated = rows[rows["role"].eq("treated")] if SPECS[spec]["design"] == "baci" else rows
+    baci = SPECS[spec]["design"] == "baci"
+    treated = rows[rows["role"].eq("treated")] if baci else rows
+    control = rows[rows["role"].eq("control")] if baci else rows.iloc[0:0]
     bins = [(k.split(":", 1)[1], t) for k, t in effect.items() if k.startswith("time:")]
     post = [(b, t) for b, t in bins if f"tbpost_{b}" in rows and t in result.fe_params]
     pre = [(b, t) for b, t in bins if f"tbpre_{b}" in rows and t in result.fe_params]
@@ -920,18 +930,27 @@ def time_effects(result, rows, spec, effect, dams):
     summary = {"time_post_bins": ", ".join(b for b, _ in post),
                "time_change_F": change[0], "time_change_df": change[1], "time_change_p": change[2],
                "pretrend_F": pretrend[0], "pretrend_df": pretrend[1], "pretrend_p": pretrend[2]}
+    def counts(t_rows, c_rows):
+        """Dams and daily observations behind an interval, by role. BACI
+        identifies an interval's effect from dams with both roles in it."""
+        both = len(set(t_rows["AR_ID"]) & set(c_rows["AR_ID"])) if baci else np.nan
+        return {"treated_days_in_bin": len(t_rows), "treated_dams_in_bin": t_rows["AR_ID"].nunique(),
+                "control_days_in_bin": len(c_rows) if baci else np.nan,
+                "control_dams_in_bin": c_rows["AR_ID"].nunique() if baci else np.nan,
+                "dams_both_roles_in_bin": both}
+
     points = []
     for kind, group in (("pre", pre), ("post", post)):
         for b, t in group:
-            in_bin = treated[treated[f"tb{kind}_{b}"] == 1]
+            column = f"tb{kind}_{b}"
             points.append((b, {t: 1.0}, {"time_bin": b, "time_bin_period": kind,
-                                         "treated_days_in_bin": len(in_bin),
-                                         "treated_dams_in_bin": in_bin["AR_ID"].nunique()}))
+                                         **counts(treated[treated[column] == 1],
+                                                  control[control[column] == 1])}))
     if weights:
         points.append(("post average", weights, {"time_bin": "post average",
                                                  "time_bin_period": "post",
-                                                 "treated_days_in_bin": int(total),
-                                                 "treated_dams_in_bin": dams}))
+                                                 **counts(treated[treated["post"] == 1],
+                                                          control[control["post"] == 1])}))
     return summary, weights, points
 
 
@@ -1335,9 +1354,13 @@ def time_comparison(results):
         if binary not in group.index or time not in group.index:
             continue
         b, t = group.loc[binary], group.loc[time]
-        same = bool(b["days"] == t["days"] and b["dams"] == t["dams"])
+        same = bool(b["days"] == t["days"] and b["dams"] == t["dams"]
+                    and b["stations"] == t["stations"])
         ml = not bool(b.get("reml", True)) and not bool(t.get("reml", True))
+        same_re = b.get("re_structure") == t.get("re_structure")
         row = {"series": series, "design": design, "same_sample": same, "ml": ml,
+               "same_random_effects": same_re, "binary_re_structure": b.get("re_structure"),
+               "time_re_structure": t.get("re_structure"),
                "dams": b["dams"], "days": b["days"], "time_bins": t.get("time_bins"),
                "binary_effect": b["effect_at_reference"], "binary_ci_low": b["effect_ci_low"],
                "binary_ci_high": b["effect_ci_high"],
@@ -1349,7 +1372,10 @@ def time_comparison(results):
                "pretrend_p": t.get("pretrend_p"), "binary_re": b["re_choice"],
                "time_re": t["re_choice"], "unit": b["unit"], "sample_flag": b["sample_flag"]}
         row.update({"binary_fit_check": b.get("fit_check"), "time_fit_check": t.get("fit_check")})
-        if same and ml and t["llf"] < b["llf"] - 1e-3:
+        if same and ml and not same_re:
+            row["lrt_note"] = (f"random effects differ ({b.get('re_structure')} vs "
+                               f"{t.get('re_structure')}): likelihoods not comparable")
+        elif same and ml and t["llf"] < b["llf"] - 1e-3:
             # The binary model is the time model with equal bins, so its maximum
             # likelihood can't be higher: the time fit stopped short of its maximum.
             row["lrt_note"] = (f"time fit's likelihood is below the nested binary fit's "
@@ -1470,6 +1496,9 @@ def main():
                         help="Named groups of specs added to --specs (designs 11, 12).")
     parser.add_argument("--audit-only", action="store_true",
                         help="Write the time-coverage and characteristic audits and fit nothing.")
+    parser.add_argument("--analysis-role", choices=["primary", "sensitivity"], default="primary",
+                        help="Label written to every output table and settings.json: "
+                             "sensitivity runs check a primary result, they don't replace it.")
     parser.add_argument("--common-sample", action="store_true",
                         help="Fit every spec on the rows all distance specs can use (design 5).")
     parser.add_argument("--ml", action="store_true",
@@ -1508,7 +1537,7 @@ def main():
                 "excluded_dams": exclude, "size_variable": args.size_variable,
                 "reference_km": args.reference_km, "re": args.re,
                 "common_sample": args.common_sample, "ml": args.ml, "combined": args.combined,
-                "audit_only": args.audit_only}
+                "audit_only": args.audit_only, "analysis_role": args.analysis_role}
     if args.audit_only:
         (out_dir / "settings.json").write_text(json.dumps(run_info, indent=2, default=str))
         print(f"Audit only: wrote {', '.join(written)}, settings.json to {out_dir}")
@@ -1529,14 +1558,15 @@ def main():
      pd.DataFrame(columns=["AR_ID", "treated_stations", "control_stations", "days", "series",
                            "spec", "design"])).to_csv(out_dir / "dams_used.csv", index=False)
 
-    results.to_csv(out_dir / "results.csv", index=False)
-    coefficients.to_csv(out_dir / "coefficients.csv", index=False)
-    effects_at.to_csv(out_dir / "effects_at.csv", index=False)
+    role = {"analysis_role": args.analysis_role}
+    results.assign(**role).to_csv(out_dir / "results.csv", index=False)
+    coefficients.assign(**role).to_csv(out_dir / "coefficients.csv", index=False)
+    effects_at.assign(**role).to_csv(out_dir / "effects_at.csv", index=False)
     if time_specs:
-        time_comparison(results).to_csv(out_dir / "time_comparison.csv", index=False)
+        time_comparison(results).assign(**role).to_csv(out_dir / "time_comparison.csv", index=False)
         written.append("time_comparison.csv")
     if char_specs:
-        modifier_screen(results).to_csv(out_dir / "modifier_screen.csv", index=False)
+        modifier_screen(results).assign(**role).to_csv(out_dir / "modifier_screen.csv", index=False)
         written.append("modifier_screen.csv")
     (out_dir / "settings.json").write_text(json.dumps(run_info, indent=2, default=str))
     print(f"\nWrote results.csv, coefficients.csv, effects_at.csv, dams_used.csv, "

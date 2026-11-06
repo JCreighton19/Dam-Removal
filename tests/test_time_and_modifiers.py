@@ -199,6 +199,58 @@ def test_time_spec_keeps_dam_slopes_on_post():
     assert "var_dam_post_downstream" in row and np.isfinite(row["var_dam_post_downstream"])
 
 
+def test_intervals_report_dams_and_observations_by_role():
+    daily = simulate(n_dams=12)
+    # Remove the year-5 control data at three dams: they then identify y4_5 from one role only.
+    daily = daily[~(daily["years_from_removal"].eq(5) & daily["AR_ID"].isin(["D00", "D01", "D02"])
+                    & daily["role"].eq("control"))]
+    _, _, at = fit(daily, ["baci_time"], {**SETTINGS, "min_dams": 5})
+    at = at.set_index("time_bin")
+    y1 = at.loc["y1"]
+    assert y1["treated_dams_in_bin"] == 12 and y1["control_dams_in_bin"] == 12
+    assert y1["dams_both_roles_in_bin"] == 12
+    assert y1["treated_days_in_bin"] == 12 * 2 * 4 and y1["control_days_in_bin"] == 12 * 4
+    late = at.loc["y4_5"]
+    assert late["dams_both_roles_in_bin"] == 12          # year 4 still has controls everywhere
+    assert late["control_days_in_bin"] == 12 * 4 * 2 - 3 * 4
+    avg = at.loc["post average"]
+    assert avg["treated_days_in_bin"] == 12 * 2 * 4 * 5
+    _, _, ba = fit(daily, ["before_after_time"], {**SETTINGS, "min_dams": 5})
+    assert ba["control_dams_in_bin"].isna().all() and ba["dams_both_roles_in_bin"].isna().all()
+
+
+def test_ml_comparison_with_dam_slopes_needs_matching_random_effects():
+    profile = {1: 3.0, 2: 2.0, 3: 2.0, 4: 1.0, 5: 1.0}
+    results, _, _ = fit(simulate(profile=profile), ["baci_binary", "baci_time"],
+                        re_mode="slopes", reml=False)
+    assert results["re_choice"].eq("slopes (requested)").all()
+    row = dm.time_comparison(results).iloc[0]
+    assert row["same_sample"] and row["same_random_effects"] and row["ml"]
+    assert row["binary_re_structure"] == row["time_re_structure"] == "dam slopes + station intercepts"
+    assert row["lrt_df"] == 4 and row["lrt_p"] < 0.001       # only fixed effects differ
+    # Different random effects (e.g. one fit fell back to intercepts): no likelihood test.
+    mixed = results.copy()
+    mixed.loc[mixed["spec"].eq("baci_time"), "re_structure"] = "dam intercepts + station intercepts"
+    row = dm.time_comparison(mixed).iloc[0]
+    assert not row["same_random_effects"] and np.isnan(row.get("lrt_p", np.nan))
+    assert "random effects differ" in row["lrt_note"]
+
+
+def test_coarse_bins_sensitivity():
+    settings = {**SETTINGS, "time_bins": dm.TIME_BINNINGS["y1-2_y3-5"]}
+    profile = {1: 3.0, 2: 3.0, 3: 1.0, 4: 1.0, 5: 1.0}
+    results, _, at = fit(simulate(profile=profile), ["baci_binary", "baci_time"], settings)
+    t = results.set_index("spec").loc["baci_time"]
+    assert t["time_bins"] == "pre:-5:-1;y1_2:1:2;y3_5:3:5" and t["time_change_df"] == 1
+    assert t["time_change_p"] < 0.001
+    by_bin = at[at["spec"].eq("baci_time")].set_index("time_bin")
+    assert list(by_bin.index) == ["y1_2", "y3_5", "post average"]
+    for b, truth in {"y1_2": 3.0, "y3_5": 1.0}.items():
+        assert by_bin.loc[b, "ci_low"] < truth < by_bin.loc[b, "ci_high"], b
+    assert by_bin.loc["y1_2", "dams_both_roles_in_bin"] == 30
+    assert dm.time_comparison(results).iloc[0]["same_sample"]
+
+
 def test_time_coverage_audit():
     daily = simulate(n_dams=12)
     daily = daily[~(daily["years_from_removal"].eq(5) & daily["AR_ID"].isin(["D00", "D01", "D02"])
@@ -352,6 +404,18 @@ def test_command_line_time_and_characteristic_runs():
         out = run("--spec-sets", "time", "--ml", "--min-dams", "5", out="time")
         results = pd.read_csv(out / "results.csv")
         assert set(results["spec"]) == set(dm.SPEC_SETS["time"])
+        assert results["analysis_role"].eq("primary").all()
+        # A sensitivity run is labelled as such in every table and in settings.json.
+        sens = run("--specs", "baci_binary", "baci_time", "--min-dams", "5", "--ml", "--re", "slopes",
+                   "--time-bins", "y1-2_y3-5", "--analysis-role", "sensitivity", out="sens")
+        for name in ("results.csv", "effects_at.csv", "coefficients.csv", "time_comparison.csv"):
+            assert pd.read_csv(sens / name)["analysis_role"].eq("sensitivity").all(), name
+        import json
+        info = json.loads((sens / "settings.json").read_text())
+        assert info["analysis_role"] == "sensitivity" and info["re"] == "slopes"
+        assert info["time_bins"][1] == ["y1_2", 1, 2]
+        compared = pd.read_csv(sens / "time_comparison.csv").iloc[0]
+        assert compared["same_random_effects"] and compared["ml"]
         comparison = pd.read_csv(out / "time_comparison.csv")
         assert set(comparison["design"]) == {"baci", "before_after"} and comparison["ml"].all()
         assert (out / "time_coverage_by_bin.csv").exists()
