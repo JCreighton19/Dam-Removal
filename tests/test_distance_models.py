@@ -222,11 +222,25 @@ def test_singular_flag_reads_the_final_variances():
     results, _, _ = dm.fit_all(simulate(), ["baci_distance"], SETTINGS)
     fitted = results.iloc[0]
     assert not fitted["singular"] and fitted["var_station"] > 0.01 and fitted["var_dam_intercept"] > 1
-    # No station-to-station differences: the station variance is estimated at ~0.
+    # No station-to-station differences: the station variance is estimated near 0.
+    # How near depends on where the optimizer stops (it landed exactly on 0
+    # locally but just above it on the cluster's library builds), so the fit is
+    # checked loosely and the flag rule exactly, on a fit result with known values.
     results, _, _ = dm.fit_all(simulate(station_sd=0.0), ["baci_distance"], SETTINGS)
     flat = results.iloc[0]
-    assert flat["singular"] and "station" in flat["near_zero_terms"]
-    assert flat["var_station"] < 1e-3 * flat["var_residual"]
+    assert flat["var_station"] < 0.1 * fitted["var_station"]
+    assert flat["singular"] == (flat["var_station"] < 1e-3 * flat["var_residual"]
+                                or flat["var_dam_intercept"] < 1e-3 * flat["var_residual"])
+
+    class Fit:   # what variance_components reads from a statsmodels MixedLM result
+        scale = 0.25
+        cov_re = pd.DataFrame([[2.0]], index=["Group"], columns=["Group"])
+        vcomp = np.array([1e-5])
+    flags = dm.variance_components(Fit())
+    assert flags["singular"] and flags["near_zero_terms"] == "station"
+    assert flags["var_dam_intercept"] == 2.0 and flags["var_residual"] == 0.25
+    Fit.vcomp = np.array([0.05])
+    assert not dm.variance_components(Fit())["singular"]
 
 
 def test_auto_random_effects_follow_the_data():
