@@ -20,6 +20,12 @@ echo "Job started: $(date)"
 echo "Case study: $DAM_REMOVAL_CASE_STUDY"
 echo "Building the analysis dataset (run after load_climate)"
 
-python -u etl/build_analysis_dataset.py
+# ELIGIBILITY_VARIANT=min1yr (or min1yr_2mo): the eligibility sensitivity variant
+# (docs/eligibility_sensitivity_prespec.md); unset = the primary rule.
+# With it, writes analysis_measurement_<variant>.parquet; the primary table is not touched.
+# VERIFY_PRIMARY=1: rebuild the primary table in memory and check it equals the existing
+# analysis_measurement.parquet (writes nothing), e.g. after the context stages ran for a variant.
+python -u etl/build_analysis_dataset.py ${ELIGIBILITY_VARIANT:+--eligibility-variant "$ELIGIBILITY_VARIANT"} \
+    ${VERIFY_PRIMARY:+--verify-primary}
 
 echo "Job completed: $(date)"

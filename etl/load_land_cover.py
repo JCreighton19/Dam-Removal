@@ -62,7 +62,8 @@ from etl.common.covariates import catchment_hashes, eligible_station_years, spli
 from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
 from etl.common.progress import HucProgress, huc8s_with_outputs
-from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
+from etl.common.warehouse import (add_variant_argument, context_db_path, progress_stage,
+                                  schema_errors, warehouse_dir, write_parquet_atomic)
 from etl.download_land_cover import (FIRST_YEAR, LAST_YEAR, clip_path, indexed_bounds,
                                      outside_coverage)
 
@@ -107,6 +108,13 @@ CODES_SCHEMA = {"class_code": "int16", "class_label": "string", "class_group": "
 # --------------------------------------------------
 # Inputs
 # --------------------------------------------------
+
+
+# What --eligibility-variant does here (docs/eligibility_sensitivity_prespec.md).
+VARIANT_HELP = ("covers the stations eligible under that rule (every primary station plus "
+                "those only the variant adds) and writes the same shared table; run with the "
+                "loosest variant, min1yr")
+
 
 def read_inputs(db_path, years_before, years_after, first_year=FIRST_YEAR, last_year=LAST_YEAR,
                 nearest_if_outside=False):
@@ -350,19 +358,20 @@ def main():
         help="Keep the downloaded clips after a successful run (by default "
         "they're deleted to save space; re-running needs a re-download).",
     )
+    add_variant_argument(parser, VARIANT_HELP)
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
     # A later attempt queued by run_pipeline.sh after this stage already
     # succeeded has nothing to do (and the clips may already be deleted).
-    done_dir = HucProgress(cfg, "load_land_cover").folder
+    done_dir = HucProgress(cfg, progress_stage("load_land_cover", args.eligibility_variant)).folder
     if (done_dir / "complete").exists():
         print("land_cover already written earlier in this run; nothing to do.")
         return
 
     output_dir = warehouse_dir(cfg)
-    db_path = require_file(output_dir / "warehouse.duckdb",
-                           "warehouse.duckdb (run build_views.py first)")
+    db_path = require_file(context_db_path(cfg, args.eligibility_variant),
+                           "views database (run build_views.py first)")
     watershed_path = require_file(output_dir / "station_watershed.parquet",
                                   "station_watershed table (run build_station_watershed.py first)")
 

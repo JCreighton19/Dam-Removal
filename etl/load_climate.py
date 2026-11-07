@@ -64,7 +64,8 @@ from etl.common.covariates import catchment_hashes, split_reusable
 from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
 from etl.common.progress import huc8s_with_outputs
-from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
+from etl.common.warehouse import (add_variant_argument, context_db_path, schema_errors,
+                                  warehouse_dir, write_parquet_atomic)
 from etl.download_climate import FIRST_YEAR, VARIABLES, clip_path, last_stable_year
 from etl.download_land_cover import outside_coverage
 from etl.load_land_cover import (BLOCK_ROWS, PIXEL_KM2, combine, delete_clip_folders,
@@ -95,6 +96,13 @@ SCHEMA = {
 # --------------------------------------------------
 # Weights: how much of each station's area lies in each PRISM cell
 # --------------------------------------------------
+
+
+# What --eligibility-variant does here (docs/eligibility_sensitivity_prespec.md).
+VARIANT_HELP = ("covers the stations eligible under that rule (every primary station plus "
+                "those only the variant adds) and writes the same shared table; run with the "
+                "loosest variant, min1yr")
+
 
 def catchment_zones(gdb_path, fids):
     """30 m Albers grid of catchment numbers (1..n, 0 = none) covering the
@@ -263,12 +271,13 @@ def main():
         help="Keep the downloaded clips after a successful run (by default "
         "they're deleted to save space; re-running needs a re-download).",
     )
+    add_variant_argument(parser, VARIANT_HELP)
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
     output_dir = warehouse_dir(cfg)
-    db_path = require_file(output_dir / "warehouse.duckdb",
-                           "warehouse.duckdb (run build_views.py first)")
+    db_path = require_file(context_db_path(cfg, args.eligibility_variant),
+                           "views database (run build_views.py first)")
     watershed_path = require_file(output_dir / "station_watershed.parquet",
                                   "station_watershed table (run build_station_watershed.py first)")
 

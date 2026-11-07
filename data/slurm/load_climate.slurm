@@ -20,6 +20,9 @@ echo "Job started: $(date)"
 echo "Case study: $DAM_REMOVAL_CASE_STUDY"
 echo "Summarizing monthly climate per station (run after download_climate)"
 
-python -u etl/load_climate.py
+# ELIGIBILITY_VARIANT=min1yr (or min1yr_2mo): the eligibility sensitivity variant
+# (docs/eligibility_sensitivity_prespec.md); unset = the primary rule.
+# With it, covers the variant's eligible stations (a superset of the primary's).
+python -u etl/load_climate.py ${ELIGIBILITY_VARIANT:+--eligibility-variant "$ELIGIBILITY_VARIANT"}
 
 echo "Job completed: $(date)"

@@ -23,6 +23,9 @@ echo "Downloading monthly PRISM climate for eligible stations (run after build_s
 # Each month is a ~40 MB download per variable, clipped per NHDPlus package
 # and then deleted. A re-run skips finished months. PRISM allows each file
 # to be downloaded at most twice per 24 hours.
-python -u etl/download_climate.py
+# ELIGIBILITY_VARIANT=min1yr (or min1yr_2mo): the eligibility sensitivity variant
+# (docs/eligibility_sensitivity_prespec.md); unset = the primary rule.
+# With it, covers the variant's eligible stations (a superset of the primary's).
+python -u etl/download_climate.py ${ELIGIBILITY_VARIANT:+--eligibility-variant "$ELIGIBILITY_VARIANT"}
 
 echo "Job completed: $(date)"

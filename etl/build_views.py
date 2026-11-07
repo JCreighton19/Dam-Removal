@@ -68,7 +68,8 @@ import duckdb
 
 from etl.common.config import default_case_study, load_config
 from etl.common.io import require_file
-from etl.common.warehouse import stale_reference_errors, warehouse_dir
+from etl.common.warehouse import (add_variant_argument, check_variant, stale_reference_errors,
+                                  views_db_path, warehouse_dir)
 
 TABLES = [
     "dam_removal",
@@ -151,15 +152,18 @@ def _sql_number(value):
 def settings_sql(years_before, years_after, min_samples, min_years,
                  saline_sc=DEFAULT_SALINE_SC, min_distance_ratio=DEFAULT_MIN_DISTANCE_RATIO,
                  max_downstream_km=DEFAULT_MAX_DOWNSTREAM_KM,
-                 max_upstream_km=DEFAULT_MAX_UPSTREAM_KM):
+                 max_upstream_km=DEFAULT_MAX_UPSTREAM_KM, min_months_single_year=1):
     """The two one-row settings views the views below read. A null distance
-    limit means no limit."""
+    limit means no limit. min_months_single_year: a side with samples in a
+    single year also needs them in this many distinct months (1, the
+    default, adds no condition; eligibility sensitivity variants only)."""
     return f"""
         CREATE VIEW eligibility_settings AS SELECT
             {int(years_before)} AS years_before,
             {int(years_after)} AS years_after,
             {int(min_samples)} AS min_samples,
             {int(min_years)} AS min_years,
+            {int(min_months_single_year)} AS min_months_single_year,
             {_sql_number(max_downstream_km)} AS max_downstream_km,
             {_sql_number(max_upstream_km)} AS max_upstream_km;
         CREATE VIEW qc_settings AS SELECT
@@ -236,15 +240,21 @@ WITH counts AS (
         count(*) FILTER (WHERE period = 'pre') AS n_pre,
         count(*) FILTER (WHERE period = 'post') AS n_post,
         count(DISTINCT sample_year) FILTER (WHERE period = 'pre') AS years_pre,
-        count(DISTINCT sample_year) FILTER (WHERE period = 'post') AS years_post
+        count(DISTINCT sample_year) FILTER (WHERE period = 'post') AS years_post,
+        count(DISTINCT month(sample_date)) FILTER (WHERE period = 'pre') AS months_pre,
+        count(DISTINCT month(sample_date)) FILTER (WHERE period = 'post') AS months_post
     FROM measurement_window
     WHERE period IN ('pre', 'post')
     GROUP BY ALL
 )
 SELECT
     counts.*,
-    n_pre >= min_samples AND years_pre >= min_years AS has_pre,
-    n_post >= min_samples AND years_post >= min_years AS has_post,
+    -- min_months_single_year only binds a side with samples in one year
+    -- (min_years 1); at the default (1) or with min_years >= 2 it never does.
+    n_pre >= min_samples AND years_pre >= min_years
+        AND (years_pre > 1 OR months_pre >= min_months_single_year) AS has_pre,
+    n_post >= min_samples AND years_post >= min_years
+        AND (years_post > 1 OR months_post >= min_months_single_year) AS has_post,
     has_pre AND has_post AS has_both
 FROM counts
 CROSS JOIN eligibility_settings;
@@ -440,7 +450,7 @@ def add_view(db_path, table, path):
 def build_database(db_path, parquet_dir, years_before, years_after, min_samples, min_years,
                    saline_sc=DEFAULT_SALINE_SC, min_distance_ratio=DEFAULT_MIN_DISTANCE_RATIO,
                    max_downstream_km=DEFAULT_MAX_DOWNSTREAM_KM,
-                   max_upstream_km=DEFAULT_MAX_UPSTREAM_KM):
+                   max_upstream_km=DEFAULT_MAX_UPSTREAM_KM, min_months_single_year=1):
     """Write the views to db_path (via a .tmp file, so a failed build never
     replaces a working database). Returns eligibility_summary and messages
     for derived tables that are stale (from an earlier snapping or linking
@@ -457,7 +467,8 @@ def build_database(db_path, parquet_dir, years_before, years_after, min_samples,
                 con.execute(table_view_sql(table, parquet_dir / f"{table}.parquet"))
 
         con.execute(settings_sql(years_before, years_after, min_samples, min_years,
-                                 saline_sc, min_distance_ratio, max_downstream_km, max_upstream_km))
+                                 saline_sc, min_distance_ratio, max_downstream_km, max_upstream_km,
+                                 min_months_single_year))
         con.execute(ELIGIBILITY_VIEWS)
         con.execute(EXPOSURE_QC_VIEWS)
 
@@ -484,6 +495,8 @@ def main():
         default=default_case_study(),
         help="Name of a config file under config/ (without the .yaml extension).",
     )
+    add_variant_argument(parser, "writes warehouse_<variant>.duckdb with that rule; "
+                                 "warehouse.duckdb is not touched")
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
@@ -501,6 +514,11 @@ def main():
     eligibility = cfg.get("eligibility", {}) or {}
     min_samples = int(eligibility.get("min_samples", DEFAULT_MIN_SAMPLES))
     min_years = int(eligibility.get("min_years", DEFAULT_MIN_YEARS))
+    min_months_single_year = 1
+    if args.eligibility_variant:
+        rule = check_variant(args.eligibility_variant)
+        min_samples, min_years = rule["min_samples"], rule["min_years"]
+        min_months_single_year = rule["min_months_single_year"]
     saline_sc = float((cfg.get("qc", {}) or {}).get("saline_sc_us_cm", DEFAULT_SALINE_SC))
     exposure = cfg.get("exposure", {}) or {}
     min_distance_ratio = float(exposure.get("min_distance_ratio", DEFAULT_MIN_DISTANCE_RATIO))
@@ -508,17 +526,24 @@ def main():
     max_upstream_km = exposure.get("max_upstream_km", DEFAULT_MAX_UPSTREAM_KM)
 
     print(f"Case study: {cfg.name}")
+    if args.eligibility_variant:
+        print(f"SENSITIVITY VARIANT {args.eligibility_variant}: "
+              f"{check_variant(args.eligibility_variant)['label']}; the primary "
+              "warehouse.duckdb is not touched")
     print(f"Window: {years_before} years before / {years_after} years after removal")
-    print(f"Each side needs >= {min_samples} samples in >= {min_years} distinct years")
+    print(f"Each side needs >= {min_samples} samples in >= {min_years} distinct years"
+          + (f" (a single-year side: in >= {min_months_single_year} months)"
+             if min_months_single_year > 1 else ""))
     print(f"Saline: median specific conductance > {saline_sc:g} uS/cm; exposure: next "
           f"removal must be > {min_distance_ratio:g}x as far as the nearest")
     print(f"Link distance limits: downstream {_limit_text(max_downstream_km)}, "
           f"upstream {_limit_text(max_upstream_km)}")
 
-    db_path = parquet_dir / "warehouse.duckdb"
+    db_path = views_db_path(parquet_dir, args.eligibility_variant)
     summary, stale = build_database(
         db_path, parquet_dir, years_before, years_after, min_samples, min_years,
         saline_sc, min_distance_ratio, max_downstream_km, max_upstream_km,
+        min_months_single_year,
     )
 
     print(f"\nWrote {db_path}")

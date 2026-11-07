@@ -22,6 +22,9 @@ echo "Building upstream areas for eligible stations (run after build_views)"
 
 # Add --with-outlines to also build map outlines for QA (slow for large
 # rivers; later stages don't use them).
-python -u etl/build_station_watershed.py
+# ELIGIBILITY_VARIANT=min1yr (or min1yr_2mo): the eligibility sensitivity variant
+# (docs/eligibility_sensitivity_prespec.md); unset = the primary rule.
+# With it, covers the variant's eligible stations (a superset of the primary's).
+python -u etl/build_station_watershed.py ${ELIGIBILITY_VARIANT:+--eligibility-variant "$ELIGIBILITY_VARIANT"}
 
 echo "Job completed: $(date)"

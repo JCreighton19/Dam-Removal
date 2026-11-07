@@ -292,6 +292,165 @@ def test_reports_run():
     assert labels.tolist() == ["00-05", "00-05", "05-10", "20-30", "30+", "unknown"]
 
 
+# --------------------------------------------------
+# Eligibility sensitivity variants (docs/eligibility_sensitivity_prespec.md)
+# --------------------------------------------------
+
+def _add_thin_stations(out):
+    """Two more stations below D1 with a single pre-removal year: THIN3 has
+    samples in 3 months of 2014, THIN1 in one month only. Neither meets the
+    primary 3 samples / 2 years; THIN3 has context, THIN1 has none."""
+    import hashlib  # noqa: F401
+    stations = pd.read_parquet(out / "wq_station.parquet")
+    extra = stations.iloc[:2].copy()
+    extra["station_id"] = ["THIN3", "THIN1"]
+    pd.concat([stations, extra], ignore_index=True).to_parquet(out / "wq_station.parquet", index=False)
+    links = pd.read_parquet(out / "dam_station_link.parquet")
+    pd.concat([links, pd.DataFrame({"AR_ID": ["D1", "D1"], "station_id": ["THIN3", "THIN1"],
+                                    "relationship": "downstream", "network_distance_km": [4.0, 5.0]})],
+              ignore_index=True).to_parquet(out / "dam_station_link.parquet", index=False)
+    measurements = pd.read_parquet(out / "wq_measurement.parquet")
+    dates = {"THIN3": ["2014-05-01", "2014-06-01", "2014-07-01"],
+             "THIN1": ["2014-06-01", "2014-06-10", "2014-06-20"]}
+    rows = []
+    for station, pre in dates.items():
+        for d in pre + ["2016-06-01", "2017-06-01", "2018-06-01"]:
+            rows.append((station, d))
+    template = measurements[measurements["parameter_std"].eq("water_temp")].iloc[0]
+    more = pd.DataFrame([template] * len(rows)).reset_index(drop=True)
+    more["station_id"] = [r[0] for r in rows]
+    more["sample_date"] = pd.to_datetime([r[1] for r in rows]).date
+    more["measurement_id"] = range(5000, 5000 + len(rows))
+    pd.concat([measurements, more], ignore_index=True).to_parquet(out / "wq_measurement.parquet",
+                                                                  index=False)
+    with duckdb.connect() as con:
+        daily = bdm.build_table(con, str(out / "wq_measurement.parquet"))
+    daily.to_parquet(out / "wq_measurement_daily.parquet", index=False)
+    watershed = pd.read_parquet(out / "station_watershed.parquet")
+    pd.concat([watershed, pd.DataFrame({"station_id": ["THIN3"], "area_km2": [60.0],
+                                        "truncated": [False], "drainage_area_flag": ["ok"]})],
+              ignore_index=True).to_parquet(out / "station_watershed.parquet", index=False)
+    climate = pd.read_parquet(out / "climate.parquet")
+    pd.concat([climate, climate[climate["station_id"].eq("DOWN")].assign(station_id="THIN3")],
+              ignore_index=True).to_parquet(out / "climate.parquet", index=False)
+    bv.build_database(out / "warehouse.duckdb", out, 5, 5, 3, 2)
+    for name in ["station_watershed", "land_cover", "land_cover_codes", "climate", "dam_reservoir"]:
+        add_view(out / "warehouse.duckdb", name, out / f"{name}.parquet")
+
+
+def _digest(path):
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _run(module, root, *extra):
+    import contextlib
+    import io
+    argv = [module.__name__, "--case-study", "pilot_test", *extra]
+    buffer = io.StringIO()
+    with mock.patch.dict(os.environ, {PROJECT_ROOT_ENV_VAR: str(root)}), \
+            mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(buffer):
+        module.main()
+    return buffer.getvalue()
+
+
+def test_eligibility_variants_write_their_own_files_and_leave_the_primary_untouched():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        out = _build(root)
+        _add_thin_stations(out)
+        _run(bad, root)                                    # the primary table, as the pipeline writes it
+        primary_path = out / "analysis_measurement.parquet"
+        primary = pd.read_parquet(primary_path)
+        before = {p: _digest(out / p) for p in ("analysis_measurement.parquet", "warehouse.duckdb")}
+
+        for variant in ("min1yr", "min1yr_2mo"):
+            _run(bv, root, "--eligibility-variant", variant)
+            log = _run(bad, root, "--eligibility-variant", variant)
+            assert (out / f"warehouse_{variant}.duckdb").exists()
+            assert "SENSITIVITY VARIANT" in log
+        after = {p: _digest(out / p) for p in before}
+        assert after == before                              # primary files byte-for-byte unchanged
+
+        min1 = pd.read_parquet(out / "analysis_measurement_min1yr.parquet")
+        min1_2mo = pd.read_parquet(out / "analysis_measurement_min1yr_2mo.parquet")
+        # The 3/2 baseline: THIN stations aren't eligible (one pre year).
+        assert set(primary["station_id"]) == {"DOWN", "OLD"}
+        assert set(min1["station_id"]) == {"DOWN", "OLD", "THIN3", "THIN1"}
+        assert set(min1_2mo["station_id"]) == {"DOWN", "OLD", "THIN3"}   # THIN1: one month only
+        # Every primary row is in the variant, unchanged.
+        key = ["measurement_id", "AR_ID"]
+        merged = primary.merge(min1, on=key, suffixes=("", "_v"))
+        assert len(merged) == len(primary)
+        assert (merged["result_value_std"] == merged["result_value_std_v"]).all()
+        # THIN1 has no context: reported, and its rows lack climate.
+        assert "WARNING: 1 stations have no context" in _run(bad, root, "--eligibility-variant", "min1yr")
+        assert min1.loc[min1["station_id"].eq("THIN1"), "missing_climate"].all()
+        assert not min1.loc[min1["station_id"].eq("THIN3"), "missing_climate"].any()
+
+        # --verify-primary rebuilds in memory, writes nothing, and catches a changed file.
+        assert "identical to the existing" in _run(bad, root, "--verify-primary")
+        assert _digest(primary_path) == before["analysis_measurement.parquet"]
+        primary.iloc[1:].to_parquet(primary_path, index=False)
+        try:
+            _run(bad, root, "--verify-primary")
+        except SystemExit as exc:
+            assert exc.code == 1
+        else:
+            raise AssertionError("a changed primary table passed --verify-primary")
+
+
+def test_months_condition_only_binds_single_year_sides():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        out = _build(root)
+        _add_thin_stations(out)
+        query = "SELECT station_id, has_both FROM eligibility_pairs WHERE parameter_std = 'water_temp'"
+        results = {}
+        for name, (years, months) in {"primary": (2, 1), "primary_2mo": (2, 2), "min1yr": (1, 1),
+                                      "min1yr_2mo": (1, 2)}.items():
+            db = out / f"warehouse_{name}_test.duckdb"
+            bv.build_database(db, out, 5, 5, 3, years, min_months_single_year=months)
+            with duckdb.connect(str(db), read_only=True) as con:
+                results[name] = dict(con.sql(query).fetchall())
+    assert results["primary"] == results["primary_2mo"]           # no effect with 2 required years
+    assert results["primary"]["THIN3"] is False and results["primary"]["DOWN"] is True
+    assert results["min1yr"]["THIN1"] is True and results["min1yr_2mo"]["THIN1"] is False
+    assert results["min1yr_2mo"]["THIN3"] is True
+
+
+def test_unknown_variant_is_refused():
+    from etl.common.warehouse import analysis_path, views_db_path
+    for function in (views_db_path, analysis_path):
+        try:
+            function(Path("x"), "min2yr")
+        except ValueError:
+            continue
+        raise AssertionError(f"{function.__name__} accepted an unknown variant")
+    assert analysis_path(Path("x")) == Path("x") / "analysis_measurement.parquet"
+
+
+def test_context_stages_only_accept_variants_at_least_as_loose_as_the_primary():
+    from etl.common import warehouse as wh
+
+    class Cfg:
+        name, project_root = "pilot_test", Path("/tmp/x")
+        def __init__(self, eligibility): self.raw = {"eligibility": eligibility}
+        def get(self, key, default=None): return self.raw.get(key, default)
+
+    assert wh.context_db_path(Cfg({})).name == "warehouse.duckdb"
+    assert wh.context_db_path(Cfg({}), "min1yr").name == "warehouse_min1yr.duckdb"
+    try:
+        wh.context_db_path(Cfg({"min_samples": 3, "min_years": 1}), "min1yr")   # equal: fine
+        wh.context_db_path(Cfg({"min_samples": 2, "min_years": 1}), "min1yr")   # stricter: refused
+    except ValueError as exc:
+        assert "stricter" in str(exc)
+    else:
+        raise AssertionError("a variant stricter than the primary rule was accepted")
+    assert wh.progress_stage("download_climate") == "download_climate"
+    assert wh.progress_stage("download_climate", "min1yr") == "download_climate_min1yr"
+
+
 if __name__ == "__main__":
     tests = [
         obj for name, obj in list(globals().items())

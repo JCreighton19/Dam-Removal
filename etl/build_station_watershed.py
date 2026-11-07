@@ -77,7 +77,8 @@ from etl.common.nhdplus import find_huc8_geodatabase, read_nhdplus_layer
 from etl.common.progress import huc8s_with_outputs
 from etl.build_views import add_view
 from etl.common.covariates import catchment_hashes, keep_previous_membership
-from etl.common.warehouse import schema_errors, warehouse_dir, write_parquet_atomic
+from etl.common.warehouse import (add_variant_argument, context_db_path, schema_errors,
+                                  warehouse_dir, write_parquet_atomic)
 
 WGS84 = "EPSG:4326"
 
@@ -114,6 +115,13 @@ DRAINAGE_AREA_FLAGS = ["invalid_catchment_area", "truncated", "nhdplus_area_miss
 # --------------------------------------------------
 # Inputs
 # --------------------------------------------------
+
+
+# What --eligibility-variant does here (docs/eligibility_sensitivity_prespec.md).
+VARIANT_HELP = ("covers the stations eligible under that rule (every primary station plus "
+                "those only the variant adds) and writes the same shared table; run with the "
+                "loosest variant, min1yr")
+
 
 def eligible_stations(db_path):
     """Stations with has_both for any parameter, with their snapped reach."""
@@ -355,12 +363,13 @@ def main():
         help="Also dissolve each station's catchments into an outline polygon "
         "(for map QA; slow for large rivers).",
     )
+    add_variant_argument(parser, VARIANT_HELP)
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
     output_dir = warehouse_dir(cfg)
     db_path = require_file(
-        output_dir / "warehouse.duckdb", "warehouse.duckdb (run build_views.py first)"
+        context_db_path(cfg, args.eligibility_variant), "views database (run build_views.py first)"
     )
 
     print(f"Case study: {cfg.name}")

@@ -439,6 +439,25 @@ def test_funnel_command_line_end_to_end():
     assert model.loc["both (BACI possible)", "dams"] == 0
 
 
+def test_variant_views_reproduce_the_audit_threshold_counts():
+    from etl import build_views as bv
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        _funnel_warehouse(directory)
+        con, _ = connect(directory, 5, 5, 3, 2, max_downstream_km=30, max_upstream_km=10)
+        whatif = fun.threshold_whatif(con, (3, 2)).set_index(["min_samples", "min_years"])
+        con.close()
+        for rule in [(3, 2), (3, 1)]:
+            db = directory / f"w_{rule[1]}.duckdb"
+            bv.build_database(db, directory, 5, 5, *rule, max_downstream_km=30, max_upstream_km=10)
+            with duckdb.connect(str(db), read_only=True) as c:
+                dams, down = c.sql("""SELECT count(DISTINCT AR_ID),
+                                              count(DISTINCT AR_ID) FILTER (WHERE side = 'downstream')
+                                       FROM eligibility_pairs WHERE has_both""").fetchone()
+            assert (dams, down) == (whatif.loc[rule, "dams"], whatif.loc[rule, "dams_downstream"]), rule
+    assert whatif.loc[(3, 1), "dams"] == whatif.loc[(3, 2), "dams"] + 1      # D7 (one pre year) is added
+
+
 if __name__ == "__main__":
     tests = [obj for name, obj in list(globals().items())
              if name.startswith("test_") and callable(obj)]

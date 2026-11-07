@@ -109,6 +109,19 @@ declare -A ARGS=(
 )
 RUNS="${RUNS:-primary dilution size_proxy size_polygon dar_le_100 dar_le_10 dar_le_2 keep_suspects common_sample}"
 
+# INPUT_VARIANT=min1yr (or min1yr_2mo): the same runs on
+# analysis_measurement_<variant>.parquet, labelled --analysis-role sensitivity,
+# into data/processed/mixed_model/<case_study>/sensitivity_<variant>/<run>__<RE>/
+# (eligibility sensitivity analysis, docs/eligibility_sensitivity_prespec.md).
+# Primary outputs (stage3/, stage5/) are not touched.
+VARIANT_ARGS=""
+if [[ -n "${INPUT_VARIANT:-}" ]]; then
+    input="data/warehouse/$DAM_REMOVAL_CASE_STUDY/analysis_measurement_${INPUT_VARIANT}.parquet"
+    [[ -f "$input" ]] || { echo "No $input (run build_analysis_dataset with ELIGIBILITY_VARIANT=$INPUT_VARIANT)"; exit 1; }
+    VARIANT_ARGS="--input $input --analysis-role sensitivity --stage sensitivity_${INPUT_VARIANT}"
+    echo "Sensitivity variant $INPUT_VARIANT: $input"
+fi
+
 echo "Job started: $(date)"
 echo "Case study: $DAM_REMOVAL_CASE_STUDY; random effects: $RE; runs: $RUNS"
 failed=()
@@ -129,7 +142,7 @@ for run in $RUNS; do
     # ARGS is split into words on purpose.
     # shellcheck disable=SC2086
     python -u analysis/distance_models.py --run-name "$name" --re "$RE" \
-        --lrt-bootstrap "${LRT_BOOT:-99}" ${ARGS[$run]} || failed+=("$run")
+        --lrt-bootstrap "${LRT_BOOT:-99}" ${ARGS[$run]} ${VARIANT_ARGS} || failed+=("$run")
 done
 
 echo

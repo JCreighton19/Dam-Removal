@@ -53,7 +53,7 @@ from etl.common.config import default_case_study, load_config
 from etl.common.io import require_file
 from etl.common.nhdplus import find_huc8_geodatabase
 from etl.common.progress import HucProgress, huc8s_with_outputs
-from etl.common.warehouse import warehouse_dir
+from etl.common.warehouse import add_variant_argument, context_db_path, progress_stage, warehouse_dir
 from etl.download_land_cover import (clip_window, mark_outside, needed_packages, needs_clip,
                                      pending_work, write_clip)
 
@@ -69,6 +69,13 @@ PAUSE_SECONDS = 2
 
 # Stop after this many failures in a row (e.g. the service is down).
 MAX_CONSECUTIVE_FAILURES = 5
+
+
+
+# What --eligibility-variant does here (docs/eligibility_sensitivity_prespec.md).
+VARIANT_HELP = ("covers the stations eligible under that rule (every primary station plus "
+                "those only the variant adds) and writes the same shared table; run with the "
+                "loosest variant, min1yr")
 
 
 def last_stable_year(today=None):
@@ -163,18 +170,19 @@ def main():
         default=default_case_study(),
         help="Name of a config file under config/ (without the .yaml extension).",
     )
+    add_variant_argument(parser, VARIANT_HELP)
     args = parser.parse_args()
 
     cfg = load_config(args.case_study)
     # A later attempt queued by run_pipeline.sh after this stage already
     # succeeded has nothing to do; skip reading every package again.
-    done_dir = HucProgress(cfg, "download_climate").folder
+    done_dir = HucProgress(cfg, progress_stage("download_climate", args.eligibility_variant)).folder
     if (done_dir / "complete").exists():
         print("download_climate already finished earlier in this run; nothing to do.")
         return
 
     db_path = require_file(
-        warehouse_dir(cfg) / "warehouse.duckdb", "warehouse.duckdb (run build_views.py first)"
+        context_db_path(cfg, args.eligibility_variant), "views database (run build_views.py first)"
     )
     require_file(
         warehouse_dir(cfg) / "station_catchment.parquet",

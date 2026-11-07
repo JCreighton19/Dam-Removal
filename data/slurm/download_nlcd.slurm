@@ -22,6 +22,9 @@ echo "Downloading Annual NLCD years for eligible stations (run after build_stati
 
 # Each year is a ~1.35 GB download, clipped per NHDPlus package and then
 # deleted. A re-run skips finished years.
-python -u etl/download_land_cover.py
+# ELIGIBILITY_VARIANT=min1yr (or min1yr_2mo): the eligibility sensitivity variant
+# (docs/eligibility_sensitivity_prespec.md); unset = the primary rule.
+# With it, covers the variant's eligible stations (a superset of the primary's).
+python -u etl/download_land_cover.py ${ELIGIBILITY_VARIANT:+--eligibility-variant "$ELIGIBILITY_VARIANT"}
 
 echo "Job completed: $(date)"

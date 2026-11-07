@@ -20,6 +20,9 @@ echo "Job started: $(date)"
 echo "Case study: $DAM_REMOVAL_CASE_STUDY"
 echo "Building warehouse.duckdb views (run after clean_wq_results)"
 
-python -u etl/build_views.py
+# ELIGIBILITY_VARIANT=min1yr (or min1yr_2mo): the eligibility sensitivity variant
+# (docs/eligibility_sensitivity_prespec.md); unset = the primary rule.
+# With it, writes warehouse_<variant>.duckdb; warehouse.duckdb is not touched.
+python -u etl/build_views.py ${ELIGIBILITY_VARIANT:+--eligibility-variant "$ELIGIBILITY_VARIANT"}
 
 echo "Job completed: $(date)"

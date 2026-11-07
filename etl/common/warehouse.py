@@ -16,6 +16,84 @@ def warehouse_dir(cfg):
     return cfg.project_root / "data" / "warehouse" / cfg.name
 
 
+# Eligibility sensitivity variants (pre-specified 2026-11-07;
+# docs/eligibility_sensitivity_prespec.md). The primary rule comes from the
+# config's eligibility block (default 3 samples in 2 distinct years per side);
+# a variant overrides it and writes its own warehouse_<name>.duckdb and
+# analysis_measurement_<name>.parquet next to the primary files, which it
+# never reads into, overwrites or modifies. min_months_single_year: a side
+# with a single year of samples also needs samples in this many distinct
+# calendar months (1 = no extra condition).
+ELIGIBILITY_VARIANTS = {
+    "min1yr": {"min_samples": 3, "min_years": 1, "min_months_single_year": 1,
+               "label": "3 samples in >= 1 year per side (formal sensitivity analysis)"},
+    "min1yr_2mo": {"min_samples": 3, "min_years": 1, "min_months_single_year": 2,
+                   "label": "3 samples in >= 1 year per side; a single-year side needs >= 2 "
+                            "months (secondary variant)"},
+}
+
+
+def check_variant(variant):
+    """The variant's settings; ValueError for an unknown name."""
+    if variant not in ELIGIBILITY_VARIANTS:
+        raise ValueError(f"Unknown eligibility variant '{variant}'; choose from "
+                         f"{sorted(ELIGIBILITY_VARIANTS)}")
+    return ELIGIBILITY_VARIANTS[variant]
+
+
+def views_db_path(parquet_dir, variant=None):
+    """warehouse.duckdb (primary) or warehouse_<variant>.duckdb."""
+    if variant is None:
+        return parquet_dir / "warehouse.duckdb"
+    check_variant(variant)
+    return parquet_dir / f"warehouse_{variant}.duckdb"
+
+
+def analysis_path(parquet_dir, variant=None):
+    """analysis_measurement.parquet (primary) or analysis_measurement_<variant>.parquet."""
+    if variant is None:
+        return parquet_dir / "analysis_measurement.parquet"
+    check_variant(variant)
+    return parquet_dir / f"analysis_measurement_{variant}.parquet"
+
+
+def progress_stage(stage, variant=None):
+    """Progress-marker folder name: its own per variant, so a variant run is
+    never skipped because the primary run of the stage already finished."""
+    if variant is None:
+        return stage
+    check_variant(variant)
+    return f"{stage}_{variant}"
+
+
+def context_db_path(cfg, variant=None):
+    """The views database whose eligible stations a context stage covers
+    (build_station_watershed, download_nlcd, load_land_cover,
+    download_climate, load_climate). Those stages write the shared context
+    tables, so a variant must be at least as loose as the config's primary
+    rule: its eligible stations then include every primary one, and the
+    primary stations' context values don't change (they are per station and
+    year), which build_analysis_dataset.py --verify-primary checks."""
+    parquet_dir = warehouse_dir(cfg)
+    if variant is None:
+        return parquet_dir / "warehouse.duckdb"
+    rule = check_variant(variant)
+    eligibility = cfg.get("eligibility", {}) or {}
+    primary = (int(eligibility.get("min_samples", 3)), int(eligibility.get("min_years", 2)))
+    if rule["min_samples"] > primary[0] or rule["min_years"] > primary[1]:
+        raise ValueError(f"Variant {variant} is stricter than the primary rule {primary}; context "
+                         "stages run with it would drop primary stations' context")
+    return views_db_path(parquet_dir, variant)
+
+
+def add_variant_argument(parser, what):
+    """--eligibility-variant for a stage (what: what the variant changes there)."""
+    parser.add_argument(
+        "--eligibility-variant", choices=sorted(ELIGIBILITY_VARIANTS), default=None,
+        help=f"Sensitivity variant of the eligibility rule: {what}. Without it the primary "
+             "rule from the config applies and nothing variant-specific is read or written.")
+
+
 def write_parquet_atomic(frame, path):
     """Write to <path>.tmp, then rename over `path`, so a crashed job never
     leaves a half-written table."""

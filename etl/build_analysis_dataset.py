@@ -122,8 +122,9 @@ from etl.build_daily_measurements import daily_ids
 from etl.build_views import ASSIGNED_STATUSES, add_view
 from etl.common.config import default_case_study, load_config
 from etl.common.io import require_file
-from etl.common.warehouse import (DERIVED_TABLES, schema_errors, stale_reference_errors,
-                                  warehouse_dir, write_parquet_atomic)
+from etl.common.warehouse import (DERIVED_TABLES, add_variant_argument, analysis_path,
+                                  check_variant, schema_errors, stale_reference_errors,
+                                  views_db_path, warehouse_dir, write_parquet_atomic)
 
 REQUIRED_TABLES = ["station_watershed", "land_cover", "land_cover_codes", "climate"]
 # Choice 15; built by build_dam_reservoir.py (after build_views.py).
@@ -432,6 +433,37 @@ def build_table(db_path):
     return table[list(SCHEMA)].astype(SCHEMA), expected, set(daily)
 
 
+def missing_context(table):
+    """Stations in the table without a watershed or climate row: their rows
+    have null covariates, so the models drop them. Expected to be 0; an
+    eligibility variant needs the context stages run with the same
+    --eligibility-variant first."""
+    stations = table.drop_duplicates("station_id")
+    return {"stations": len(stations),
+            "without_watershed": int(stations["drainage_area_flag"].isna().sum()),
+            "rows_missing_climate": int(table["missing_climate"].sum())}
+
+
+def same_as_existing(table, path):
+    """True if `table` equals the parquet at `path` (rows sorted by the
+    primary key), else a short reason."""
+    if not path.exists():
+        return f"{path.name} does not exist"
+    existing = pd.read_parquet(path)
+    a = table.sort_values(PRIMARY_KEY).reset_index(drop=True)
+    b = existing[list(table.columns)].sort_values(PRIMARY_KEY).reset_index(drop=True) \
+        if set(table.columns) <= set(existing.columns) else None
+    if b is None:
+        return f"columns differ: {sorted(set(table.columns) ^ set(existing.columns))}"
+    if len(a) != len(b):
+        return f"{len(a):,} rows rebuilt vs {len(b):,} in {path.name}"
+    try:
+        pd.testing.assert_frame_equal(a, b.astype(a.dtypes.to_dict()), check_exact=False)
+    except AssertionError as exc:
+        return str(exc).splitlines()[0][:300]
+    return True
+
+
 def validate(table, expected_rows, daily_ids_written):
     errors = schema_errors("analysis_measurement", table, SCHEMA, PRIMARY_KEY)
     if errors:
@@ -555,12 +587,25 @@ def main():
         default=default_case_study(),
         help="Name of a config file under config/ (without the .yaml extension).",
     )
+    add_variant_argument(parser, "reads warehouse_<variant>.duckdb and writes "
+                                 "analysis_measurement_<variant>.parquet; the primary "
+                                 "analysis_measurement.parquet is not touched")
+    parser.add_argument("--verify-primary", action="store_true",
+                        help="Rebuild the primary table in memory and check it equals the "
+                             "existing analysis_measurement.parquet; writes nothing (e.g. after "
+                             "the context stages ran for an eligibility variant).")
     args = parser.parse_args()
+    variant = args.eligibility_variant
+    if variant and args.verify_primary:
+        parser.error("--verify-primary checks the primary table; don't combine it with "
+                     "--eligibility-variant")
 
     cfg = load_config(args.case_study)
     output_dir = warehouse_dir(cfg)
-    db_path = require_file(output_dir / "warehouse.duckdb",
-                           "warehouse.duckdb (run build_views.py first)")
+    db_name = views_db_path(output_dir, variant).name
+    db_path = require_file(output_dir / db_name,
+                           f"{db_name} (run build_views.py"
+                           + (f" --eligibility-variant {variant}" if variant else "") + " first)")
     for table in REQUIRED_TABLES:
         require_file(output_dir / f"{table}.parquet", f"{table} table (run the step 5 stages first)")
     require_file(output_dir / f"{RESERVOIR_TABLE}.parquet",
@@ -578,12 +623,33 @@ def main():
         raise ValueError("Validation failed; no warehouse files were written:\n  - "
                          + "\n  - ".join(errors))
 
-    path = output_dir / "analysis_measurement.parquet"
+    path = analysis_path(output_dir, variant)
+    if args.verify_primary:
+        same = same_as_existing(table, path)
+        print(f"Case study: {cfg.name}\nPrimary table rebuilt in memory ({len(table):,} rows): "
+              + ("identical to the existing analysis_measurement.parquet; nothing written"
+                 if same is True else f"DIFFERS from the existing file: {same}"))
+        if same is not True:
+            raise SystemExit(1)
+        return
+    if variant and path == analysis_path(output_dir):
+        raise RuntimeError("refusing to write a variant over the primary table")
     write_parquet_atomic(table, path)
     add_view(db_path, "analysis_measurement", path)
 
     print(f"Case study: {cfg.name}")
+    if variant:
+        print(f"SENSITIVITY VARIANT {variant}: {check_variant(variant)['label']}; the primary "
+              "analysis_measurement.parquet was not read or written")
     print(f"Wrote {len(table):,} rows to {path}")
+    context = missing_context(table)
+    print(f"Context: {context['stations']:,} stations, {context['without_watershed']:,} without a "
+          f"watershed row; {context['rows_missing_climate']:,} rows missing climate")
+    if variant and context["without_watershed"]:
+        print(f"WARNING: {context['without_watershed']:,} stations have no context (watershed, land "
+              "cover, climate), so the models will drop their rows. Run build_station_watershed, "
+              f"download_nlcd, load_land_cover, download_climate and load_climate with "
+              f"--eligibility-variant {variant}, then rebuild this table.")
     print(f"Dams: {table['AR_ID'].nunique()}; stations: {table['station_id'].nunique()}; "
           f"parameters: {table['parameter_std'].nunique()}")
     print(f"Distinct measurements: {table['measurement_id'].nunique():,}; "
