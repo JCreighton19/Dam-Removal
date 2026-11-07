@@ -18,6 +18,7 @@ import pandas as pd
 
 import test_build_views as views_fixture
 from analysis.audit_utils import connect
+from analysis.audits import dam_funnel_audit as fun
 from analysis.audits import downstream_coverage_audit as cov
 from analysis.audits import reservoir_size_audit as res
 from etl.common.config import PROJECT_ROOT_ENV_VAR, load_config
@@ -262,6 +263,180 @@ def test_confluence_blocked_links():
     assert gain.loc[20, "confluence_blocked_stations_with_any_data"] == 1
     row = by_band.set_index(["band", "link_class"]).loc[("15-20", "confluence_blocked")]
     assert row["pairs"] == 1 and row["stations_with_any_data"] == 1
+
+
+# --------------------------------------------------
+# Dam funnel
+# --------------------------------------------------
+
+def _funnel_warehouse(directory):
+    """The build_views fixture (D1 in the table, D2 without a year) plus one
+    dam per later funnel stage: D3 no link, D4 only a link at 50 km, D5 a
+    station with no data, D6 pre-removal data only, D7 one pre year only."""
+    views_fixture.write_tables(directory)
+    dams = pd.read_parquet(directory / "dam_removal.parquet")
+    extra = pd.DataFrame({"AR_ID": [f"D{i}" for i in range(3, 8)], "Dam_Name": "x",
+                          "Year_Removed": pd.array([2015] * 5, dtype="Int16"),
+                          "snap_fraction": 0.5})
+    dams = views_fixture._with_reach(pd.concat([dams, extra], ignore_index=True))
+    dams["State"], dams["HUC8"] = "ME", "01010101"
+    dams["NHDPlusID"], dams["Latitude"], dams["Longitude"] = 1, 45.0, -69.0
+    stations = pd.read_parquet(directory / "wq_station.parquet")
+    new = views_fixture._with_qc(pd.DataFrame({"station_id": ["FAR", "NODATA", "PREONLY", "THIN"],
+                                               "snap_fraction": 0.5}))
+    stations = pd.concat([stations, new], ignore_index=True)
+    links = pd.concat([pd.read_parquet(directory / "dam_station_link.parquet"), pd.DataFrame({
+        "AR_ID": ["D4", "D5", "D6", "D7"], "station_id": ["FAR", "NODATA", "PREONLY", "THIN"],
+        "relationship": "downstream", "network_distance_km": [50.0, 2.0, 2.0, 2.0]})],
+        ignore_index=True)
+    measurements = pd.read_parquet(directory / "wq_measurement.parquet")
+    more = [("FAR", y) for y in views_fixture.BOTH_SIDES] + \
+           [("PREONLY", y) for y in (2011, 2012, 2013, 2014)] + \
+           [("THIN", y) for y in views_fixture.ONE_PRE_YEAR]
+    more = pd.DataFrame(more, columns=["station_id", "year"])
+    more["sample_date"] = pd.to_datetime(more["year"].astype(str) + "-06-01").dt.date
+    more = more.drop(columns="year").assign(
+        measurement_id=range(len(measurements), len(measurements) + len(more)),
+        parameter_std="water_temp", result_value_std=10.0, result_unit_std="deg C",
+        is_censored=False, unit_basis_assumed=False)
+    more["sample_fraction_std"] = pd.array([None] * len(more), dtype="string")
+    measurements = pd.concat([measurements, more[measurements.columns]], ignore_index=True)
+    for name, frame in (("dam_removal", dams), ("wq_station", stations),
+                        ("dam_station_link", links), ("wq_measurement", measurements)):
+        frame.to_parquet(directory / f"{name}.parquet", index=False)
+
+
+def test_funnel_gives_each_dam_its_first_failing_stage():
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        _funnel_warehouse(directory)
+        con, _ = connect(directory, 5, 5, 3, 2, max_downstream_km=30, max_upstream_km=10)
+        status = fun.dam_status(con).set_index("AR_ID")
+        whatif = fun.threshold_whatif(con, (3, 2)).set_index(["min_samples", "min_years"])
+        con.close()
+    assert status["reason"].to_dict() == {
+        "D1": "in_analysis_table", "D2": "no_removal_year", "D3": "no_linked_station",
+        "D4": "links_beyond_limits", "D5": "no_samples_in_window", "D6": "one_side_only",
+        "D7": "below_minimum"}
+    assert status.loc["D4", "nearest_downstream_km"] == 50 and status.loc["D4", "links_within_limits"] == 0
+    assert status.loc["D5", "stations_with_any_data"] == 0
+    assert status.loc["D7", "best_pair_min_years"] == 1 and status.loc["D1", "has_both_downstream"]
+    # D7 (3 pre samples in one year) passes once one year is enough; D1 passes every rule.
+    assert whatif.loc[(3, 2), "dams"] == 1 and whatif.loc[(3, 2), "current_rule"]
+    assert whatif.loc[(3, 1), "dams"] == 2 and whatif.loc[(3, 1), "gain_vs_current"] == 1
+    # D6 never has post data, at any threshold.
+    assert whatif.loc[(1, 1), "dams"] == 2
+
+
+def test_funnel_early_stages_summary_and_decades():
+    listed = pd.DataFrame({"AR_ID": ["D1", "L1", "L2", "L3", "7.0"]})
+    reaches = pd.DataFrame({"AR_ID": ["D1", "L2", "L3", "7"], "huc8": "01010101",
+                            "match_status": ["accepted", "rejected", "ambiguous", "accepted"],
+                            "match_reason": ["name_match", "no_nhdplus_package",
+                                             "confluence_ambiguous", "name_match"]})
+    early = fun.listed_and_matched(listed, reaches).set_index("AR_ID")
+    assert early["reason"].to_dict() == {"D1": "accepted", "L1": "not_matched_no_record",
+                                         "L2": "match_rejected", "L3": "match_ambiguous",
+                                         "7": "accepted"}            # "7.0" and 7 are one dam
+    dams = pd.DataFrame({"reason": ["match_rejected", "no_removal_year", "in_analysis_table",
+                                    "below_minimum", "in_analysis_table"],
+                         "removal_year": [None, None, 1995, 2012, 2018]})
+    s = fun.summary(dams).set_index("reason")
+    assert s.loc["in_analysis_table", "dams"] == 2 and s.loc["match_rejected", "dams"] == 1
+    assert s.loc["no_removal_year", "dams_left_after_this_stage"] == 3
+    assert list(s.index) == fun.REASON_ORDER
+    decade = fun.by_decade(dams).set_index("decade")
+    assert decade.loc["2010s", "dated_dams"] == 2 and decade.loc["2010s", "share_in_analysis_%"] == 50
+    assert "match_rejected" not in decade           # undated dams aren't in the decade table
+
+
+def test_downstream_walk_finds_where_the_river_leaves_the_huc8():
+    # 1 -> 2 -> 3 in HUC8 01010101, then 4 in 01010102; 3 also splits to 9 (a minor path).
+    flow = pd.DataFrame({"FromNHDPID": [1, 2, 3, 3, 4], "ToNHDPID": [2, 3, 9, 4, 0]})
+    nxt = fun.main_path(flow, {9: 2, 4: 0})
+    assert nxt == {1: 2, 2: 3, 3: 4}                   # minor divergence and terminal 0 skipped
+    code = {1: "01010101000001", 2: "01010101000002", 3: "01010101000003", 4: "01010102000001"}
+    length = {1: 2.0, 2: 3.0, 3: 4.0, 4: 10.0}
+    assert fun.walk_downstream(1, 1.0, code, length, nxt, 30) == ("left_huc8", 8.0, "01010102")
+    assert fun.walk_downstream(1, 1.0, code, length, nxt, 5)[0] == "reached_limit"
+    assert fun.walk_downstream(4, 0.0, code, length, nxt, 30)[0] == "network_end"
+    del code[4]
+    assert fun.walk_downstream(1, 1.0, code, length, nxt, 30)[0] == "left_package"
+
+
+def test_station_types_and_nearby_counts():
+    raw = pd.DataFrame({
+        "MonitoringLocationIdentifier": ["A", "B", "C", "D", "E"],
+        "MonitoringLocationTypeName": ["River/Stream", "River/Stream Perennial", "Lake",
+                                       "Riverine Impoundment", "River/Stream Intermittent"],
+        "LatitudeMeasure": ["45.0", "45.01", "45.0", "45.5", "45.02"],
+        "LongitudeMeasure": ["-69.0", "-69.0", "-69.0", "-69.0", "-69.0"],
+        "huc8": "01010101"})
+    types = fun.station_types(raw, ["Stream", "River/Stream"]).set_index("type")
+    assert types.loc["River/Stream", "kept_by_filter"]
+    assert types.loc["River/Stream Perennial", "river_like_but_dropped"]
+    assert not types.loc["Lake", "river_like_but_dropped"]
+    dams = pd.DataFrame({"huc8": ["01010101", "09999999"], "latitude": [45.0, 45.0],
+                         "longitude": [-69.0, -69.0]})
+    near = fun.nearby_stations(dams, raw, ["Stream", "River/Stream"])
+    # Within 5 km of dam 0: A (kept), B and E (dropped river-like); D is ~55 km away; C is a lake.
+    assert near.iloc[0].tolist() == [1, 2]
+    assert near.iloc[1].tolist() == [0, 0]            # no stations downloaded for that HUC8
+
+
+def test_funnel_command_line_end_to_end():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "config").mkdir()
+        (root / "config" / f"{CASE}.yaml").write_text(
+            f'case_study: {CASE}\nhuc8s: ["01010101"]\ndam_source: dams.csv\nwbd_source: wbd.gpkg\n'
+            "exposure:\n  max_downstream_km: 30\n  max_upstream_km: 10\n")
+        warehouse = root / "data" / "warehouse" / CASE
+        warehouse.mkdir(parents=True)
+        _funnel_warehouse(warehouse)
+        pd.DataFrame({"AR_ID": ["D1", "D3"], "side": ["downstream", "upstream"],
+                      "exposure_status": ["assigned_sole", "upstream_control"],
+                      "upstream_in_former_reservoir": [None, False]}).to_parquet(
+            warehouse / "analysis_measurement.parquet", index=False)
+        ids = ["D1", "D2", "D3", "D4", "D5", "D6", "D7"]
+        pd.DataFrame({"AR_ID": ids + ["L1", "L2"], "Dam_Name": "x", "State": "ME"}).to_csv(
+            root / "dams.csv", index=False)
+        reaches = root / "data" / "processed" / "dam_reaches" / CASE
+        reaches.mkdir(parents=True)
+        pd.DataFrame({"AR_ID": ids + ["L2"], "huc8": "01010101",
+                      "match_status": ["accepted"] * 7 + ["rejected"],
+                      "match_reason": ["name_match"] * 7 + ["no_nhdplus_package"]}).to_parquet(
+            reaches / "dam_reaches_01010101.parquet", index=False)
+        stations = root / "data" / "raw" / "wqp" / "stations"
+        stations.mkdir(parents=True)
+        pd.DataFrame({"MonitoringLocationIdentifier": ["S1", "S2"],
+                      "MonitoringLocationTypeName": ["River/Stream", "River/Stream Perennial"],
+                      "LatitudeMeasure": [45.0, 45.01], "LongitudeMeasure": [-69.0, -69.0]}).to_csv(
+            stations / "01010101.csv", index=False)
+        argv = ["dam_funnel_audit.py", "--case-study", CASE, "--skip-network"]
+        with mock.patch.dict(os.environ, {PROJECT_ROOT_ENV_VAR: str(root)}), \
+                mock.patch.object(sys, "argv", argv):
+            fun.main()
+        out = root / "data" / "processed" / "stage1_audit" / CASE / "dam_funnel"
+        dams = pd.read_csv(out / "dam_funnel.csv", dtype={"AR_ID": str}).set_index("AR_ID")
+        summary = pd.read_csv(out / "funnel_summary.csv").set_index("reason")
+        types = pd.read_csv(out / "station_types.csv").set_index("type")
+        model = pd.read_csv(out / "model_needs.csv").set_index("group")
+        assert set((out / n).name for n in out.iterdir()) >= {"funnel_by_decade.csv",
+                                                              "threshold_whatif.csv"}
+    assert dams.loc["L1", "reason"] == "not_matched_no_record"
+    assert dams.loc["L2", "reason"] == "match_rejected" and dams.loc["L2", "match_reason"] == "no_nhdplus_package"
+    assert dams.loc["D4", "reason"] == "links_beyond_limits" and dams.loc["D1", "reason"] == "in_analysis_table"
+    assert len(dams) == 9 and summary["dams"].sum() == 9
+    assert summary.loc["in_analysis_table", "dams"] == 1
+    # D3 (no station) has the dropped River/Stream Perennial station and the kept one within 5 km.
+    assert dams.loc["D3", "dropped_river_like_stations_within_5km"] == 1
+    assert dams.loc["D3", "kept_type_stations_within_5km"] == 1
+    assert pd.isna(dams.loc["D1", "dropped_river_like_stations_within_5km"])  # has a usable station
+    assert types.loc["River/Stream Perennial", "river_like_but_dropped"]
+    assert model.loc["in analysis table", "dams"] == 1
+    assert model.loc["assigned downstream rows", "dams"] == 1
+    assert model.loc["both (BACI possible)", "dams"] == 0
 
 
 if __name__ == "__main__":
