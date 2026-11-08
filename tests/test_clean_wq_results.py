@@ -110,6 +110,15 @@ ROWS = {
         "ResultMeasure/MeasureUnitCode": "uS/cm",
     },
     "fahrenheit": {"ResultMeasure/MeasureUnitCode": "deg F", "ResultMeasureValue": "64"},
+    # mS/cm reported as uS/cm (2026-11-08): below the 2 uS/cm floor, dropped.
+    "sc_mscm_reported_as_uscm": {
+        "CharacteristicName": "Specific conductance", "ResultMeasureValue": "0.503",
+        "ResultMeasure/MeasureUnitCode": "uS/cm",
+    },
+    "sc_zero": {
+        "CharacteristicName": "Specific conductance", "ResultMeasureValue": "0",
+        "ResultMeasure/MeasureUnitCode": "uS/cm",
+    },
     "unknown_station": {"MonitoringLocationIdentifier": "S9"},
     "out_of_scope_parameter": {"CharacteristicName": "Lead"},
     "keep_nitrate_speciated_n": {
@@ -137,6 +146,11 @@ ROWS = {
     "keep_tds_dissolved": {
         "CharacteristicName": "Total dissolved solids", "ResultSampleFractionText": "Dissolved",
         "ResultMeasureValue": "250", "ResultMeasure/MeasureUnitCode": "mg/L",
+    },
+    # Very dilute but real water (snowmelt): above the floor, kept.
+    "keep_sc_dilute": {
+        "MonitoringLocationIdentifier": "S2", "CharacteristicName": "Specific conductance",
+        "ResultMeasureValue": "3.5", "ResultMeasure/MeasureUnitCode": "uS/cm",
     },
     "keep_phosphorus_lt": {
         "MonitoringLocationIdentifier": "S2", "CharacteristicName": "Phosphorus",
@@ -277,6 +291,7 @@ def test_main_applies_every_rule():
         assert pd.isna(row.loc["keep_nitrate_blank_fraction", "sample_fraction_std"])
         assert pd.isna(row.loc["keep_tds_dissolved", "sample_fraction_std"])
         assert row.loc["keep_sc_routine", "activity_type"] == "Sample-Routine"
+        assert row.loc["keep_sc_dilute", "result_value_std"] == 3.5   # sc_mscm_* and sc_zero dropped
 
         # SSC / TSS kept apart, no fraction; SSC unit from its pcode.
         assert row.loc["keep_ssc", "parameter_std"] == "ssc"

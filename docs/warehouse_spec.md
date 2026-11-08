@@ -316,7 +316,7 @@ Applied in this order. Each drop is counted by reason and written to the stage l
 | 7 | Drop rows whose `MeasureQualifierCode`, split on `;`, includes `H` (holding time exceeded) | 2 |
 | 8 | Drop NWIS alternate-form or derived parameter codes (below) | ~970 |
 | 9 | Drop rows with unparseable `sample_date`, that end with no `result_value_std` and no detection limit, or (9c, 2026-10-26) whose `sample_date` is after the day the stage runs. WQP returns the date the provider entered, and download windows reach removal year + `years_after`, so a mistyped year (all_removals had a visit dated 2028-09-13) would otherwise land in a post-removal window | `NO DATA` rows; future-dated visits |
-| 10 | Drop values outside the plausible range for their `parameter_std` (`PLAUSIBLE_RANGES` in `etl/common/wq_rules.py`, e.g. pH 0–14, water temperature −1–40 °C, DO 0–25 mg/L). Wide on purpose: catches unit and entry errors, not unusual readings | not yet profiled |
+| 10 | Drop values outside the plausible range for their `parameter_std` (`PLAUSIBLE_RANGES` in `etl/common/wq_rules.py`, e.g. pH 0–14, water temperature −1–40 °C, DO 0–25 mg/L, specific conductance 2–60,000 µS/cm). Wide on purpose: catches unit and entry errors, not unusual readings. The conductance floor (2026-11-08, was 0) drops mS/cm values reported as µS/cm (~0.4–0.7 at stations reading hundreds in other years: CHIPCREE_WQX 2015+, MNPCA 2015, KARUKDNR_WQX) and zeros; see `notebooks/qa/conductance_plausibility.ipynb` | not yet profiled |
 
 Also dropped and logged before filter 1: parameters not in the 3.6.1 mapping, and stations not in `wq_station`. Units that can't be resolved or converted (3.6.4) are dropped between filters 8 and 9.
 

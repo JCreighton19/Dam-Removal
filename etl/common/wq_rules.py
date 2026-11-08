@@ -102,7 +102,13 @@ DROP_PCODES = {
 # catch unit and entry errors, not unusual but real readings.
 PLAUSIBLE_RANGES = {
     "water_temp": (-1.0, 40.0),
-    "specific_conductance": (0.0, 60000.0),
+    # Floor 2 uS/cm (2026-11-08): below that is distilled-water conductance.
+    # Values there are mS/cm reported as uS/cm (CHIPCREE_WQX from 2015, MNPCA
+    # in 2015, KARUKDNR_WQX: ~0.4-0.7 at stations that read 350-900 in other
+    # years; notebooks/qa/conductance_plausibility.ipynb) or zeros. Dropped,
+    # not multiplied by 1000: the unit is inferred, not reported. Very dilute
+    # real waters (3-5 uS/cm, e.g. Sierra Nevada snowmelt) are kept.
+    "specific_conductance": (2.0, 60000.0),
     "dissolved_oxygen": (0.0, 25.0),
     "do_saturation": (0.0, 300.0),
     "ph": (0.0, 14.0),

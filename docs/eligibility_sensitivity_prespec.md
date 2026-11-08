@@ -117,6 +117,20 @@ The comparison is per measure × design (BACI, before/after). For the distance m
   improvement" goes too), BACI turbidity (7 → 12) and before/after SSC (7 → 13). The last two still count as
   materially improved because they become fittable. The distance models are unaffected.
 
+## Data corrections
+
+- **2026-11-08, data correction: specific-conductance unit errors (affects the primary data too).** The sensitivity
+  review found the before/after conductance CI 4.1× wider under 3 / 1, caused by one added dam (MT-013) whose
+  conductance after removal reads ~0.5 instead of ~500 µS/cm. `notebooks/qa/conductance_plausibility.ipynb` traced it to
+  the source: the reporting organization (CHIPCREE_WQX) submitted every value from Sept 2015 in mS/cm labelled µS/cm,
+  at all 9 of its stations including upstream controls. The same pattern appears for MNPCA (≥ 11 stations, 2015 only),
+  KARUKDNR_WQX (2 stations, 2010–2013) and scattered zeros; 1,397 values below 5 µS/cm in all. MT-013 is also in the
+  primary table (29 affected rows). **Correction:** the cleaning step's plausible range for specific conductance now
+  starts at 2 µS/cm (was 0), so these values are dropped (not converted: the unit is inferred, not reported), for
+  every analysis. The primary and variant tables are rebuilt and all models refit; only conductance-dependent
+  results should change, which the rebuild checks. NC-059 (the next most extreme dam) was checked and is real, not an
+  error, so it stays. This is a correction of a pre-existing data error, not a change to the analysis plan.
+
 ## Deviations found before any model was fit
 
 - **2026-11-07, `--verify-primary`: the primary table does not rebuild exactly.** After the context stages ran
