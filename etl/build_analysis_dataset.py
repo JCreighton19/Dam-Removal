@@ -116,6 +116,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import duckdb
+import numpy as np
 import pandas as pd
 
 from etl.build_daily_measurements import daily_ids
@@ -460,8 +461,44 @@ def same_as_existing(table, path):
     try:
         pd.testing.assert_frame_equal(a, b.astype(a.dtypes.to_dict()), check_exact=False)
     except AssertionError as exc:
-        return str(exc).splitlines()[0][:300]
+        details = describe_differences(a, b.astype(a.dtypes.to_dict()))
+        return str(exc).splitlines()[0][:300] + ("\n" + details if details else "")
     return True
+
+
+def describe_differences(new, old):
+    """Per differing column: how many rows changed, split into null -> value,
+    value -> null and value -> other value, with the dams, stations and sample
+    months involved. `new` and `old` are aligned row for row (same key order)."""
+    if not new[PRIMARY_KEY].equals(old[PRIMARY_KEY]):
+        return "  (rows don't line up on the primary key; no per-column breakdown)"
+    lines = []
+    months = pd.to_datetime(new["sample_date"]).dt.month if "sample_date" in new else None
+    for column in new.columns:
+        x, y = new[column], old[column]
+        x_null, y_null = x.isna().to_numpy(), y.isna().to_numpy()
+        both = ~x_null & ~y_null
+        changed = np.zeros(len(x), dtype=bool)
+        if both.any():
+            xv, yv = x[both], y[both]
+            if pd.api.types.is_float_dtype(xv) and pd.api.types.is_float_dtype(yv):
+                changed[both] = ~np.isclose(xv.to_numpy(float), yv.to_numpy(float),
+                                            rtol=1e-5, atol=1e-8)
+            else:
+                changed[both] = (xv.astype(str).to_numpy() != yv.astype(str).to_numpy())
+        filled, emptied = ~x_null & y_null, x_null & ~y_null
+        differ = filled | emptied | changed
+        if not differ.any():
+            continue
+        rows = new[differ]
+        line = (f"  {column}: {int(differ.sum()):,} rows differ (null -> value {int(filled.sum()):,}; "
+                f"value -> null {int(emptied.sum()):,}; value changed {int(changed.sum()):,}); "
+                f"{rows['AR_ID'].nunique()} dams, {rows['station_id'].nunique()} stations")
+        if months is not None:
+            by_month = months[differ].value_counts().sort_index()
+            line += "; sample months " + ", ".join(f"{m}:{n}" for m, n in by_month.items())
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def validate(table, expected_rows, daily_ids_written):
