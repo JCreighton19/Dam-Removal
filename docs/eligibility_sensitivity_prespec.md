@@ -101,7 +101,21 @@ The comparison is per measure × design (BACI, before/after). For the distance m
 
 ## Changes after results were seen
 
-*(none yet)*
+- **2026-11-08, label clarification (made after the sensitivity results were reviewed).** The label table above
+  leaves one case undefined: both estimates *no meaningful change* (both 95% CIs inside ± SESOI) with opposite
+  signs. The code had labelled it *direction unstable*, which the table reserves for two *inconclusive* estimates.
+  Clarification: when both verdicts are *no meaningful change*, the comparison is **robust**, whatever the signs;
+  the sign of a practically negligible estimate is not interpreted. Such rows are flagged (`negligible_sign_flip`)
+  so they stay visible. Affected rows in the first review: BACI water temperature (mixed model and distance model,
+  effect at 5 km), before/after total phosphorus (mixed model) and before/after turbidity (distance model, effect
+  at 5 km). No estimate, threshold, specification or other label rule changed.
+- **2026-11-08, minimum dams applied in the comparison (a correction, not a change of rule).** "Minimum dams (10)"
+  was fixed above, but the comparison code applied it only through the distance models, which don't fit below 10
+  dams; the mixed models fit from 5. The comparison now shows any model or time interval with fewer than 10 dams on
+  either side but gives it no verdict or label ("not comparable") and leaves it out of the CI-width and MDE flags.
+  In the first review this removes the labels of three mixed-model rows: BACI TDS (5 → 7 dams; its "material
+  improvement" goes too), BACI turbidity (7 → 12) and before/after SSC (7 → 13). The last two still count as
+  materially improved because they become fittable. The distance models are unaffected.
 
 ## Deviations found before any model was fit
 

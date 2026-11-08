@@ -10,12 +10,20 @@ Per estimate: the verdict (stage4_report.classify: detected / no meaningful
 change / inconclusive, with the analyst-selected SESOI), then a label of the
 sensitivity estimate against the primary one:
 
-    robust              same verdict and same direction
+    robust              same verdict and same direction; also both "no meaningful
+                        change" with opposite signs (clarified 2026-11-08, after the
+                        results were seen: the sign of a negligible estimate is not
+                        interpreted; flagged in negligible_sign_flip)
     sharper             primary inconclusive -> sensitivity decided, same direction
     weaker              primary decided -> sensitivity inconclusive, same direction
     conflicting         direction flips while either CI excludes 0, or
                         detected <-> no meaningful change
     direction unstable  direction flips, both inconclusive
+
+Models with fewer than MIN_DAMS dams are not compared: their estimate is
+shown but gets no verdict, the label is "not comparable" and they don't enter
+the CI-width or MDE flags (the pre-specified minimum; mixed_model.py itself
+fits from 5 dams).
 
 Material improvement for a measure: the sensitivity sample makes a model
 fittable (>= MIN_DAMS) or drops the exploratory label (>= EXPLORATORY_BELOW),
@@ -59,6 +67,11 @@ def label(p_verdict, p_estimate, p_low, p_high, s_verdict, s_estimate, s_low, s_
     """The pre-specified label of a sensitivity estimate against the primary one."""
     if not np.isfinite([p_estimate, s_estimate]).all() or not p_verdict or not s_verdict:
         return "not comparable"
+    # Clarification (2026-11-08, after the results were seen): both CIs inside
+    # +/- SESOI -> robust whatever the signs; the sign of a negligible estimate
+    # isn't interpreted.
+    if p_verdict == s_verdict == "no meaningful change":
+        return "robust"
     flipped = np.sign(p_estimate) * np.sign(s_estimate) < 0     # an estimate of exactly 0 has no direction
     excludes = (p_low > 0 or p_high < 0) or (s_low > 0 or s_high < 0)
     if flipped:
@@ -72,11 +85,14 @@ def label(p_verdict, p_estimate, p_low, p_high, s_verdict, s_estimate, s_low, s_
     return "weaker"
 
 
-def compare(primary, sensitivity, keys, est, low, high, sesoi=None, dams="dams", mde=None):
+def compare(primary, sensitivity, keys, est, low, high, sesoi=None, dams="dams", mde=None,
+            min_dams=MIN_DAMS):
     """One row per key present in either table: dams, estimates, CIs and
     verdicts of both, the label, the CI width ratio and material-improvement
     flags. sesoi: {series: threshold} (None: detected / inconclusive only).
-    Rows not fit in one table (missing, or with an error) are kept with NaN."""
+    Rows not fit in one table (missing, or with an error) are kept with NaN.
+    A side with fewer than min_dams dams keeps its estimate for display but
+    gets no verdict (below_min_dams_<side>), so the row is "not comparable"."""
     cols = list(dict.fromkeys(keys + [dams, est, low, high] + ([mde] if mde else [])))
     p = primary[[c for c in cols if c in primary]].rename(columns={dams: "dams", est: "est",
                                                                   low: "low", high: "high", mde: "mde"})
@@ -85,20 +101,29 @@ def compare(primary, sensitivity, keys, est, low, high, sesoi=None, dams="dams",
     out = p.merge(s, on=keys, how="outer", suffixes=("_primary", "_sensitivity"))
     threshold = out["series"].map(sesoi or {}) if "series" in out else pd.Series(np.nan, index=out.index)
     for side in ("primary", "sensitivity"):
+        n = out[f"dams_{side}"]
+        out[f"below_min_dams_{side}"] = n.notna() & (n < min_dams)
+        usable = out[f"est_{side}"].notna() & ~out[f"below_min_dams_{side}"]
         out[f"verdict_{side}"] = [
-            verdict(e, lo, hi, t if sesoi else None) if pd.notna(e) else ""
-            for e, lo, hi, t in zip(out[f"est_{side}"], out[f"low_{side}"], out[f"high_{side}"], threshold)]
+            verdict(e, lo, hi, t if sesoi else None) if ok else ""
+            for e, lo, hi, t, ok in zip(out[f"est_{side}"], out[f"low_{side}"], out[f"high_{side}"],
+                                        threshold, usable)]
+    both = ~out["below_min_dams_primary"] & ~out["below_min_dams_sensitivity"]
     out["label"] = [label(*r) for r in out[["verdict_primary", "est_primary", "low_primary", "high_primary",
                                              "verdict_sensitivity", "est_sensitivity", "low_sensitivity",
                                              "high_sensitivity"]].itertuples(index=False)]
+    flipped = np.sign(out["est_primary"]) * np.sign(out["est_sensitivity"]) < 0
+    out["negligible_sign_flip"] = (out["label"].eq("robust") & flipped
+                                   & out["verdict_primary"].eq("no meaningful change"))
     out["ci_width_ratio"] = ((out["high_sensitivity"] - out["low_sensitivity"])
-                             / (out["high_primary"] - out["low_primary"]))
+                             / (out["high_primary"] - out["low_primary"])).where(both)
     dp, ds = out["dams_primary"].fillna(0), out["dams_sensitivity"].fillna(0)
     out["now_fittable"] = (dp < MIN_DAMS) & (ds >= MIN_DAMS)
     out["no_longer_exploratory"] = (dp < EXPLORATORY_BELOW) & (ds >= EXPLORATORY_BELOW)
     out["ci_narrower_20pct"] = out["ci_width_ratio"] <= WIDTH_RATIO_MATERIAL
     if mde and "mde_primary" in out:
-        out["mde_now_below_sesoi"] = (out["mde_primary"] >= threshold) & (out["mde_sensitivity"] < threshold)
+        out["mde_now_below_sesoi"] = (both & (out["mde_primary"] >= threshold)
+                                      & (out["mde_sensitivity"] < threshold))
     flags = [c for c in ("now_fittable", "no_longer_exploratory", "ci_narrower_20pct",
                          "mde_now_below_sesoi") if c in out]
     out["material_improvement"] = out[flags].fillna(False).any(axis=1)
@@ -136,15 +161,17 @@ def smd(a, b):
 
 
 def compare_dams(characteristics, primary_ids, added_ids):
-    """Per characteristic: dams with a value, medians and the SMD of added vs
-    primary dams; systematic = |SMD| >= SMD_FLAG."""
+    """Per characteristic: dams with a value, means and medians, and the SMD of
+    added vs primary dams (from the means); systematic = |SMD| >= SMD_FLAG."""
     p = characteristics.reindex(sorted(set(primary_ids)))
     a = characteristics.reindex(sorted(set(added_ids)))
     rows = []
     for name in characteristics.columns:
         d = smd(p[name], a[name])
         rows.append({"characteristic": name, "primary_dams": int(p[name].notna().sum()),
-                     "added_dams": int(a[name].notna().sum()), "primary_median": p[name].median(),
-                     "added_median": a[name].median(), "smd_added_minus_primary": d,
+                     "added_dams": int(a[name].notna().sum()),
+                     "primary_mean": p[name].mean(), "added_mean": a[name].mean(),
+                     "primary_median": p[name].median(), "added_median": a[name].median(),
+                     "smd_added_minus_primary": d,
                      "systematic": bool(pd.notna(d) and abs(d) >= SMD_FLAG)})
     return pd.DataFrame(rows)
