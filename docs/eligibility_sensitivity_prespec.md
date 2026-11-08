@@ -102,3 +102,17 @@ The comparison is per measure × design (BACI, before/after). For the distance m
 ## Changes after results were seen
 
 *(none yet)*
+
+## Deviations found before any model was fit
+
+- **2026-11-07, `--verify-primary`: the primary table does not rebuild exactly.** After the context stages ran
+  with `min1yr`, 16 of 717,119 primary rows differ, all in `precip_prev_month_mm`, all null → value, all January
+  samples, at 1 station (2 dams). Cause: climate is stored per station × year for the years inside a station's
+  pair windows, so a January sample in the first window year has no previous December unless another pair of
+  the same station covers that year. A dam added by `min1yr` with an earlier removal year supplied it. Every
+  other column, and every other row, rebuilt identically.
+  **Decision:** the primary table and primary results are kept as they are (not rebuilt). The variant tables are
+  built from the current context tables, so these 16 rows have a value there and can enter the sensitivity
+  models; the effect on the comparison is negligible (16 rows, 1 station). Not fixed here: January samples in the
+  first window year generally lack `precip_prev_month_mm` and are dropped by the models in both the primary and
+  the sensitivity analyses (a pre-existing, shared gap, so it doesn't bias the comparison).
