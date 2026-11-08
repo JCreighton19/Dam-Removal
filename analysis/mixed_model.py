@@ -98,6 +98,12 @@ SETTINGS = {
     "treated_exposure": ["assigned_sole", "assigned_nearest", "assigned_overlapping"],
     "control_exposure": ["upstream_control"],
     "exclude_former_reservoir": True,
+    # Sensitivity (pre-specified 2026-11-08, docs/control_sensitivity_prespec.md):
+    # True keeps as controls only upstream stations positively known to be
+    # outside the former reservoir (upstream_in_former_reservoir is False).
+    # Default False: an unknown status (dam height or slope missing) counts as a
+    # control, as in the main analysis.
+    "controls_known_outside_reservoir": False,
     # Boolean flag columns whose true rows are dropped, e.g. ["qc_saline"].
     # qc_non_perennial: the station's or dam's reach is intermittent or
     # ephemeral in NHD; perennial streams are the main analysis (advisor,
@@ -180,6 +186,9 @@ def assign_roles(df, settings=SETTINGS):
         treated &= distance.le(float(limit)).fillna(False).astype(bool)
     control = ((df["side"] == "upstream") & df["exposure_status"].isin(settings["control_exposure"])
                & ~in_reservoir)
+    if settings.get("controls_known_outside_reservoir"):
+        known_outside = df["upstream_in_former_reservoir"].astype("boolean").eq(False).fillna(False)
+        control &= known_outside.astype(bool)
     return pd.Series(np.select([treated & ~flagged, control & ~flagged],
                                ["treated", "control"], "excluded"), index=df.index)
 
@@ -362,11 +371,16 @@ def main():
     parser.add_argument("--output-dir", type=Path,
                         help="Default: data/processed/mixed_model/<case_study>/")
     parser.add_argument("--series", nargs="+", help="Override SETTINGS['series'].")
+    parser.add_argument("--controls-known-outside", action="store_true",
+                        help="Sensitivity: controls only where upstream_in_former_reservoir is "
+                             "False (docs/control_sensitivity_prespec.md).")
     args = parser.parse_args()
 
     settings = dict(SETTINGS)
     if args.series:
         settings["series"] = args.series
+    if args.controls_known_outside:
+        settings["controls_known_outside_reservoir"] = True
     if args.input is None:
         from etl.common.config import load_config
         from etl.common.warehouse import warehouse_dir

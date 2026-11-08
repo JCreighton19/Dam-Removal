@@ -218,6 +218,33 @@ def test_command_line_run_writes_outputs():
             assert (tmp / "out" / name).exists()
 
 
+def test_controls_known_outside_option():
+    """--controls-known-outside keeps only controls with upstream_in_former_reservoir False."""
+    import json
+    import os
+    import tempfile
+    from unittest import mock
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        raw = simulate(raw=True)
+        known_dams = sorted(raw["AR_ID"].unique())[:14]
+        upstream = raw["side"].eq("upstream")
+        raw["upstream_in_former_reservoir"] = pd.Series(pd.NA, index=raw.index, dtype="boolean")
+        raw.loc[upstream & raw["AR_ID"].isin(known_dams), "upstream_in_former_reservoir"] = False
+        source = tmp / "analysis_measurement.parquet"
+        raw.to_parquet(source, index=False)
+        argv = ["distance_models.py", "--case-study", "test", "--input", str(source),
+                "--output-dir", str(tmp / "out"), "--series", "water_temp", "--specs", "baci_distance",
+                "--exclude-dams", str(tmp / "none.csv"), "--controls-known-outside",
+                "--analysis-role", "sensitivity"]
+        with mock.patch.object(sys, "argv", argv), mock.patch.dict(os.environ, {}):
+            dm.main()
+        used = pd.read_csv(tmp / "out" / "dams_used.csv")
+        assert set(used["AR_ID"]) == set(known_dams)           # unknown-status dams lose their controls
+        settings = json.loads((tmp / "out" / "settings.json").read_text())
+        assert settings["controls_known_outside_reservoir"] is True
+
+
 def test_singular_flag_reads_the_final_variances():
     results, _, _ = dm.fit_all(simulate(), ["baci_distance"], SETTINGS)
     fitted = results.iloc[0]

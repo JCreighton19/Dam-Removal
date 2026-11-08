@@ -72,6 +72,12 @@
 #   RUNS="time time_ml time_pretrend" sbatch data/slurm/fit_distance_models.slurm
 #   RUNS="time_ml_slopes time_coarse" sbatch data/slurm/fit_distance_models.slurm
 #   RUNS=modifiers sbatch data/slurm/fit_distance_models.slurm
+#
+# BACI with controls known to be outside the former reservoir (pre-specified
+# 2026-11-08, docs/control_sensitivity_prespec.md). Not in the default RUNS:
+#   known_controls  baci_distance with --controls-known-outside, into
+#                  sensitivity_known_controls/known_controls__<RE>/
+#   RUNS=known_controls sbatch data/slurm/fit_distance_models.slurm
 
 set -uo pipefail
 
@@ -106,6 +112,7 @@ declare -A ARGS=(
     [modifiers]="--stage stage5 --spec-sets modifier_screen"
     [modifiers_unadjusted]="--stage stage5 --spec-sets modifier_screen_unadjusted"
     [modifiers_combined]="--stage stage5 --specs baci_x_combined before_after_x_combined --combined ${COMBINED:-}"
+    [known_controls]="--stage sensitivity_known_controls --analysis-role sensitivity --specs baci_distance --controls-known-outside"
 )
 RUNS="${RUNS:-primary dilution size_proxy size_polygon dar_le_100 dar_le_10 dar_le_2 keep_suspects common_sample}"
 

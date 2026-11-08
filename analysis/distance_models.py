@@ -1441,6 +1441,9 @@ def base_parser(description):
                         help="Time specs' bins (design 11): a TIME_BINNINGS name "
                              f"({', '.join(TIME_BINNINGS)}) or 'label:lo:hi;...', reference "
                              "first (default: the y1_y2-3_y4-5 binning).")
+    parser.add_argument("--controls-known-outside", action="store_true",
+                        help="Sensitivity: BACI controls only where upstream_in_former_reservoir "
+                             "is False (docs/control_sensitivity_prespec.md).")
     parser.add_argument("--combined", nargs="+", choices=list(CHARACTERISTICS),
                         help="Characteristics of the *_x_combined specs (design 12).")
     return parser
@@ -1469,7 +1472,8 @@ def load_daily(args):
                 "carry_columns": carry_columns(specs, all_characteristics=audit),
                 "min_dams": args.min_dams, "exploratory_below": args.exploratory_below,
                 "time_bins": parse_time_bins(args.time_bins) if getattr(args, "time_bins", None)
-                else DEFAULT_TIME_BINS}
+                else DEFAULT_TIME_BINS,
+                "controls_known_outside_reservoir": bool(getattr(args, "controls_known_outside", False))}
     settings["series"] = args.series or default_series()
     if args.input is None:
         from etl.common.config import load_config

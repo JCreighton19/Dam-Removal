@@ -82,6 +82,20 @@ def test_roles():
     assert strict.tolist()[5] == "excluded"
 
 
+def test_controls_known_outside_reservoir():
+    """Sensitivity setting: unknown reservoir status is a control by default, not with the setting."""
+    df = pd.DataFrame([
+        row(side="upstream", exposure_status="upstream_control", upstream_in_former_reservoir=False),
+        row(side="upstream", exposure_status="upstream_control", upstream_in_former_reservoir=None),
+        row(side="upstream", exposure_status="upstream_control", upstream_in_former_reservoir=True),
+        row(),                                                    # treated: never affected
+    ])
+    assert mm.assign_roles(df, SETTINGS).tolist() == ["control", "control", "excluded", "treated"]
+    known = mm.assign_roles(df, {**SETTINGS, "controls_known_outside_reservoir": True})
+    assert known.tolist() == ["control", "excluded", "excluded", "treated"]
+    assert mm.SETTINGS["controls_known_outside_reservoir"] is False   # main analysis unchanged
+
+
 def test_downstream_distance_restriction():
     df = pd.DataFrame([
         row(network_distance_km=10.0),                            # treated: limit inclusive

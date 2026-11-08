@@ -37,6 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 
@@ -226,6 +227,11 @@ def _split_codes(series):
     return series.fillna("").str.split(";").map(lambda codes: {c.strip() for c in codes})
 
 
+def _normalized_codes(series):
+    """Qualifier codes as sets of trimmed, upper-case codes ("u; dl " -> {"U", "DL"})."""
+    return _split_codes(series).map(lambda codes: {c.upper() for c in codes if c})
+
+
 def _print_counts(title, series, limit=20):
     counts = series.value_counts(dropna=False)
     if counts.empty:
@@ -307,15 +313,20 @@ def parse_values(df):
     number = pd.to_numeric(value.str.replace(r"^[<>]=?", "", regex=True), errors="coerce")
 
     condition = df["ResultDetectionConditionText"]
+    # Exact matches after trimming and case-folding (no substring matching).
+    known_conditions = {c.casefold() for c in rules.CENSORED_CONDITIONS}
+    condition_censored = condition.str.strip().str.casefold().isin(known_conditions).fillna(False)
+    qualifier_censored = _normalized_codes(df["MeasureQualifierCode"]).map(
+        lambda c: bool(c & rules.CENSORED_QUALIFIERS))
     censored = (
-        condition.isin(rules.CENSORED_CONDITIONS).fillna(False)
+        condition_censored
         | value.isin(rules.CENSORED_VALUES).fillna(False)
         | starts_lt
         | starts_gt
-        | _split_codes(df["MeasureQualifierCode"]).map(lambda c: bool(c & rules.CENSORED_QUALIFIERS))
+        | qualifier_censored
     )
 
-    unknown = condition[condition.notna() & ~condition.isin(rules.CENSORED_CONDITIONS)]
+    unknown = condition[condition.notna() & ~condition_censored]
     _print_counts("Detection conditions not in the censored list (kept as detected; review)", unknown)
 
     limit = pd.to_numeric(df["DetectionQuantitationLimitMeasure/MeasureValue"], errors="coerce")
@@ -323,15 +334,70 @@ def parse_values(df):
 
     # Below-limit non-detects take half the detection limit. A "<0.5" value
     # with no separate limit states its own limit. ">" values keep their number.
+    # Only a positive limit is valid: a zero or negative one would give 0 (or
+    # less), which a log scale can't take. No valid limit -> no value, dropped
+    # later ("9b. No value and no detection limit").
     below = censored & ~starts_gt
-    effective_limit = limit.where(limit.notna(), number.where(starts_lt))
-    use_limit_unit = below & limit.notna()
+    valid_limit = limit.where(limit > 0)
+    stated = number.where(starts_lt & (number > 0))
+    effective_limit = valid_limit.where(valid_limit.notna(), stated)
+    use_limit_unit = below & valid_limit.notna()
 
     df["value_native"] = number.where(~below, effective_limit / 2)
     df["conversion_unit"] = df["unit_resolved"].where(~use_limit_unit, limit_unit)
     df["is_censored"] = censored.astype(bool)
     df["detection_limit"] = limit
+    # For the non-detect report (report_nondetects): which rule censored the
+    # row, and what happens to it. The 2026-11-08 codes are counted apart.
+    new_codes = (condition.str.strip().str.casefold()
+                 .eq("not detected at detection limit").fillna(False)
+                 | _normalized_codes(df["MeasureQualifierCode"]).map(
+                     lambda c: bool(c & (rules.CENSORED_QUALIFIERS - {"K"}))))
+    df["nondetect_rule"] = pd.Series(pd.NA, index=df.index, dtype="string").mask(
+        below, np.where(new_codes, "non-detect code added 2026-11-08", "non-detect (existing rules)"))
+    df["nondetect_action"] = pd.Series(pd.NA, index=df.index, dtype="string").mask(
+        below, np.where(effective_limit.notna(), "recoded: half the detection limit",
+                        "dropped: no valid detection limit"))
     return df
+
+
+def zeros_as_nondetects(df, log):
+    """Uncensored zeros of the log-scale outcome measures (rules.ZERO_AS_NONDETECT)
+    become non-detects: half a valid (positive, convertible) reported detection
+    limit, otherwise dropped. Discharge zeros are kept. Positive values below a
+    limit are not touched unless a non-detect code censored them earlier."""
+    zero = (~df["is_censored"] & df["result_value_std"].eq(0)
+            & df["parameter_std"].isin(rules.ZERO_AS_NONDETECT)).fillna(False).astype(bool)
+    if not zero.any():
+        return df, df.iloc[0:0]
+    limit = pd.to_numeric(df["detection_limit"], errors="coerce").where(lambda v: v > 0)
+    limit_unit = rules.normalize_unit(
+        df["DetectionQuantitationLimitMeasure/MeasureUnitCode"].fillna(df["unit_resolved"])).fillna("")
+    factor = pd.Series([rules.CONVERSIONS.get(k, (None, False))[0]
+                        for k in zip(df["parameter_std"], limit_unit)], index=df.index, dtype="float64")
+    recode = zero & limit.notna() & factor.notna()
+    df = df.copy()
+    df.loc[recode, "result_value_std"] = limit[recode] * factor[recode] / 2
+    df.loc[recode, "is_censored"] = True
+    df.loc[zero, "nondetect_rule"] = "unflagged zero, log-scale measure"
+    df.loc[zero, "nondetect_action"] = np.where(recode[zero], "recoded: half the detection limit",
+                                                "dropped: no valid detection limit")
+    report = df.loc[zero, ["parameter_std", "nondetect_rule", "nondetect_action"]].copy()
+    return (log.drop(df, zero & ~recode, "10a. Unflagged zero in a log-scale measure, no valid detection limit"),
+            report)
+
+
+def report_nondetects(*frames):
+    """Counts of recoded and dropped non-detects by measure, rule and action.
+    Pass the frames as they were BEFORE their drops, so dropped rows count."""
+    rows = pd.concat([f[["parameter_std", "nondetect_rule", "nondetect_action"]] for f in frames])
+    rows = rows[rows["nondetect_rule"].notna()]
+    if rows.empty:
+        return
+    table = (rows.groupby(["parameter_std", "nondetect_rule", "nondetect_action"]).size()
+             .rename("results").reset_index())
+    print("\nNon-detects by measure, rule and action (recoded = half the detection limit):")
+    print(table.to_string(index=False))
 
 
 def convert_units(df, log):
@@ -362,6 +428,11 @@ def convert_units(df, log):
     df["unit_basis_assumed"] = assumed
     df["sample_date_parsed"] = pd.to_datetime(df["ActivityStartDate"], errors="coerce")
 
+    # A censored value whose detection-limit unit can't be converted can't be
+    # recoded: it goes with the unconvertible rows below. Recorded for the report.
+    unconvertible_limit = df["nondetect_action"].eq("recoded: half the detection limit").fillna(False) \
+        & factor.isna()
+    df.loc[unconvertible_limit, "nondetect_action"] = "dropped: detection-limit unit not convertible"
     df = log.drop(df, df["unit_resolved"].isna(), "Unit missing after fallbacks")
     df = log.drop(df, factor.reindex(df.index).isna(), "Unit not convertible")
     df = log.drop(df, df["sample_date_parsed"].isna(), "9a. Unparseable sample date")
@@ -479,7 +550,10 @@ def clean_results(raw, station_ids):
     )
 
     df = parse_values(df)
+    parsed = df   # convert_units fills in its nondetect_action before dropping rows
     df = convert_units(df, log)
+    df, zero_report = zeros_as_nondetects(df, log)
+    report_nondetects(parsed[parsed["nondetect_rule"].notna()], zero_report)
     df = drop_implausible(df, log)
     df = deduplicate(df, log)
 

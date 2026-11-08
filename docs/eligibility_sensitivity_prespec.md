@@ -131,6 +131,26 @@ The comparison is per measure × design (BACI, before/after). For the distance m
   results should change, which the rebuild checks. NC-059 (the next most extreme dam) was checked and is real, not an
   error, so it stays. This is a correction of a pre-existing data error, not a change to the analysis plan.
 
+- **2026-11-08, data correction: TDS reported in g/L.** `conductance_plausibility.ipynb` section 7: at WI-125 / WI-126
+  (Duck Creek, WI) the reporting organization (ONEIDA_WQX) submitted 2007–09 field-meter TDS of 0.35–0.77 labelled mg/L
+  next to lab TDS of 380–970 mg/L at the same stations; on the same day TDS / conductance is 0.0006 for the field values
+  vs 0.53–0.80 for the lab ones, i.e. g/L. All fall before removal, so they would fake a ~1000× TDS increase.
+  **Correction:** the plausible range for TDS starts at 2 mg/L (was 0), as for conductance; applied to every result.
+- **2026-11-08, data correction: unrecognized non-detects and unflagged zeros.** Section 8 found standard non-detect
+  codes the cleaning step didn't recognize (qualifiers `U`, `DL`, `BRL`; condition "Not Detected at Detection Limit")
+  and ~4,000 uncensored zeros nationally (≤ 0.5% of each measure; in the main table about 154 turbidity, 60 TSS, 39
+  phosphorus, 34 SSC rows), mostly with no detection limit. On the models' log scale a zero becomes −3, an extreme
+  value. **Correction (applied to every result):** qualifiers `U`, `DL`, `BRL`, `BDL`, `ND` (exact codes, case and
+  whitespace normalized) and that condition now mark a value censored; censored values take half a valid (positive,
+  unit-convertible) detection limit, otherwise they are dropped; uncensored zeros of the log-scale outcome measures
+  are treated the same way (half a valid limit, else dropped). Discharge zeros are kept (zero flow is real). Positive
+  values below a limit are kept unless flagged. Substituting fixed per-measure limits was rejected as arbitrary.
+- **Inspected and not corrected (section 7):** turbidity at MT-013, PA-284, WI-105 / WI-106 and SSC / TSS at CO-025
+  look like real environmental variation (consistent units, values track flow); CO-025's pre-removal sediment is
+  likely raised by the 2012 Waldo Canyon fire and 2013 floods (a confounder for a before/after contrast, noted as a
+  limitation). VA-005's 1987 turbidity (a ceiling at 98 NTU at near-zero flow) is suspect but fits no general rule;
+  kept and noted as a limitation. One isolated TDS reading of 5,751 mg/L (WI-125 upstream control, 2009) is kept.
+
 ## Deviations found before any model was fit
 
 - **2026-11-07, `--verify-primary`: the primary table does not rebuild exactly.** After the context stages ran

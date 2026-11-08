@@ -29,7 +29,14 @@ echo "Case study: $DAM_REMOVAL_CASE_STUDY"
 # docs/eligibility_sensitivity_prespec.md) into
 # data/processed/mixed_model/<case_study>/sensitivity_<variant>/mixed_model/; the
 # primary outputs are not touched.
-if [[ -n "${INPUT_VARIANT:-}" ]]; then
+# KNOWN_CONTROLS=1: BACI controls only where upstream_in_former_reservoir is
+# False (docs/control_sensitivity_prespec.md), on the main table, into
+# data/processed/mixed_model/<case_study>/sensitivity_known_controls/mixed_model/.
+if [[ "${KNOWN_CONTROLS:-0}" == "1" ]]; then
+    [[ -z "${INPUT_VARIANT:-}" ]] || { echo "KNOWN_CONTROLS runs on the main table only; unset INPUT_VARIANT"; exit 1; }
+    python -u analysis/mixed_model.py --controls-known-outside \
+        --output-dir "data/processed/mixed_model/$DAM_REMOVAL_CASE_STUDY/sensitivity_known_controls/mixed_model"
+elif [[ -n "${INPUT_VARIANT:-}" ]]; then
     input="data/warehouse/$DAM_REMOVAL_CASE_STUDY/analysis_measurement_${INPUT_VARIANT}.parquet"
     [[ -f "$input" ]] || { echo "No $input (run build_analysis_dataset with ELIGIBILITY_VARIANT=$INPUT_VARIANT)"; exit 1; }
     echo "Sensitivity variant $INPUT_VARIANT: $input"

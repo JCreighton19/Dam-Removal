@@ -117,7 +117,11 @@ PLAUSIBLE_RANGES = {
     "ammonia": (0.0, 100.0),
     "orthophosphate": (0.0, 50.0),
     "phosphorus": (0.0, 50.0),
-    "tds": (0.0, 70000.0),
+    # Floor 2 mg/L (2026-11-08), like conductance: lower is not natural water.
+    # Drops field-meter TDS reported in g/L but labelled mg/L (ONEIDA_WQX
+    # 2007-09: 0.35-0.77 next to lab values of 380-970; TDS / conductance
+    # 0.0006 instead of ~0.55-0.75).
+    "tds": (2.0, 70000.0),
     # Hyperconcentrated flows reach several hundred thousand mg/L.
     "ssc": (0.0, 600000.0),
     "tss": (0.0, 600000.0),
@@ -134,9 +138,26 @@ CENSORED_CONDITIONS = {
     "Not Detected",
     "Present Below Quantification Limit",
     "Below Reporting Limit",
+    # Added 2026-11-08 (notebooks/qa/conductance_plausibility.ipynb section 8):
+    # a wording of "Not Detected" the list missed (seen on TSS and phosphorus zeros).
+    "Not Detected at Detection Limit",
 }
 CENSORED_VALUES = {"## (Censored)"}
-CENSORED_QUALIFIERS = {"K"}
+# Matched exactly after trimming and upper-casing each code (codes are split
+# on ";"). U, DL, BRL, BDL, ND added 2026-11-08: standard not-detected /
+# below-limit codes that were reaching the warehouse as detected values (often
+# as 0, which a log scale turns into an extreme value).
+CENSORED_QUALIFIERS = {"K", "U", "DL", "BRL", "BDL", "ND"}
+
+# Log-scale outcome measures (the log_parameters of analysis/mixed_model.py,
+# minus discharge). An uncensored 0 for one of these is a "below what the kit
+# or meter can read" report, not a concentration: it is treated as a
+# non-detect (half a valid reported detection limit, otherwise dropped).
+# Discharge is left out on purpose: zero flow is real. (2026-11-08)
+ZERO_AS_NONDETECT = frozenset({
+    "turbidity", "specific_conductance", "nitrate", "ammonia", "orthophosphate",
+    "phosphorus", "tds", "ssc", "tss",
+})
 
 # --------------------------------------------------
 # 3.6.4 Units

@@ -179,6 +179,99 @@ ROWS = {
         "CharacteristicName": "Stream flow, mean. daily", "ResultMeasureValue": "300",
         "ResultMeasure/MeasureUnitCode": "ft3/s",
     },
+    # Non-detects and zeros (2026-11-08). Each on its own date so deduplication
+    # can't merge them. "keep_" rows survive; the others are dropped.
+    "keep_nd_u_with_limit": {
+        "ActivityStartDate": "2016-01-04", "CharacteristicName": "Phosphorus",
+        "ResultSampleFractionText": "Total", "ResultMeasureValue": "0",
+        "ResultMeasure/MeasureUnitCode": "mg/l as P", "MeasureQualifierCode": "U",
+        "DetectionQuantitationLimitMeasure/MeasureValue": "0.01",
+        "DetectionQuantitationLimitMeasure/MeasureUnitCode": "mg/l as P",
+    },
+    "keep_nd_dl_messy_case": {
+        "ActivityStartDate": "2016-01-05", "CharacteristicName": "Total suspended solids",
+        "ResultMeasureValue": "0", "ResultMeasure/MeasureUnitCode": "mg/L",
+        "MeasureQualifierCode": " dl ;J", "DetectionQuantitationLimitMeasure/MeasureValue": "4",
+        "DetectionQuantitationLimitMeasure/MeasureUnitCode": "mg/L",
+    },
+    "keep_nd_bdl": {
+        "ActivityStartDate": "2016-01-06", "CharacteristicName": "Orthophosphate",
+        "ResultSampleFractionText": "Dissolved", "ResultMeasureValue": "0.001",
+        "ResultMeasure/MeasureUnitCode": "mg/l as P", "MeasureQualifierCode": "BDL",
+        "DetectionQuantitationLimitMeasure/MeasureValue": "0.004",
+        "DetectionQuantitationLimitMeasure/MeasureUnitCode": "mg/l as P",
+    },
+    "keep_nd_nd_ug": {
+        "ActivityStartDate": "2016-01-07", "CharacteristicName": "Phosphorus",
+        "ResultSampleFractionText": "Total", "ResultMeasureValue": "0",
+        "ResultMeasure/MeasureUnitCode": "mg/l as P", "MeasureQualifierCode": "ND",
+        "DetectionQuantitationLimitMeasure/MeasureValue": "20",
+        "DetectionQuantitationLimitMeasure/MeasureUnitCode": "ug/l as P",
+    },
+    "keep_nd_condition_new": {
+        "ActivityStartDate": "2016-01-08", "CharacteristicName": "Total suspended solids",
+        "ResultMeasureValue": "0", "ResultMeasure/MeasureUnitCode": "mg/L",
+        "ResultDetectionConditionText": " not detected at detection limit ",
+        "DetectionQuantitationLimitMeasure/MeasureValue": "2",
+        "DetectionQuantitationLimitMeasure/MeasureUnitCode": "mg/L",
+    },
+    "nd_brl_no_limit": {
+        "ActivityStartDate": "2016-01-09", "CharacteristicName": "Nitrate",
+        "ResultSampleFractionText": "Total", "ResultMeasureValue": "0.0",
+        "ResultMeasure/MeasureUnitCode": "mg/l as N", "MeasureQualifierCode": "BRL",
+    },
+    "nd_u_zero_limit": {
+        "ActivityStartDate": "2016-01-10", "CharacteristicName": "Phosphorus",
+        "ResultSampleFractionText": "Total", "ResultMeasureValue": "0",
+        "ResultMeasure/MeasureUnitCode": "mg/l as P", "MeasureQualifierCode": "U",
+        "DetectionQuantitationLimitMeasure/MeasureValue": "0",
+        "DetectionQuantitationLimitMeasure/MeasureUnitCode": "mg/l as P",
+    },
+    "nd_u_limit_unit_unconvertible": {
+        "ActivityStartDate": "2016-01-11", "CharacteristicName": "Phosphorus",
+        "ResultSampleFractionText": "Total", "ResultMeasureValue": "0",
+        "ResultMeasure/MeasureUnitCode": "mg/l as P", "MeasureQualifierCode": "U",
+        "DetectionQuantitationLimitMeasure/MeasureValue": "5",
+        "DetectionQuantitationLimitMeasure/MeasureUnitCode": "lbs/day",
+    },
+    "keep_zero_turbidity_with_limit": {
+        "ActivityStartDate": "2016-01-12", "CharacteristicName": "Turbidity",
+        "ResultMeasureValue": "0", "ResultMeasure/MeasureUnitCode": "NTU",
+        "DetectionQuantitationLimitMeasure/MeasureValue": "0.1",
+        "DetectionQuantitationLimitMeasure/MeasureUnitCode": "NTU",
+    },
+    "zero_ortho_no_limit": {
+        "ActivityStartDate": "2016-01-13", "CharacteristicName": "Orthophosphate",
+        "ResultSampleFractionText": "Dissolved", "ResultMeasureValue": "0.0",
+        "ResultMeasure/MeasureUnitCode": "mg/l as P",
+    },
+    "zero_tss_invalid_limit": {
+        "ActivityStartDate": "2016-01-14", "CharacteristicName": "Total suspended solids",
+        "ResultMeasureValue": "0", "ResultMeasure/MeasureUnitCode": "mg/L",
+        "DetectionQuantitationLimitMeasure/MeasureValue": "-1",
+        "DetectionQuantitationLimitMeasure/MeasureUnitCode": "mg/L",
+    },
+    "keep_discharge_zero": {
+        "ActivityStartDate": "2016-01-15", "CharacteristicName": "Stream flow, instantaneous",
+        "ResultMeasureValue": "0", "ResultMeasure/MeasureUnitCode": "ft3/s",
+    },
+    "keep_below_limit_positive": {
+        "ActivityStartDate": "2016-01-16", "CharacteristicName": "Phosphorus",
+        "ResultSampleFractionText": "Total", "ResultMeasureValue": "0.004",
+        "ResultMeasure/MeasureUnitCode": "mg/l as P",
+        "DetectionQuantitationLimitMeasure/MeasureValue": "0.01",
+        "DetectionQuantitationLimitMeasure/MeasureUnitCode": "mg/l as P",
+    },
+    "keep_qualifier_not_a_substring": {
+        "ActivityStartDate": "2016-01-17", "CharacteristicName": "Phosphorus",
+        "ResultSampleFractionText": "Total", "ResultMeasureValue": "0.05",
+        "ResultMeasure/MeasureUnitCode": "mg/l as P", "MeasureQualifierCode": "UND;DLX",
+    },
+    "tds_field_meter_gl": {
+        "ActivityStartDate": "2016-01-18", "CharacteristicName": "Total dissolved solids",
+        "ResultSampleFractionText": "Dissolved", "ResultMeasureValue": "0.55",
+        "ResultMeasure/MeasureUnitCode": "mg/L",
+    },
     "negative_flow": {
         "CharacteristicName": "Stream flow, instantaneous", "ResultMeasureValue": "-5",
         "ResultMeasure/MeasureUnitCode": "ft3/s",
@@ -305,6 +398,41 @@ def test_main_applies_every_rule():
         assert row.loc["keep_discharge_cfs", "result_value_std"] == 350
         assert abs(row.loc["keep_flow_m3s", "result_value_std"] - 70.6294) < 1e-9
         assert row.loc["keep_flow_m3s", "result_unit_std"] == "ft3/s"
+
+
+def test_nondetects_and_zeros():
+    """2026-11-08 rules: the added non-detect codes and condition, valid / missing /
+    invalid / unconvertible detection limits, unflagged zeros, discharge zeros,
+    positive below-limit values, exact (not substring) code matching, TDS floor."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        warehouse = _build_project(root)
+        _run_main(root)
+        row = pd.read_parquet(warehouse / "wq_measurement.parquet").set_index("activity_id")
+
+        def check(label, value, censored):
+            assert abs(row.loc[label, "result_value_std"] - value) < 1e-12, (label, row.loc[label, "result_value_std"])
+            assert bool(row.loc[label, "is_censored"]) is censored, label
+
+        check("keep_nd_u_with_limit", 0.005, True)          # U, half of 0.01
+        check("keep_nd_dl_messy_case", 2.0, True)            # " dl " normalized, half of 4
+        check("keep_nd_bdl", 0.002, True)                    # positive but flagged -> half the limit
+        check("keep_nd_nd_ug", 0.01, True)                   # limit in ug/L converted: 20 ug/L / 2 = 0.01 mg/L
+        check("keep_nd_condition_new", 1.0, True)            # condition matched after trim / case-fold
+        check("keep_zero_turbidity_with_limit", 0.05, True)  # unflagged zero with a valid limit
+        check("keep_discharge_zero", 0.0, False)             # zero flow is real
+        check("keep_below_limit_positive", 0.004, False)     # unflagged positive below the limit: untouched
+        check("keep_qualifier_not_a_substring", 0.05, False) # "UND", "DLX" are not U / ND / DL
+        for dropped in ("nd_brl_no_limit", "nd_u_zero_limit", "nd_u_limit_unit_unconvertible",
+                        "zero_ortho_no_limit", "zero_tss_invalid_limit", "tds_field_meter_gl"):
+            assert dropped not in row.index, dropped
+
+
+def test_zero_rule_covers_the_log_scale_outcomes():
+    """ZERO_AS_NONDETECT = the model's log-scale measures minus discharge."""
+    from analysis import mixed_model as mm
+    from etl.common import wq_rules
+    assert set(wq_rules.ZERO_AS_NONDETECT) == set(mm.SETTINGS["log_parameters"]) - {"discharge"}
 
 
 def test_failed_batches_stop_the_run():
