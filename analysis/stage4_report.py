@@ -47,7 +47,9 @@ The SESOI values are analyst-selected practical-significance thresholds
 regulatory standards. They only make explicit what "small" means here.
 sesoi_sensitivity.csv shows which classifications depend on them. Change
 them in SESOI and rerun the report (no refit needed). Log-scale series use
-log10 units (log10(1.25) = a 25% change).
+log10 units (log10(1.25) = a 25% change). Basis, caveats (pH is the weakest
+supported: +/-0.1 equals single-reading instrument accuracy) and sources:
+docs/practical_significance_thresholds.md.
 """
 
 from __future__ import annotations
