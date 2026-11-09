@@ -803,6 +803,43 @@ def mde(se, dams, power=POWER):
     return (stats.t.ppf(0.975, df) + stats.t.ppf(power, df)) * se
 
 
+def power(effect, se, dams, alpha=0.05):
+    """Post-hoc design sensitivity: the chance a two-sided t test (dams - 1 df,
+    as the model CIs) detects a TRUE effect of this size, given the fit's SE.
+
+    Pass a practical threshold (SESOI), in the same units as `se` (log10 for
+    log-scale series), never the estimate itself: power at the observed
+    estimate only restates its p-value. Noncentral t, so power(mde(se, n), se, n)
+    is about 0.8 (mde() uses the usual t_0.975 + t_0.80 shortcut). dams - 1 df
+    is an approximation for mixed models (dams are the independent units).
+    """
+    effect, se = np.asarray(effect, float), np.asarray(se, float)
+    df = np.maximum(np.asarray(dams, float) - 1, 1)
+    crit = stats.t.ppf(1 - alpha / 2, df)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ncp = np.abs(effect) / se
+        # The wrong-direction tail is ~0 for a large effect; scipy returns NaN there.
+        out = stats.nct.sf(crit, df, ncp) + np.nan_to_num(stats.nct.cdf(-crit, df, ncp), nan=0.0)
+    out = np.where((se > 0) & np.isfinite(ncp), np.clip(out, 0, 1), np.nan)
+    return out.item() if out.ndim == 0 else out
+
+
+def dams_needed(mde_now, sesoi, dams, power=POWER, max_dams=10_000):
+    """Rough projection, NOT a sample-size requirement: how many dams would
+    bring the MDE down to the threshold, if the SE shrank like
+    1 / sqrt(dams) and new dams resembled the current ones (same variances,
+    stations and sampling). Same units for mde_now and sesoi. NaN if an input
+    is missing; inf if not reached by max_dams.
+    """
+    if not np.isfinite([mde_now, sesoi, dams]).all() or sesoi <= 0 or mde_now <= 0 or dams < 2:
+        return np.nan
+    se_now = mde_now / (stats.t.ppf(0.975, max(dams - 1, 1)) + stats.t.ppf(power, max(dams - 1, 1)))
+    n = np.arange(2, max_dams + 1)
+    projected = (stats.t.ppf(0.975, n - 1) + stats.t.ppf(power, n - 1)) * se_now * np.sqrt(dams / n)
+    hit = np.flatnonzero(projected <= sesoi)
+    return float(n[hit[0]]) if len(hit) else np.inf
+
+
 def linear_effect(result, weights, dams):
     """Estimate, SE and t-based 95% CI of sum(weight * coefficient)."""
     names = list(weights)

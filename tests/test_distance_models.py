@@ -313,6 +313,37 @@ def test_minimum_detectable_effect():
     assert np.isfinite(row["cov_effect_modifier"])
 
 
+def test_power_at_threshold():
+    se, dams = 0.2, 20
+    # At the MDE, power is about the nominal 80% (mde() is the t shortcut).
+    assert abs(dm.power(dm.mde(se, dams), se, dams) - 0.80) < 0.03
+    # No true effect: power = the false-positive rate. Sign doesn't matter.
+    assert abs(dm.power(0.0, se, dams) - 0.05) < 1e-9
+    assert dm.power(-0.3, se, dams) == dm.power(0.3, se, dams)
+    # Bigger effect or more dams (same SE): more power.
+    assert dm.power(0.6, se, dams) > dm.power(0.3, se, dams)
+    assert dm.power(0.3, se, 40) > dm.power(0.3, se, 10)
+    # A very large effect (many SEs) has power ~1, not NaN.
+    assert dm.power(0.5, 0.02, 24) > 0.999
+    # Vectorized; missing or zero SE gives NaN.
+    out = dm.power(np.array([0.3, 0.3, 0.3]), np.array([0.2, np.nan, 0.0]), np.array([20, 20, 20]))
+    assert out.shape == (3,) and np.isfinite(out[0]) and np.isnan(out[1:]).all()
+
+
+def test_dams_needed_is_a_rough_projection():
+    se, dams = 0.2, 20
+    now = dm.mde(se, dams)
+    # Threshold half the MDE: about 4x the dams (a bit fewer as t shrinks).
+    need = dm.dams_needed(now, now / 2, dams)
+    assert 3.5 * dams <= need <= 4.2 * dams
+    # The projected SE at that many dams meets the threshold; one fewer doesn't.
+    assert dm.mde(se * np.sqrt(dams / need), need) <= now / 2 < dm.mde(se * np.sqrt(dams / (need - 1)), need - 1)
+    # Already below the threshold: fewer dams than now would do.
+    assert dm.dams_needed(now, 2 * now, dams) < dams
+    assert np.isnan(dm.dams_needed(np.nan, 0.1, dams)) and np.isnan(dm.dams_needed(now, 0.0, dams))
+    assert dm.dams_needed(now, now / 1000, dams, max_dams=100) == np.inf
+
+
 def test_common_sample_and_ml_make_specs_comparable():
     daily = simulate()
     # Some dams lack backwater_km: scaled distance alone would fit fewer dams.
