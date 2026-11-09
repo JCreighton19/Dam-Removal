@@ -6,6 +6,10 @@ any working directory. Notebooks that read the warehouse set `CASE_STUDY` in
 their first code cell. They need the data on the cluster, except
 `analysis/local_eda.ipynb`.
 
+## Start here: interpreting the models
+
+`statistical_model_interpretation.ipynb` is the presentation-oriented summary of the statistical modeling: the questions, the BA / BACI / distance / time models and their formulas in plain language, the key findings, robustness and limitations, and a summary for slides. Read-only: it loads the latest model outputs (`data/processed/mixed_model/<case_study>/`), checks they postdate the 8 Nov 2026 data corrections, and fits nothing. Run it on a compute node (data on the cluster).
+
 ## Typical order after a pipeline run
 
 1. `qa/warehouse_qa.ipynb`
