@@ -56,4 +56,13 @@ with `DAM_REMOVAL_MODEL_DIR=<snapshot>/all_removals`.
 
 ## Change log
 
-*(none yet)*
+- **2026-11-10 (recorded at the freeze; no model change).** The cluster working tree at the freeze differed from the
+  tagged commit in two non-notebook files. The snapshot records both (`WORKTREE_STATUS.txt`,
+  `WORKTREE_CONFIG.diff`, `known_station_reaches.cluster.csv`).
+  1. `config/known_station_reaches.csv` had the wrong-reach IDs filled in for 6 stations by
+     `etl/check_known_stations.py --fill-wrong-reaches`. The file is read only by that regression check, not by
+     station matching, so it doesn't affect the analysis tables or models. That version was committed after the tag.
+  2. `data/processed/huc4_list.txt` and `huc8_list.txt` were deleted on the cluster. No pipeline code reads them
+     (HUC lists come from the case-study config), so there is no effect. They were restored from git.
+
+  The snapshot was verified on 2026-11-10: `sha256sum -c` of `MANIFEST.sha256` reported no differences.
