@@ -26,6 +26,14 @@ targets Stage 2 (Amendment 1), the dam-level targets, no models: one
         targets (unstandardized, nearest station, years 1-3, frozen BLUPs,
         30 km), station-year-means check, weak-support flags, reliability.
         Writes targets*.csv and report_targets.md.
+cv      Stage 3 (prespec 7-8, Amendment 2), from targets.csv: models A
+        (overall mean), B (region mean), C (ridge, primary), D (small random
+        forest, exploratory); leave-one-HUC2-out (primary) and HUC4-grouped
+        5-fold x 20; predictor selection, imputation, scaling and penalty
+        inside training folds; HUC2 cluster bootstrap; go / no-go;
+        sensitivity analyses (weighted, complete cases, removal year, weak
+        support excluded, years 1-3, 30 km) and conductance influence.
+        Writes cv_*.csv and report_cv.md.
 
 The rows are the frozen before/after rows, built with the frozen code
 (mixed_model.prepare: treated roles, perennial filter, same-day discharge
@@ -874,6 +882,508 @@ def run_targets(daily, regions, exclude_dams, out_dir, stage3_dir, frozen_dir):
     return targets, stations, comparison, rel
 
 
+# --------------------------------------------------
+# Stage 3: cross-validated prediction (prespec 7-8, Amendments 1-2)
+# --------------------------------------------------
+
+CV_PREDICTORS = [p for p in PREDICTORS if p != "log_reservoir_volume_proxy"]   # Amendment 1.5
+MISSING_INDICATOR_SHARE = 0.10
+LAMBDA_GRID = np.logspace(-2, 3, 11)
+HUC4_SPLITS, HUC4_REPEATS = 5, 20
+N_BOOT = 2000
+SEED = 20261111
+RF_PARAMS = {"n_estimators": 300, "max_depth": 3, "min_samples_leaf": 10}
+R2_MIN, MAE_GAIN, MIN_FOLD_DAMS, AUC_MIN_CLASS = 0.05, 0.05, 10, 15
+SMALL_REGIONS = "small_regions"
+MODELS = ("A", "B", "C", "D")
+INFLUENCE_SERIES = ["specific_conductance"]                 # Amendment 2b
+TIMING_SERIES = ["phosphorus (Total)", "turbidity"]         # Amendment 2c (prespecified comparison)
+# Prespec 7 and Amendment 2: name -> (target version, options). "primary" decides go / no-go.
+CV_ANALYSES = {
+    "primary": ("primary_10km", {}),
+    "weighted": ("primary_10km", {"weighted": True}),
+    "complete_cases": ("primary_10km", {"complete": True}),
+    "removal_year": ("primary_10km", {"extra": ("removal_year",)}),
+    "exclude_weak_support": ("primary_10km", {"exclude_weak": True}),
+    "years_1_3": ("years_1_3", {}),
+    "window_30km": ("sensitivity_30km", {"features": "30km"}),
+}
+
+
+def _rows(frame, mask):
+    return frame.iloc[np.flatnonzero(np.asarray(mask))]
+
+
+def region_folds(huc2, min_dams=MIN_REGION_DAMS):
+    """Leave-one-HUC2-out labels; regions with < min_dams dams share one fold."""
+    h = pd.Series(np.asarray(huc2), dtype="object").astype(str)
+    counts = h.value_counts()
+    small = set(counts[counts < min_dams].index)
+    return np.where(h.isin(small), SMALL_REGIONS, h).astype(object)
+
+
+def grouped_kfold(groups, n_splits, rng):
+    """Whole groups to n_splits folds: groups shuffled, each to the fold with the fewest dams."""
+    g = pd.Series(np.asarray(groups), dtype="object").astype(str)
+    sizes = g.value_counts()
+    load, fold_of = np.zeros(n_splits), {}
+    for grp in rng.permutation(sizes.index.to_numpy()):
+        k = int(np.argmin(load))
+        fold_of[grp] = k
+        load[k] += sizes[grp]
+    return g.map(fold_of).to_numpy()
+
+
+def fold_predictors(F, candidates=CV_PREDICTORS):
+    """Prespec 5 + Amendments 1-2 on one training set (features only, never the
+    target): >= 70% complete, skip if |rho| > 0.8 with one already chosen,
+    indicator if >= 10% missing, cap floor(n / 15) counting indicators,
+    priority order, stop at the first that doesn't fit. Returns (predictors, indicators)."""
+    cap = len(F) // DAMS_PER_PREDICTOR
+    ok = [p for p in candidates if p in F and F[p].notna().mean() >= MIN_COMPLETENESS
+          and F[p].nunique(dropna=True) > 1]
+    rho = F[ok].corr(method="spearman", min_periods=10) if ok else pd.DataFrame()
+    chosen, indicators, used = [], [], 0
+    for p in ok:
+        if any(pd.notna(rho.loc[p, q]) and abs(rho.loc[p, q]) > MAX_ABS_RHO for q in chosen):
+            continue
+        ind = F[p].isna().mean() >= MISSING_INDICATOR_SHARE
+        if used + 1 + int(ind) > cap:
+            break
+        chosen.append(p)
+        indicators += [p] if ind else []
+        used += 1 + int(ind)
+    return chosen, indicators
+
+
+class Design:
+    """Median imputation + missing indicators + standardization, fitted on one training set."""
+
+    def __init__(self, predictors, indicators=(), extra=()):
+        self.cols = list(predictors) + [c for c in extra if c not in predictors]
+        self.indicators = list(indicators)
+
+    def _raw(self, F):
+        x = F[self.cols].astype(float).fillna(self.median)
+        ind = [F[p].isna().astype(float).rename(f"{p}_missing") for p in self.indicators]
+        return pd.concat([x] + ind, axis=1).to_numpy(float)
+
+    def fit(self, F):
+        self.median = F[self.cols].astype(float).median()
+        x = self._raw(F)
+        self.mu, sd = x.mean(axis=0), x.std(axis=0)
+        self.sd = np.where(sd > 0, sd, 1.0)
+        return self
+
+    def transform(self, F):
+        return (self._raw(F) - self.mu) / self.sd
+
+
+def ridge_fit(X, y, lam, w=None):
+    """Weighted ridge with an unpenalized intercept; returns [intercept, coefficients]."""
+    n, p = X.shape
+    w = np.ones(n) if w is None else np.asarray(w, float)
+    A = np.column_stack([np.ones(n), X])
+    pen = np.eye(p + 1) * lam
+    pen[0, 0] = 0.0
+    AW = A.T * w
+    return np.linalg.solve(AW @ A + pen, AW @ y)
+
+
+def ridge_predict(coef, X):
+    return coef[0] + X @ coef[1:]
+
+
+def choose_lambda(F, y, w, design_args, groups):
+    """Penalty with the lowest pooled inner-CV squared error; ties go to the larger penalty."""
+    sse = np.zeros(len(LAMBDA_GRID))
+    for g in pd.unique(groups):
+        tr, te = groups != g, groups == g
+        d = Design(*design_args).fit(_rows(F, tr))
+        Xtr, Xte = d.transform(_rows(F, tr)), d.transform(_rows(F, te))
+        for j, lam in enumerate(LAMBDA_GRID):
+            sse[j] += np.sum((y[te] - ridge_predict(ridge_fit(Xtr, y[tr], lam, w[tr]), Xte)) ** 2)
+    return float(LAMBDA_GRID[len(sse) - 1 - int(np.argmin(sse[::-1]))])
+
+
+def training_weights(D):
+    """1 / (tau2 + SE^2), tau2 by Paule-Mandel on these targets; scaled to mean 1."""
+    tau2 = tau2_pm(D["target"], D["se_total"])
+    w = 1.0 / (tau2 + D["se_total"].to_numpy(float) ** 2)
+    return w / w.mean()
+
+
+def cross_validate(data, folds, inner, rng, models=MODELS, weighted=False, extra=()):
+    """Out-of-sample predictions, one row per dam. data: one row per dam with
+    AR_ID, target, se_total, huc2, huc4 and the features. inner: "region"
+    (inner leave-one-region-out) or "huc4" (inner grouped 5-fold)."""
+    from sklearn.ensemble import RandomForestRegressor
+
+    y_all = data["target"].to_numpy(float)
+    folds = np.asarray(folds)
+    out = []
+    for f in pd.unique(folds):
+        te = folds == f
+        D_tr, D_te = _rows(data, ~te), _rows(data, te)
+        y = y_all[~te]
+        w = training_weights(D_tr) if weighted else np.ones(len(y))
+        mean = float(np.average(y, weights=w))
+        rec = pd.DataFrame({"AR_ID": D_te["AR_ID"].to_numpy(), "huc2": D_te["huc2"].to_numpy(),
+                            "fold": str(f), "y": y_all[te], "pred_A": mean})
+        if "B" in models:
+            h = D_tr["huc2"].to_numpy()
+            region = pd.Series(y * w).groupby(h).sum() / pd.Series(w).groupby(h).sum()
+            rec["pred_B"] = D_te["huc2"].map(region).fillna(mean).to_numpy()
+        preds, inds = fold_predictors(D_tr)
+        args = (preds, inds, extra)
+        rec["n_columns"] = len(Design(*args).cols) + len(inds)
+        rec["predictors"] = ";".join(Design(*args).cols + [f"{p}_missing" for p in inds])
+        rec["lambda"] = np.nan
+        has_x = bool(Design(*args).cols)
+        if "C" in models:
+            if has_x:
+                g = (region_folds(D_tr["huc2"]) if inner == "region"
+                     else grouped_kfold(D_tr["huc4"], HUC4_SPLITS, rng))
+                if len(pd.unique(g)) < 2:
+                    g = grouped_kfold(D_tr["huc4"], HUC4_SPLITS, rng)
+                lam = choose_lambda(D_tr, y, w, args, g)
+                d = Design(*args).fit(D_tr)
+                rec["pred_C"] = ridge_predict(ridge_fit(d.transform(D_tr), y, lam, w), d.transform(D_te))
+                rec["lambda"] = lam
+            else:
+                rec["pred_C"] = mean
+        if "D" in models:
+            if has_x:
+                d = Design(*args).fit(D_tr)
+                rf = RandomForestRegressor(**RF_PARAMS, random_state=SEED, n_jobs=1)
+                rf.fit(d.transform(D_tr), y, sample_weight=w)
+                rec["pred_D"] = rf.predict(d.transform(D_te))
+            else:
+                rec["pred_D"] = mean
+        out.append(rec)
+    return pd.concat(out, ignore_index=True)
+
+
+def _r2(y, pred, pred_a):
+    sse_a = np.sum((y - pred_a) ** 2)
+    return 1.0 - np.sum((y - pred) ** 2) / sse_a if sse_a > 0 else np.nan
+
+
+def _auc(y, pred, threshold):
+    cls = np.abs(y) > threshold
+    if not np.isfinite(threshold) or min(cls.sum(), (~cls).sum()) < AUC_MIN_CLASS:
+        return np.nan
+    return float(stats.mannwhitneyu(np.abs(pred[cls]), np.abs(pred[~cls])).statistic
+                 / (cls.sum() * (~cls).sum()))
+
+
+def score(pred, models, threshold=np.nan):
+    """Pooled out-of-sample metrics; R2 = 1 - SSE / SSE of model A (training-fold means)."""
+    y, a = pred["y"].to_numpy(float), pred["pred_A"].to_numpy(float)
+    out = []
+    for m in models:
+        p = pred[f"pred_{m}"].to_numpy(float)
+        e = y - p
+        out.append({"model": m, "dams": len(y), "r2": _r2(y, p, a), "mae": float(np.mean(np.abs(e))),
+                    "rmse": float(np.sqrt(np.mean(e ** 2))),
+                    "mae_vs_A": float(np.mean(np.abs(e)) / np.mean(np.abs(y - a))) if np.any(y != a) else np.nan,
+                    "direction_accuracy": float(np.mean(np.sign(p) == np.sign(y))),
+                    "auc_beyond_sesoi": _auc(y, p, threshold)})
+    return pd.DataFrame(out)
+
+
+def fold_table(pred, models):
+    """Per fold: dams and mean squared error of each model, and whether it beats A."""
+    out = []
+    for f, g in pred.groupby("fold", sort=False):
+        row = {"fold": f, "dams": len(g)}
+        for m in models:
+            row[f"mse_{m}"] = float(np.mean((g["y"] - g[f"pred_{m}"]) ** 2))
+        for m in models:
+            if m != "A":
+                row[f"beats_A_{m}"] = row[f"mse_{m}"] < row["mse_A"]
+        out.append(row)
+    return pd.DataFrame(out)
+
+
+def cluster_bootstrap(pred, models, rng, n_boot=N_BOOT):
+    """R2 percentiles from resampling HUC2 regions (with replacement) of the
+    out-of-sample predictions; approximate with few regions."""
+    groups = [np.flatnonzero(pred["huc2"].to_numpy() == g) for g in pd.unique(pred["huc2"])]
+    y, a = pred["y"].to_numpy(float), pred["pred_A"].to_numpy(float)
+    draws = {m: np.empty(n_boot) for m in models}
+    for b in range(n_boot):
+        idx = np.concatenate([groups[i] for i in rng.integers(0, len(groups), len(groups))])
+        for m in models:
+            draws[m][b] = _r2(y[idx], pred[f"pred_{m}"].to_numpy(float)[idx], a[idx])
+    return pd.DataFrame([{"model": m, "r2_boot_q05": np.nanpercentile(d, 5),
+                          "r2_boot_q95": np.nanpercentile(d, 95),
+                          "r2_boot_q025": np.nanpercentile(d, 2.5),
+                          "r2_boot_q975": np.nanpercentile(d, 97.5)} for m, d in draws.items()])
+
+
+def evaluate(data, rng, threshold=np.nan, models=MODELS, weighted=False, extra=(), huc4=True, boot=True):
+    """Primary leave-one-region-out scheme (+ bootstrap) and repeated HUC4 scheme.
+    Returns (loro predictions, metrics, folds, huc4 per-repeat metrics)."""
+    loro = cross_validate(data, region_folds(data["huc2"]), "region", rng, models, weighted, extra)
+    lm = [m for m in models if m != "B"]                         # B equals A under leave-one-region-out
+    metrics = score(loro, lm, threshold).assign(scheme="loro")
+    if boot:
+        metrics = metrics.merge(cluster_bootstrap(loro, lm, rng), on="model", how="left")
+    folds = fold_table(loro, lm)
+    reps = []
+    if huc4:
+        for r in range(HUC4_REPEATS):
+            p = cross_validate(data, grouped_kfold(data["huc4"], HUC4_SPLITS, rng), "huc4", rng,
+                               models, weighted, extra)
+            reps.append(score(p, models, threshold).assign(repeat=r))
+        reps = pd.concat(reps, ignore_index=True)
+        h = (reps.groupby("model", sort=False)
+             .agg(dams=("dams", "first"), r2=("r2", "mean"), r2_sd_repeats=("r2", "std"),
+                  mae=("mae", "mean"), rmse=("rmse", "mean"), mae_vs_A=("mae_vs_A", "mean"),
+                  direction_accuracy=("direction_accuracy", "mean"),
+                  auc_beyond_sesoi=("auc_beyond_sesoi", "mean"))
+             .reset_index().assign(scheme="huc4_repeated"))
+        metrics = pd.concat([metrics, h], ignore_index=True)
+    else:
+        reps = pd.DataFrame()
+    return loro, metrics, folds, reps
+
+
+def decide(metrics, folds):
+    """Prespec 8 go / no-go for models C (primary) and D (exploratory)."""
+    lo = metrics[metrics["scheme"] == "loro"].set_index("model")
+    h4 = metrics[metrics["scheme"] == "huc4_repeated"].set_index("model")
+    big = folds[folds["dams"] >= MIN_FOLD_DAMS]
+    out = []
+    for m in ("C", "D"):
+        if m not in lo.index:
+            continue
+        r2 = lo.loc[m, "r2"]
+        c = {"c1_r2_ge_0_05": bool(np.isfinite(r2) and r2 > 0 and r2 >= R2_MIN),
+             "c2_beats_region_baseline": bool(m in h4.index and "B" in h4.index
+                                              and h4.loc[m, "r2"] > h4.loc["B", "r2"]),
+             "c3_beats_A_half_of_folds": bool(len(big) and big[f"beats_A_{m}"].mean() >= 0.5),
+             "c4_boot90_excludes_0": bool(lo.loc[m].get("r2_boot_q05", np.nan) > 0),
+             "c5_mae_5pct_lower": bool(lo.loc[m, "mae_vs_A"] <= 1 - MAE_GAIN)}
+        out.append({"model": m, "role": "primary" if m == "C" else "exploratory",
+                    "r2_loro": r2, "r2_huc4": h4["r2"].get(m, np.nan), "r2_huc4_B": h4["r2"].get("B", np.nan),
+                    "folds_ge10_dams": len(big),
+                    "share_folds_beating_A": float(big[f"beats_A_{m}"].mean()) if len(big) else np.nan,
+                    "r2_boot_q05": lo.loc[m].get("r2_boot_q05", np.nan), "mae_vs_A": lo.loc[m, "mae_vs_A"],
+                    **c, "go": all(c.values())})
+    return pd.DataFrame(out)
+
+
+def model_data(targets, features, series, version, exclude_weak=False, complete=False):
+    """One row per dam for one series and target version, with its features.
+    Dams without a region are dropped (and counted)."""
+    t = targets[(targets["version"] == version) & (targets["series"] == series)]
+    cols = ["AR_ID", "target", "se_total", "weak_support", "huc2", "huc4"]
+    d = t[cols].merge(features, on="AR_ID", how="left")
+    no_region = int(d["huc2"].isna().sum())
+    d = d[d["huc2"].notna() & d["target"].notna()]
+    if exclude_weak:
+        d = d[~d["weak_support"].fillna(False).astype(bool)]
+    if complete:
+        sel, _ = fold_predictors(d)
+        d = d.dropna(subset=sel)
+    return d.reset_index(drop=True), no_region
+
+
+def selection_table(loro, data, analysis, series):
+    """How often each column was used across folds, and the full-sample selection."""
+    full, inds = fold_predictors(data)
+    full_cols = full + [f"{p}_missing" for p in inds]
+    per_fold = loro.drop_duplicates("fold")["predictors"].fillna("")
+    n = len(per_fold)
+    used = pd.Series([c for s in per_fold for c in s.split(";") if c]).value_counts()
+    names = list(dict.fromkeys(full_cols + list(used.index)))
+    return pd.DataFrame([{"analysis": analysis, "series": series, "column": c,
+                          "share_of_folds": used.get(c, 0) / n if n else np.nan,
+                          "full_sample_selection": c in full_cols} for c in names])
+
+
+def target_influence(targets, series, versions=("nearest_station", "frozen_blup_10km")):
+    """Amendment 2b: per dam, the change in Pearson r (primary vs another
+    version) when that dam is left out. Positive = the dam lowers r."""
+    keep = ["AR_ID", "target", "stations", "mean_km", "min_km", "max_km", "days", "clusters",
+            "se_total", "weak_support", "huc2"]
+    prim = targets[(targets["version"] == "primary_10km") & (targets["series"] == series)]
+    prim = prim[[c for c in keep if c in prim]]
+    out = []
+    for v in versions:
+        alt = targets[(targets["version"] == v) & (targets["series"] == series)][["AR_ID", "target"]]
+        m = prim.merge(alt.rename(columns={"target": "target_alt"}), on="AR_ID").reset_index(drop=True)
+        if len(m) < 4:
+            continue
+        r_all = m["target"].corr(m["target_alt"])
+        for i in range(len(m)):
+            rest = m.drop(index=i)
+            out.append({**m.loc[i].to_dict(), "version": v, "series": series, "pearson_all": r_all,
+                        "pearson_without": rest["target"].corr(rest["target_alt"]),
+                        "spearman_all": m["target"].corr(m["target_alt"], method="spearman")})
+    out = pd.DataFrame(out)
+    if len(out):
+        out["r_gain_if_left_out"] = out["pearson_without"] - out["pearson_all"]
+        out = out.sort_values(["version", "r_gain_if_left_out"], ascending=[True, False])
+    return out
+
+
+def cv_influence(data, rng_seed, threshold=np.nan):
+    """Amendment 2b: leave-one-dam-out change in the leave-one-region-out R2 of model C."""
+    rng = np.random.default_rng(rng_seed)
+    base = score(cross_validate(data, region_folds(data["huc2"]), "region", rng, ("A", "C")),
+                 ["C"], threshold)["r2"].iloc[0]
+    out = []
+    for i in range(len(data)):
+        d = data.drop(index=i).reset_index(drop=True)
+        rng = np.random.default_rng(rng_seed)
+        r2 = score(cross_validate(d, region_folds(d["huc2"]), "region", rng, ("A", "C")),
+                   ["C"], threshold)["r2"].iloc[0]
+        out.append({"AR_ID": data.loc[i, "AR_ID"], "huc2": data.loc[i, "huc2"],
+                    "target": data.loc[i, "target"], "r2_C_all": base, "r2_C_without": r2,
+                    "r2_change_if_left_out": r2 - base})
+    return pd.DataFrame(out).sort_values("r2_change_if_left_out", key=np.abs, ascending=False)
+
+
+def _sesoi(series):
+    from analysis.stage4_report import SESOI
+    return float(SESOI.get(series, np.nan))
+
+
+def _natural_mae(series, mae):
+    """MAE in natural units; log10 measures as a typical % change."""
+    if series.split(" (")[0] in mm.SETTINGS["log_parameters"]:
+        return f"{(10 ** mae - 1) * 100:.1f}%"
+    return f"{mae:.3g} {mm.unit_label(series, False)}".strip()
+
+
+def run_cv_stage(targets, features, analyses=CV_ANALYSES, series_list=TARGET_SERIES, influence=True):
+    """All analyses x series. Returns a dict of tables."""
+    preds, metrics, folds, reps, decisions, selection, sizes = [], [], [], [], [], [], []
+    for a_i, (analysis, (version, opt)) in enumerate(analyses.items()):
+        feats = features[opt.get("features", "10km")]
+        for s_i, series in enumerate(series_list):
+            data, no_region = model_data(targets, feats, series, version,
+                                         opt.get("exclude_weak", False), opt.get("complete", False))
+            regions = data["huc2"].value_counts()
+            sizes.append({"analysis": analysis, "series": series, "version": version, "dams": len(data),
+                          "dams_no_region": no_region, "huc2_regions": len(regions),
+                          "huc2_regions_ge5_dams": int(regions.ge(MIN_REGION_DAMS).sum()),
+                          "loro_folds": len(pd.unique(region_folds(data["huc2"]))) if len(data) else 0})
+            if len(data) < 2 * DAMS_PER_PREDICTOR or len(regions) < 2:
+                continue
+            rng = np.random.default_rng([SEED, s_i])                 # same seed per series in every analysis
+            thr = _sesoi(series)
+            loro, m, f, r = evaluate(data, rng, thr, weighted=opt.get("weighted", False),
+                                     extra=opt.get("extra", ()))
+            key = {"analysis": analysis, "series": series}
+            preds.append(loro.assign(**key))
+            metrics.append(m.assign(**key, mae_natural=m["mae"].map(lambda v: _natural_mae(series, v)),
+                                    sesoi=thr))
+            folds.append(f.assign(**key))
+            if len(r):
+                reps.append(r.assign(**key))
+            decisions.append(decide(m, f).assign(**key))
+            selection.append(selection_table(loro, data, analysis, series))
+            print(f"  {analysis:22s} {series:22s} dams={len(data):4d}  "
+                  f"R2 LORO C={m.loc[(m.scheme == 'loro') & (m.model == 'C'), 'r2'].iloc[0]:+.3f}")
+    cat = lambda x: pd.concat(x, ignore_index=True) if x else pd.DataFrame()
+    tables = {"cv_sizes": pd.DataFrame(sizes), "cv_predictions": cat(preds), "cv_metrics": cat(metrics),
+              "cv_folds": cat(folds), "cv_huc4_repeats": cat(reps), "cv_decisions": cat(decisions),
+              "cv_selection": cat(selection)}
+    if influence and "primary" in analyses:
+        ti, ci = [], []
+        for series in INFLUENCE_SERIES:
+            ti.append(target_influence(targets, series))
+            data, _ = model_data(targets, features["10km"], series, "primary_10km")
+            if len(data) >= 2 * DAMS_PER_PREDICTOR:
+                ci.append(cv_influence(data, [SEED, series_list.index(series)], _sesoi(series))
+                          .assign(series=series))
+        tables["cv_influence_targets"] = cat(ti)
+        tables["cv_influence_r2"] = cat(ci)
+    return tables
+
+
+def write_cv_report(path, tables):
+    m, d, s = tables["cv_metrics"], tables["cv_decisions"], tables["cv_sizes"]
+    prim_m = m[m["analysis"] == "primary"] if len(m) else m
+    show = ["series", "scheme", "model", "dams", "r2", "r2_boot_q05", "r2_boot_q95", "r2_sd_repeats",
+            "mae", "mae_natural", "mae_vs_A", "rmse", "direction_accuracy", "auc_beyond_sesoi"]
+    crit = ["series", "model", "role", "r2_loro", "r2_huc4", "r2_huc4_B", "share_folds_beating_A",
+            "folds_ge10_dams", "r2_boot_q05", "mae_vs_A", "c1_r2_ge_0_05", "c2_beats_region_baseline",
+            "c3_beats_A_half_of_folds", "c4_boot90_excludes_0", "c5_mae_5pct_lower", "go"]
+    sens = (d[d["model"] == "C"].pivot_table(index="series", columns="analysis", values="r2_loro")
+            .reset_index() if len(d) else pd.DataFrame())
+    sens_go = (d[d["model"] == "C"].assign(go=d["go"].astype(int))
+               .pivot_table(index="series", columns="analysis", values="go").reset_index() if len(d) else d)
+    sel = tables["cv_selection"]
+    sel = sel[sel["analysis"] == "primary"] if len(sel) else sel
+    lines = [
+        "# Predictive feasibility: Stage 3 cross-validation",
+        "",
+        f"Prespec sections 7-8 with Amendments 1-2. Seed {SEED}; ridge penalty grid 1e-2 to 1e3 "
+        f"({len(LAMBDA_GRID)} values); HUC4 scheme {HUC4_SPLITS}-fold x {HUC4_REPEATS}; cluster bootstrap "
+        f"{N_BOOT} draws over HUC2 regions (approximate with few regions). R2 = 1 - SSE / SSE of model A "
+        "(training-fold means), on pooled out-of-sample predictions. Model B equals A under "
+        "leave-one-region-out, so it is assessed under the HUC4 scheme. Units: the target's (log10 for "
+        "conductance, phosphorus, turbidity; mae_natural as a % change). Prediction is association, not "
+        "causation; the target is the average change over years 1-5.",
+        "",
+        "## Dams per analysis",
+        _md(s),
+        "## Primary metrics",
+        _md(prim_m, [c for c in show if c in prim_m]),
+        "## Go / no-go (primary analysis; model D exploratory)",
+        _md(d[d["analysis"] == "primary"] if len(d) else d, [c for c in crit if c in d] if len(d) else None),
+        "With 6 measures, one passing alone is reported cautiously (multiple comparisons).",
+        "",
+        "## Sensitivity analyses: leave-one-region-out R2 of model C",
+        _md(sens),
+        "Go flags of model C per analysis (1 = all five criteria met; sensitivity analyses don't change "
+        "the decision):",
+        _md(sens_go),
+        f"Timing (Amendment 2c): the prespecified comparison is years_1_3 vs primary for "
+        f"{', '.join(TIMING_SERIES)}.",
+        "",
+        "## Predictor selection (primary; share of leave-one-region-out folds)",
+        _md(sel),
+    ]
+    if len(tables.get("cv_influence_targets", [])):
+        ti = tables["cv_influence_targets"]
+        lines += ["## Conductance: dams driving the Pearson / Spearman gap (Amendment 2b; top 5 per version)",
+                  _md(ti.groupby("version").head(5),
+                      [c for c in ["version", "AR_ID", "target", "target_alt", "stations", "min_km",
+                                   "max_km", "days", "weak_support", "pearson_all", "pearson_without",
+                                   "spearman_all"] if c in ti])]
+    if len(tables.get("cv_influence_r2", [])):
+        lines += ["## Conductance: leave-one-dam-out change in R2 of model C (top 10 by size)",
+                  _md(tables["cv_influence_r2"].head(10)),
+                  "No dam is removed from the primary analysis unless a data-quality problem is found "
+                  "(Amendment 2b)."]
+    Path(path).write_text("\n".join(lines))
+
+
+def run_cv(daily, regions, exclude_dams, out_dir):
+    """Stage 3: reads the Stage 2 targets.csv; features from the treated rows
+    (10 km, and 30 km for the 30 km sensitivity)."""
+    out_dir = Path(out_dir)
+    path = out_dir / "targets.csv"
+    if not path.exists():
+        raise SystemExit(f"Run STAGE=targets first: {path} not found")
+    targets = pd.read_csv(path, dtype={"AR_ID": str, "huc2": str, "huc4": str})
+    targets["weak_support"] = targets["weak_support"].map({True: True, False: False, "True": True,
+                                                           "False": False})
+    features = {"10km": dam_features(treated_rows(daily, exclude_dams, PRIMARY_KM)),
+                "30km": dam_features(treated_rows(daily, exclude_dams, WINDOW_KM))}
+    tables = run_cv_stage(targets, features)
+    for name, frame in tables.items():
+        frame.to_csv(out_dir / f"{name}.csv", index=False)
+    write_cv_report(out_dir / "report_cv.md", tables)
+    return tables
+
+
 def first_run_dir(base, run):
     for re_mode in ("auto", "slopes", "intercepts"):
         d = Path(base) / f"{run}__{re_mode}"
@@ -885,7 +1395,7 @@ def first_run_dir(base, run):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("stage", choices=["audit", "targets"])
+    parser.add_argument("stage", choices=["audit", "targets", "cv"])
     parser.add_argument("--case-study", default=default_case_study())
     parser.add_argument("--input", type=Path, help="analysis_measurement .parquet (default: warehouse).")
     parser.add_argument("--output-dir", type=Path, help="Default: data/processed/predictive/<case>/")
@@ -908,6 +1418,12 @@ def main():
     daily = mm.prepare(mm.read_measurements(args.input, settings), settings)
     regions = pd.read_parquet(wh / "dam_removal.parquet", columns=["AR_ID", "HUC8"])
     print(f"Daily values (all roles): {len(daily):,}")
+    if args.stage == "cv":
+        tables = run_cv(daily, regions, exclude, out_dir)
+        d = tables["cv_decisions"]
+        print(d[d["analysis"] == "primary"].to_string(index=False))
+        print(f"\nWrote cv_*.csv and report_cv.md to {out_dir}")
+        return
     if args.stage == "targets":
         stage3_dir = first_run_dir(frozen_dir / "stage3", "primary")
         if stage3_dir is None:

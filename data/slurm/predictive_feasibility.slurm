@@ -2,7 +2,7 @@
 #SBATCH --job-name=predictive_feasibility
 #SBATCH --output=data/slurm/logs/pf_%j.out
 #SBATCH --error=data/slurm/logs/pf_%j.err
-#SBATCH --time=01:00:00
+#SBATCH --time=02:00:00
 #SBATCH --mem=16G
 #SBATCH --cpus-per-task=2
 
@@ -18,6 +18,9 @@
 # STAGE=targets: Stage 2 dam-level targets, uncertainty, sensitivity targets and
 #   reliability (prespec Amendment 1); no predictive models.
 #   STAGE=targets sbatch data/slurm/predictive_feasibility.slurm
+# STAGE=cv: Stage 3 cross-validation, go / no-go and sensitivity analyses
+#   (prespec 7-8, Amendment 2); needs targets.csv from STAGE=targets.
+#   STAGE=cv sbatch data/slurm/predictive_feasibility.slurm
 
 set -euo pipefail
 

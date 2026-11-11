@@ -318,6 +318,199 @@ def test_frozen_standardization_reads_outputs():
         assert s["var_dam_post_30km"] == 0.02
 
 
+# --------------------------------------------------
+# Stage 3: cross-validation
+# --------------------------------------------------
+
+def cv_data(n=120, n_regions=8, signal=1.0, region_sd=0.0, seed=11, missing=0.15):
+    """One row per dam, like model_data(): target = signal * height + region
+    effect + noise. Region sizes differ (the last two have < 5 dams); 3 HUC4s per
+    region; some heights missing; drainage area independent of the target."""
+    rng = np.random.default_rng(seed)
+    sizes = np.r_[np.full(n_regions - 2, (n - 7) // (n_regions - 2)), 4, 3]
+    sizes[0] += n - sizes.sum()
+    huc2 = np.repeat([f"{k + 1:02d}" for k in range(n_regions)], sizes)
+    huc4 = np.array([f"{h}{rng.integers(1, 4):02d}" for h in huc2])
+    h = rng.normal(1.0, 0.3, n)
+    effect = dict(zip(np.unique(huc2), rng.normal(0, region_sd, n_regions)))
+    y = signal * (h - 1.0) / 0.3 * 0.5 + np.array([effect[g] for g in huc2]) + rng.normal(0, 0.5, n)
+    d = pd.DataFrame({"AR_ID": [f"D{i:03d}" for i in range(n)], "target": y,
+                      "se_total": rng.uniform(0.1, 0.4, n), "weak_support": rng.random(n) < 0.15,
+                      "huc2": huc2, "huc4": huc4, "log_dam_height": h,
+                      "log_dam_drainage_area": rng.normal(2, 0.5, n),
+                      "removal_year": rng.integers(1995, 2015, n).astype(float)})
+    d.loc[rng.random(n) < missing, "log_dam_height"] = np.nan
+    for p in pf.CV_PREDICTORS:
+        if p not in d:
+            d[p] = np.nan                                  # fails completeness
+    return d
+
+
+def test_folds_keep_groups_whole():
+    d = cv_data()
+    f = pf.region_folds(d["huc2"])
+    assert set(f[d["huc2"].isin(["07", "08"])]) == {pf.SMALL_REGIONS}
+    assert len(set(f)) == 7
+    g1 = pf.grouped_kfold(d["huc4"], 5, np.random.default_rng(1))
+    g2 = pf.grouped_kfold(d["huc4"], 5, np.random.default_rng(1))
+    assert (g1 == g2).all()
+    assert pd.DataFrame({"h": d["huc4"], "f": g1}).groupby("h")["f"].nunique().eq(1).all()
+    sizes = pd.Series(g1).value_counts()
+    assert sizes.max() - sizes.min() <= 10
+
+
+def test_fold_predictors_cap_counts_indicators():
+    d = cv_data(n=45)                                       # cap = 3
+    d["pct_agriculture"] = np.random.default_rng(0).normal(size=45)
+    chosen, inds = pf.fold_predictors(d)
+    # height (+ indicator, 15% missing) = 2, drainage = 1 -> cap reached; agriculture not reached
+    assert chosen == ["log_dam_height", "log_dam_drainage_area"] and inds == ["log_dam_height"]
+    d2 = cv_data(n=30)                                      # cap = 2: height + indicator only, then stop
+    assert pf.fold_predictors(d2) == (["log_dam_height"], ["log_dam_height"])
+    d3 = d.copy()
+    d3["log_dam_drainage_area"] = d3["log_dam_height"] * 2 + 0.001   # rho > 0.8 -> skipped
+    d3.loc[d3["log_dam_drainage_area"].isna(), "log_dam_drainage_area"] = 1.0
+    chosen, _ = pf.fold_predictors(d3)
+    assert "log_dam_drainage_area" not in chosen and "pct_agriculture" in chosen
+    d4 = d.copy()
+    d4.loc[d4.index[:20], "log_dam_height"] = np.nan        # < 70% complete
+    assert "log_dam_height" not in pf.fold_predictors(d4)[0]
+
+
+def test_design_fits_on_training_only():
+    tr = pd.DataFrame({"a": [1.0, 2.0, np.nan, 3.0]})
+    te = pd.DataFrame({"a": [np.nan, 100.0]})
+    d = pf.Design(["a"], ["a"]).fit(tr)
+    x = d._raw(te)
+    assert x[0, 0] == 2.0 and x[0, 1] == 1.0 and x[1, 1] == 0.0      # training median, indicator
+    xt = d.transform(tr)
+    assert np.allclose(xt.mean(axis=0), 0) and np.allclose(xt.std(axis=0), 1)
+
+
+def test_ridge_limits():
+    rng = np.random.default_rng(2)
+    X = rng.normal(size=(50, 2))
+    y = 3 + X @ [1.0, -2.0] + rng.normal(0, 0.1, 50)
+    ols = np.linalg.lstsq(np.column_stack([np.ones(50), X]), y, rcond=None)[0]
+    assert np.allclose(pf.ridge_fit(X, y, 1e-8), ols, atol=1e-6)
+    big = pf.ridge_fit(X, y, 1e8)
+    assert abs(big[0] - y.mean()) < 0.05 and np.abs(big[1:]).max() < 1e-3
+    w = np.r_[np.full(25, 2.0), np.full(25, 0.0)]
+    assert np.allclose(pf.ridge_fit(X, y, 1e8, w)[0], y[:25].mean(), atol=0.05)
+
+
+def test_no_leakage_from_test_targets():
+    d = cv_data()
+    folds = pf.region_folds(d["huc2"])
+    base = pf.cross_validate(d, folds, "region", np.random.default_rng(3))
+    test = folds == "01"
+    d2 = d.copy()
+    d2.loc[test, "target"] += 50.0                       # change only the held-out dams' targets
+    alt = pf.cross_validate(d2, folds, "region", np.random.default_rng(3))
+    b, a = base[base["fold"] == "01"], alt[alt["fold"] == "01"]
+    for m in ("A", "B", "C", "D"):
+        assert np.allclose(b[f"pred_{m}"], a[f"pred_{m}"]), m
+    assert not np.allclose(base.loc[base["fold"] != "01", "pred_A"],
+                           alt.loc[alt["fold"] != "01", "pred_A"])
+
+
+def _quick(fn):
+    """Run fn with a small number of repeats and bootstrap draws."""
+    old = pf.HUC4_REPEATS, pf.N_BOOT
+    pf.HUC4_REPEATS, pf.N_BOOT = 3, 300
+    try:
+        return fn()
+    finally:
+        pf.HUC4_REPEATS, pf.N_BOOT = old
+
+
+def test_signal_is_found_and_null_is_not():
+    def run(signal, region_sd=0.0):
+        d = cv_data(signal=signal, region_sd=region_sd)
+        _, m, f, _ = pf.evaluate(d, np.random.default_rng(5), threshold=0.5)
+        return m, pf.decide(m, f)
+    m, dec = _quick(lambda: run(1.0))
+    c = dec.set_index("model").loc["C"]
+    assert c["r2_loro"] > 0.3 and c["go"], dec
+    assert m.loc[(m.scheme == "loro") & (m.model == "A"), "r2"].iloc[0] == 0.0
+    m, dec = _quick(lambda: run(0.0))
+    c = dec.set_index("model").loc["C"]
+    assert c["r2_loro"] < pf.R2_MIN and not c["go"], dec
+    # region-only signal: the region baseline wins under HUC4, so C fails criterion 2
+    m, dec = _quick(lambda: run(0.0, region_sd=1.0))
+    h = m[m.scheme == "huc4_repeated"].set_index("model")["r2"]
+    assert h["B"] > 0.3 and not dec.set_index("model").loc["C", "c2_beats_region_baseline"]
+
+
+def test_bootstrap_and_auc():
+    p = pd.DataFrame({"y": np.linspace(-1, 1, 40), "huc2": np.repeat(list("abcd"), 10)})
+    p["pred_A"], p["pred_C"] = 0.0, p["y"]
+    b = pf.cluster_bootstrap(p, ["C"], np.random.default_rng(0), 200).iloc[0]
+    assert b["r2_boot_q05"] == 1.0
+    assert np.isnan(pf._auc(p["y"].to_numpy(), p["y"].to_numpy(), 0.9))      # < 15 in a class
+    y = np.r_[np.full(20, 0.1), np.full(20, 2.0)]
+    assert pf._auc(y, y, 0.5) == 1.0
+
+
+def test_decide_criteria():
+    m = pd.DataFrame([
+        {"scheme": "loro", "model": "A", "r2": 0.0, "mae_vs_A": 1.0, "r2_boot_q05": 0.0},
+        {"scheme": "loro", "model": "C", "r2": 0.10, "mae_vs_A": 0.94, "r2_boot_q05": 0.01},
+        {"scheme": "huc4_repeated", "model": "B", "r2": 0.05},
+        {"scheme": "huc4_repeated", "model": "C", "r2": 0.08}])
+    f = pd.DataFrame({"fold": ["1", "2", "3"], "dams": [20, 15, 4],
+                      "beats_A_C": [True, False, False]})
+    c = pf.decide(m, f).iloc[0]
+    assert c["go"] and c["folds_ge10_dams"] == 2 and c["share_folds_beating_A"] == 0.5
+    m.loc[1, "mae_vs_A"] = 0.96
+    assert not pf.decide(m, f).iloc[0]["go"]
+    m.loc[1, "mae_vs_A"] = 0.9
+    m.loc[1, "r2"] = 0.04
+    assert not pf.decide(m, f).iloc[0]["c1_r2_ge_0_05"]
+
+
+def test_target_influence_finds_planted_outlier():
+    rng = np.random.default_rng(4)
+    t = pd.DataFrame({"AR_ID": [f"D{i}" for i in range(30)], "target": rng.normal(size=30)})
+    alt = t.assign(target=t["target"] + rng.normal(0, 0.1, 30))
+    alt.loc[7, "target"] = 15.0
+    targets = pd.concat([t.assign(version="primary_10km"), alt.assign(version="nearest_station")])
+    out = pf.target_influence(targets.assign(series="specific_conductance"), "specific_conductance",
+                              versions=("nearest_station",))
+    assert out.iloc[0]["AR_ID"] == "D7" and out.iloc[0]["r_gain_if_left_out"] > 0.5
+
+
+def test_run_cv_stage_end_to_end():
+    d = cv_data(n=80)
+    targets = pd.concat([d.assign(version=v, series=s) for v in ("primary_10km", "years_1_3")
+                         for s in ("ph", "specific_conductance")], ignore_index=True)
+    targets = pd.concat([targets, d.assign(version="nearest_station", series="specific_conductance")])
+    feats = d.drop(columns=["target", "se_total", "weak_support", "huc2", "huc4"])
+    analyses = {k: pf.CV_ANALYSES[k] for k in ("primary", "weighted", "complete_cases",
+                                               "removal_year", "exclude_weak_support", "years_1_3")}
+
+    def run():
+        old = pf.HUC4_REPEATS, pf.N_BOOT
+        pf.HUC4_REPEATS, pf.N_BOOT = 2, 100
+        try:
+            return pf.run_cv_stage(targets, {"10km": feats}, analyses, ["ph", "specific_conductance"])
+        finally:
+            pf.HUC4_REPEATS, pf.N_BOOT = old
+    tables = run()
+    dec = tables["cv_decisions"]
+    assert set(dec["analysis"]) == set(analyses) and set(dec["model"]) == {"C", "D"}
+    sizes = tables["cv_sizes"].set_index(["analysis", "series"])["dams"]
+    assert sizes[("exclude_weak_support", "ph")] == (~d["weak_support"]).sum()
+    assert sizes[("complete_cases", "ph")] == d["log_dam_height"].notna().sum()
+    sel = tables["cv_selection"]
+    assert "removal_year" in set(sel.loc[sel["analysis"] == "removal_year", "column"])
+    assert len(tables["cv_influence_r2"]) == 80
+    with tempfile.TemporaryDirectory() as tmp:
+        pf.write_cv_report(Path(tmp) / "report_cv.md", tables)
+        text = (Path(tmp) / "report_cv.md").read_text()
+        assert "Go / no-go" in text and "Conductance" in text
+
+
 if __name__ == "__main__":
     tests = [obj for name, obj in list(globals().items()) if name.startswith("test_") and callable(obj)]
     for test in tests:

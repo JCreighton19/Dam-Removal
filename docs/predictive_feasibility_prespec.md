@@ -317,3 +317,75 @@ difference):
 
 **Stage 2 stops at checkpoint 3.** No predictive model is fit until the targets, their uncertainty, the reliability
 and the sensitivity results have been reviewed.
+
+### Amendment 2: 2026-11-11, after checkpoint 3, before any predictive model is fit
+
+**Evidence** (`report_targets.md`, job 11815004 of 2026-11-11):
+
+- **Size:** dam counts match the audit (130, 128, 124, 109, 77, 64), and no station lacked a dilution ratio.
+- **Reliability:** 0.29–0.78 for every τ² source. The lowest is water temperature (0.29–0.44), the highest
+  phosphorus (0.62–0.78). **No measure meets the stop rule.**
+- **Uncertainty:** the year-means and CR2 SEs agree (median ratio 1.01), and the year-means targets correlate
+  0.90–0.97 with the primary. These checks support the uncertainty estimates, but they don't prove that every
+  source of correlated error is captured.
+  - Weak support is flagged for 14–29 dams per measure (≈ 15–25%).
+- **Standardization:** it barely matters; the unstandardized targets correlate 0.99–1.00 with the primary.
+- **Agreement with the other target versions:**
+  - nearest station, frozen BLUPs and 30 km mostly r ≈ 0.93–0.98
+  - specific conductance: Pearson 0.73 (nearest station) and 0.82 (BLUPs) against Spearman 0.97–0.98, so a few
+    dams or stations drive that disagreement
+  - years 1–3 vs 1–5: r = 0.66 for total phosphorus and 0.73 for turbidity (≈ 0.93 for the others)
+
+**Decisions** (approved by the analyst 2026-11-11):
+
+1. **Checkpoint 3 is approved.** All six measures go to Stage 3 with the Amendment 1 primary targets unchanged.
+2. **Three sensitivity analyses are added.** The primary analysis stays the full sample.
+   - **(a) Weak support excluded:** the Stage 3 analysis is repeated without the dams flagged for weak uncertainty
+     support.
+   - **(b) Influence of the conductance outliers:**
+     - The dams that drive the Pearson/Spearman gap are listed: the change in Pearson r when each dam is left out,
+       against the nearest-station and BLUP versions.
+     - A leave-one-dam-out influence check on the primary cross-validated R² (models A and C).
+     - **No dam is removed from the primary analysis** unless a real data-quality problem is found. Such a removal
+       would be recorded as a separate amendment, with its reason, before any result that depends on it is used.
+   - **(c) Timing:** the Stage 3 analysis is repeated on the years 1–3 targets. It is run for all measures, but the
+     **prespecified comparison is total phosphorus and turbidity.** The primary prediction concerns the *average
+     response over years 1–5*, not a fixed or immediate post-removal response, and is reported that way.
+3. **Stage 3 implementation details,** fixed now so that §5 and §7 are unambiguous:
+   - **Predictor selection is inside each training fold,** using training features only and never the target.
+     - The candidates are §5 without the volume proxy (Amendment 1.5), in priority order.
+     - A predictor needs ≥ 70% completeness, and it is skipped if |Spearman ρ| > 0.8 with one already chosen.
+     - A missing-value indicator is added for a predictor with ≥ 10% missing among the training dams.
+     - Each predictor costs 1, plus 1 for its indicator, against the cap ⌊n_train / 15⌋. Selection stops at the
+       first predictor that doesn't fit; it doesn't skip ahead to a lower-priority one.
+     - The full-sample selection is also reported, as the set a final model would use, along with how often each
+       predictor was chosen across folds.
+   - **Ridge penalty:**
+     - 11 log-spaced values from 10⁻² to 10³; ties go to the larger penalty. The intercept is not penalized.
+     - Imputation and scaling are refitted in every inner fold.
+     - Inner folds: leave-one-HUC2-out (small regions merged) under the primary scheme, and grouped 5-fold by HUC4
+       under the HUC4 scheme. If fewer than 2 inner groups exist, grouped 5-fold by HUC4 is used.
+   - **HUC4 folds:** the HUC4 groups are shuffled and each is assigned to the fold with the fewest dams so far.
+     There are 20 repeats, and the seed is 20261111 (recorded in the outputs).
+   - **Go/no-go criteria:**
+     - **2:** R² averaged over the 20 HUC4 repeats, C against B.
+     - **3:** "beats A" means a lower mean squared error in that leave-one-region-out fold. Only folds with
+       ≥ 10 dams count.
+     - **4:** a cluster bootstrap of the leave-one-region-out predictions over the HUC2 regions, 2,000 draws. The
+       5th percentile of R² must be > 0.
+     - **5:** leave-one-region-out MAE. For the log10 measures, MAE in natural units is reported as (10^MAE − 1)
+       × 100%.
+     - Model D's go flags are reported as **exploratory.**
+   - **The other prespecified sensitivity analyses (§5, §7):**
+     - **Weighted:** weights 1 / (τ² + SEᵢ²), with τ² by Paule–Mandel on the training fold's targets (total SE),
+       scaled to mean 1. The weights apply only to fitting; the evaluation is unweighted.
+     - **Complete cases:** dams complete on the full-sample selected predictors.
+     - **Removal year:** added to the selected set, outside the cap.
+     - **30 km window:** the 30 km targets, with the land-cover medians and pre-removal climate taken over the
+       treated stations within 30 km.
+   - **AUC:** the class is |target| > the SESOI (`stage4_report.SESOI`) and the score is |prediction|. It is
+     reported only if both classes have ≥ 15 dams.
+   - **The sensitivity analyses don't change the go/no-go decision.** Their results are reported next to it.
+
+**Stage 3 is built and tested on simulated data only.** It runs on the cluster only after the code has been
+reviewed.

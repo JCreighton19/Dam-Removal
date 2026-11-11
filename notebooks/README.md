@@ -26,6 +26,8 @@ their first code cell. They need the data on the cluster, except
     `RUNS="modifiers modifiers_unadjusted"` (and the sensitivity checks
     `RUNS="time_ml_slopes time_coarse"`) with `fit_distance_models.slurm`, then
     `analysis/time_and_modifier_results.ipynb`
+11. Predictive feasibility (after the model freeze): `STAGE=audit`, then `STAGE=targets`, then `STAGE=cv` with
+    `data/slurm/predictive_feasibility.slurm`, reviewing `analysis/predictive_feasibility.ipynb` after each
 
 ## `qa/`: check the warehouse before analysis
 
@@ -49,6 +51,7 @@ their first code cell. They need the data on the cluster, except
 | `mixed_model_results.ipynb` | Reads the outputs of `analysis/mixed_model.py` (fits nothing itself, opens in seconds); section 7 compares them with the eligibility sensitivity runs (3 samples / 1 year) | `fit_mixed_model` |
 | `distance_model_results.ipynb` | Stages 3-4: how each effect changes with distance downstream and with reservoir size; sensitivity runs, random-effects choice, leave-one-dam-out and bootstrap, raw vs scaled distance, pH upstream / downstream split, minimum detectable effects. Section 11: the pre-specified eligibility sensitivity analysis (3 / 1 and 3 / 1 with ≥2 months vs the main 3 / 2 rule; `docs/eligibility_sensitivity_prespec.md`). Reads `stage3/` and `stage4/` outputs; fits nothing | `fit_distance_models` (RE=auto and RE=intercepts), `fit_stage4` |
 | `time_and_modifier_results.ipynb` | How the BACI effect changes with years since removal (year 1, years 2–3, years 4–5 vs one effect for all 5 years, pre-trend check), sensitivity checks (comparison with each dam's own effect; 1–2 / 3–5 year intervals) and which dam / watershed characteristics go with bigger or smaller effects (availability, correlations, screen with q-values, adjusted vs unadjusted, combined model, fit checks); section 13 compares the time models under the eligibility sensitivity rule. Reads `stage5/` and `sensitivity_<variant>/`; fits nothing | `fit_distance_models.slurm` stage5 runs |
+| `predictive_feasibility.ipynb` | Can pre-removal dam traits predict each dam's water-quality change (`docs/predictive_feasibility_prespec.md`)? It covers the Stage 1 audit (dams per measure and region, predictor completeness, correlation and missingness by region, distance and time coverage) and the Stage 2 per-dam targets (distributions, 95% ranges, weak-support flags, reliability, agreement between target versions, the conductance outlier dams). Section 9 is the Stage 3 cross-validation: go / no-go, R² by model, observed vs predicted, per region, sensitivity analyses, predictor use. It deliberately has no target-vs-predictor plots before Stage 3. Reads `data/processed/predictive/<case_study>/`; fits nothing | `predictive_feasibility.slurm` (each stage) |
 | `local_eda.ipynb` | Quick local EDA on the exported CSV (`analysis_measurement_all_removals.csv` at the repo root, from `data/slurm/export_analysis_csv.slurm`). Not in git (`.gitignore`) | `export_analysis_csv` |
 
 ## `exploration/`: early source exploration (historical)
