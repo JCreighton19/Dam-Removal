@@ -57,6 +57,7 @@ def simulate(n_dams=12, seed=4):
                             "precip_prev_month_mm": float(rng.uniform(20, 80)),
                             "precip_mm": 50.0, "qc_non_perennial": False, "has_same_day_discharge": True,
                             "network_distance_km": d, "years_from_removal": yfr, "removal_year": removal,
+                            "drainage_area_ratio": 1.5 + s,
                             "land_cover_year": 2011 if dam == "D05" else 2001,   # D05: mapped after removal
                             "reservoir_polygon_timing": "edited_by_removal_year" if k % 2 else "after",
                             "dam_height_ft": np.nan if k % 4 == 0 else 3.0 + k,
@@ -160,6 +161,161 @@ def test_run_audit_writes_outputs():
         rec = tables["recommendations"].set_index("series")
         assert not rec.loc["water_temp", "meets_size_rule"]
         assert "Measures (primary window)" in (Path(tmp) / "report_audit.md").read_text()
+
+
+# --------------------------------------------------
+# Stage 2: targets
+# --------------------------------------------------
+
+B_LD, B_LDAR = -0.8, 0.5
+STD = pd.Series({"series": "water_temp", "b_ld": B_LD, "se_ld": 0.1, "b_ldar": B_LDAR, "se_ldar": 0.2,
+                 "reference_km": 5.0, "reference_dar": 2.0, "var_dam_post_30km": 1.0})
+
+
+def simulate_daily(n_dams=40, seed=7, tau=1.0, year_sd=0.6, noise_sd=1.0):
+    """Daily before/after rows (as treated_rows returns) with known dam effects at
+    5 km / reference dilution: station change = true + B_LD * ld + B_LDAR * ldar.
+    Dam k has 1-3 stations (one heavily sampled), D05 has a station without a
+    dilution ratio, D06 a station at 20 km only, D07 one station with 10 days."""
+    rng = np.random.default_rng(seed)
+    truth, rows = {}, []
+    for k in range(n_dams):
+        dam = f"D{k:02d}"
+        truth[dam] = rng.normal(0, tau)
+        n_st = 1 + k % 3
+        kms = [20.0] if dam == "D06" else ([3.0] if dam == "D07" else list(rng.uniform(0.2, 9.8, n_st)))
+        for s, km in enumerate(kms):
+            dar = np.nan if (dam == "D05" and s == 0) else float(rng.uniform(1.0, 8.0))
+            ld = np.log1p(km) - np.log1p(5.0)
+            ldar = 0.0 if np.isnan(dar) else np.log10(dar) - np.log10(2.0)
+            change = truth[dam] + B_LD * ld + B_LDAR * ldar
+            base = rng.normal(10, 2)
+            per_year = 1 if dam == "D07" else (30 if s == 0 else 6)      # unequal sampling
+            for yfr in [y for y in range(-5, 6) if y != 0]:
+                shock = rng.normal(0, year_sd)                             # same-year correlation
+                for _ in range(per_year):
+                    month = int(rng.integers(1, 13))
+                    air = rng.normal(0, 1)
+                    y = (base + 2 * np.sin(month / 12 * 2 * np.pi) + 0.7 * air + shock
+                         + (change if yfr > 0 else 0) + rng.normal(0, noise_sd))
+                    rows.append({"AR_ID": dam, "station_id": f"{dam}-S{s}", "series": "water_temp",
+                                 "role": "treated", "y": y, "post": int(yfr > 0), "month": month,
+                                 "sample_date": pd.Timestamp(2010 + yfr, month, 1),
+                                 "years_from_removal": yfr, "air_temp_mean_c": air,
+                                 "precip_prev_month_mm": rng.uniform(0, 100),
+                                 "network_distance_km": km, "drainage_area_ratio": dar})
+    return pd.DataFrame(rows), pd.Series(truth)
+
+
+def fit_dam_targets(daily_rows, standardize=True):
+    st, V2, V1, _ = pf.fit_station_changes(daily_rows)
+    st = st.merge(pf.station_terms(daily_rows, 5.0, 2.0), on=["AR_ID", "station_id"], how="left")
+    return st, pf.dam_targets(st, V2, V1, STD, standardize=standardize)
+
+
+def test_targets_recover_known_dam_effects():
+    d, truth = simulate_daily()
+    rows = pf.treated_rows(d, max_km=10)
+    st, t = fit_dam_targets(rows)
+    t = t.set_index("AR_ID")
+    err = t["target"] - truth.reindex(t.index)
+    assert t.index.nunique() == len(t) and "D06" not in t.index          # beyond 10 km
+    assert np.corrcoef(t["target"], truth.reindex(t.index))[0, 1] > 0.9
+    assert abs(err.mean()) < 0.25
+    # Honest uncertainty despite year shocks: most 95% intervals cover the truth.
+    covered = ((t["ci_low"] <= truth.reindex(t.index)) & (truth.reindex(t.index) <= t["ci_high"])).mean()
+    assert covered >= 0.85
+
+
+def test_equal_station_weights_and_standardization():
+    d, _ = simulate_daily()
+    rows = pf.treated_rows(d, max_km=10)
+    st, t = fit_dam_targets(rows)
+    t = t.set_index("AR_ID")
+    # D02 has 3 stations, one with 5x the days: the dam value is their plain mean.
+    s2 = st[st["AR_ID"] == "D02"]
+    assert s2["days"].max() >= 4 * s2["days"].min()
+    assert np.isclose(t.loc["D02", "target_unstandardized"], s2["delta"].mean())
+    # Standardization = the frozen shift at the dam's mean ld / ldar.
+    shift = B_LD * s2["ld"].mean() + B_LDAR * s2["ldar"].mean()
+    assert np.isclose(t.loc["D02", "target_unstandardized"] - t.loc["D02", "target"], shift)
+    # D05's station without a dilution ratio is out of the standardized target only.
+    _, u = fit_dam_targets(rows, standardize=False)
+    u = u.set_index("AR_ID")
+    assert t.loc["D05", "stations"] == u.loc["D05", "stations"] - 1
+
+
+def test_coefficient_uncertainty_and_ses():
+    d, _ = simulate_daily()
+    st, t = fit_dam_targets(pf.treated_rows(d, max_km=10))
+    mld, mldar = t["mean_ld"].abs(), t["mean_ldar"].abs()
+    assert np.allclose(t["se_coef_bound"], mld * 0.1 + mldar * 0.2)
+    assert np.allclose(t["se_coef_rho0"], np.sqrt(mld ** 2 * 0.01 + mldar ** 2 * 0.04))
+    assert (t["se_coef_bound"] >= t["se_coef_rho0"] - 1e-12).all()
+    assert np.allclose(t["se_total"] ** 2, t["se_cr2"] ** 2 + t["se_coef_bound"] ** 2)
+    assert (t["se_cr2"] > 0).all() and (t["clusters"] >= 4).all()
+    # The station-year-means check gives similar estimates.
+    assert np.corrcoef(t["target"], t["target_ym"])[0, 1] > 0.9
+    # Nearest-station subset keeps alignment with V (index = position).
+    nearest = st.loc[st[st["ldar"].notna()].groupby("AR_ID")["km"].idxmin()].sort_index()
+    st2, V2, V1, _ = pf.fit_station_changes(pf.treated_rows(d, max_km=10))
+    n = pf.dam_targets(nearest, V2, V1, STD).set_index("AR_ID")
+    one = nearest[nearest["AR_ID"] == "D02"].index[0]
+    assert np.isclose(n.loc["D02", "se_cr2"], np.sqrt(V2[one, one]))
+
+
+def test_weak_support_flags():
+    d, _ = simulate_daily()
+    _, t = fit_dam_targets(pf.treated_rows(d, max_km=10))
+    f = pf.flag_weak(t).set_index("AR_ID")
+    assert f.loc["D07", "flag_few_days"] and f.loc["D07", "weak_support"]
+
+
+def test_tau2_estimators_account_for_measurement_error():
+    rng = np.random.default_rng(1)
+    se = rng.uniform(0.5, 2.0, 2000)
+    est = rng.normal(0, np.sqrt(1.0 + se ** 2))                  # true tau2 = 1
+    assert abs(pf.tau2_pm(est, se) - 1) < 0.3 and abs(pf.tau2_dl(est, se) - 1) < 0.3
+    assert np.var(est, ddof=1) > 2                                 # raw variance would overstate it
+    null = rng.normal(0, se)                                       # tau2 = 0
+    assert pf.tau2_pm(null, se) < 0.15 and pf.tau2_dl(null, se) < 0.15
+    r, rd = pf.reliability(1.0, np.array([1.0, 1.0]))
+    assert np.isclose(r, 0.5) and np.isclose(rd, 0.5)
+
+
+def test_build_targets_versions_and_30km():
+    d, _ = simulate_daily()
+    rows10, rows30 = pf.treated_rows(d, max_km=10), pf.treated_rows(d, max_km=30)
+    regions = pd.DataFrame({"AR_ID": d["AR_ID"].unique(), "HUC8": "01080201"})
+    std = pd.DataFrame([STD])
+    frozen10 = pd.DataFrame({"series": ["water_temp"], "effect_sd_between_dams": [1.0]})
+    blups = pd.DataFrame({"AR_ID": ["D00", "D01"], "dam_effect": [0.1, 0.2], "series": "water_temp",
+                          "model": "before_after"})
+    targets, stations, comp, rel = pf.build_targets(rows10, rows30, std, frozen10, blups, regions)
+    versions = set(targets["version"])
+    assert {"primary_10km", "years_1_3", "sensitivity_30km", "unstandardized", "nearest_station",
+            "frozen_blup_10km"} <= versions
+    y13 = targets[targets["version"] == "years_1_3"]
+    assert (y13["share_post_days_y4_5"] == 0).all()
+    c30 = comp.set_index("version").loc["sensitivity_30km"]
+    assert c30["dams_added_vs_primary"] == 1                       # D06, only beyond 10 km
+    r = rel[(rel["version"] == "primary_10km") & (rel["se_kind"] == "se_total")].set_index("tau2_source")
+    assert np.isclose(r.loc["frozen_10km_mixed (sd^2)", "tau2"], 1.0)   # SD squared
+    assert r.loc["targets_paule_mandel", "tau2"] < r.loc["targets_paule_mandel", "raw_var_targets"]
+    assert not r["stop_rule_met"].any()
+
+
+def test_frozen_standardization_reads_outputs():
+    with tempfile.TemporaryDirectory() as tmp:
+        pd.DataFrame({"series": ["ph"], "spec": ["before_after_distance"], "error": [""], "dams": [267],
+                      "reference_km": [5.0], "reference_dar": [3.2], "var_dam_post": [0.02],
+                      "re_structure": ["dam slopes"]}).to_csv(Path(tmp) / "results.csv", index=False)
+        pd.DataFrame({"series": ["ph"] * 3, "spec": ["before_after_distance"] * 3,
+                      "term": ["post", "post_ld", "post_ldar"], "estimate": [0.03, -0.006, 0.01],
+                      "se": [0.01, 0.01, 0.02]}).to_csv(Path(tmp) / "coefficients.csv", index=False)
+        s = pf.frozen_standardization(tmp).iloc[0]
+        assert s["b_ld"] == -0.006 and s["se_ldar"] == 0.02 and s["reference_dar"] == 3.2
+        assert s["var_dam_post_30km"] == 0.02
 
 
 if __name__ == "__main__":

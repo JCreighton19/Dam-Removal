@@ -16,6 +16,16 @@ audit   Stage 1, the data feasibility audit (no targets, no models):
         completeness, correlation, VIF and geography; downstream distance
         coverage; post-removal time coverage. Writes audit_*.csv and
         report_audit.md.
+targets Stage 2 (Amendment 1), the dam-level targets, no models: one
+        fixed-effects regression per measure, y = station + month +
+        weather + delta_s * post, with station-year cluster-robust (CR2,
+        CR1) covariances; each dam = the equal-weight mean of its stations'
+        delta_s, standardized to 5 km and the reference dilution with the
+        frozen before/after distance model's post_ld / post_ldar (their SEs
+        propagated by the delta method, covariance bounded). Sensitivity
+        targets (unstandardized, nearest station, years 1-3, frozen BLUPs,
+        30 km), station-year-means check, weak-support flags, reliability.
+        Writes targets*.csv and report_targets.md.
 
 The rows are the frozen before/after rows, built with the frozen code
 (mixed_model.prepare: treated roles, perennial filter, same-day discharge
@@ -39,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 from analysis import mixed_model as mm
 from etl.common.config import default_case_study, get_project_root
@@ -80,8 +91,19 @@ PREDICTORS = {
 SENSITIVITY_FEATURES = {"removal_year": ("removal_year", "identity")}
 CARRY = list(dict.fromkeys(
     ["network_distance_km", "years_from_removal", "removal_year", "land_cover_year",
-     "reservoir_polygon_timing", "precip_mm"]
+     "reservoir_polygon_timing", "precip_mm", "drainage_area_ratio"]
     + [c for c, _ in PREDICTORS.values()]))
+
+# Stage 2 (prespec Amendment 1)
+TARGET_SERIES = ["water_temp", "dissolved_oxygen", "ph", "specific_conductance",
+                 "phosphorus (Total)", "turbidity"]
+STD_SPEC = "before_after_distance"           # frozen distance model whose post_ld / post_ldar standardize
+COVARIATES = ["air_temp_mean_c", "precip_prev_month_mm"]
+WEAK_MIN_CLUSTERS = 6
+WEAK_MIN_DAYS = 20
+WEAK_SE_MULTIPLE = 3.0
+WEAK_YM_RATIO = (0.5, 2.0)
+RELIABILITY_STOP = 0.15
 
 
 def output_dir_for(case_study, project_root=None):
@@ -485,10 +507,385 @@ def run_audit(daily, regions, exclude_dams, out_dir, frozen_dir=None):
     return tables
 
 
+# --------------------------------------------------
+# Stage 2: dam-level targets (prespec Amendment 1)
+# --------------------------------------------------
+
+def frozen_standardization(stage3_dir):
+    """Per series: the frozen before/after distance model's post_ld / post_ldar
+    estimates and SEs, its reference distance and dilution, and its dam
+    random-slope variance (var_dam_post, the between-dam variance of the
+    change at the reference). Read only; their covariance is not saved."""
+    stage3_dir = Path(stage3_dir)
+    res = pd.read_csv(stage3_dir / "results.csv")
+    coef = pd.read_csv(stage3_dir / "coefficients.csv")
+    res = res[(res["spec"] == STD_SPEC) & res["error"].fillna("").eq("")]
+    coef = coef[coef["spec"] == STD_SPEC]
+    out = []
+    for _, r in res.iterrows():
+        c = coef[coef["series"] == r["series"]].set_index("term")
+        if not {"post_ld", "post_ldar"} <= set(c.index):
+            continue
+        out.append({"series": r["series"], "b_ld": c.loc["post_ld", "estimate"],
+                    "se_ld": c.loc["post_ld", "se"], "b_ldar": c.loc["post_ldar", "estimate"],
+                    "se_ldar": c.loc["post_ldar", "se"],
+                    "reference_km": float(r.get("reference_km", 5.0)),
+                    "reference_dar": float(r["reference_dar"]),
+                    "var_dam_post_30km": r.get("var_dam_post", np.nan), "frozen_dams": r["dams"],
+                    "re_structure": r.get("re_structure", "")})
+    return pd.DataFrame(out)
+
+
+def station_terms(rows, reference_km, reference_dar):
+    """One row per dam-station: distance, dilution ratio and the frozen model's
+    ld = ln(1 + km) - ln(1 + reference_km), ldar = log10(ratio) - log10(reference)."""
+    st = (rows.groupby(["AR_ID", "station_id"])
+          .agg(km=("network_distance_km", "first"), dar=("drainage_area_ratio", "first"))
+          .reset_index())
+    km = pd.to_numeric(st["km"], errors="coerce").clip(lower=0)
+    dar = pd.to_numeric(st["dar"], errors="coerce")
+    st["ld"] = np.log1p(km) - np.log1p(reference_km)
+    st["ldar"] = np.where(dar > 0, np.log10(dar.where(dar > 0)) - np.log10(reference_dar), np.nan)
+    return st
+
+
+def _inv_sqrt_psd(m, tol=1e-10):
+    """(m)^(-1/2) for a symmetric PSD matrix; directions with eigenvalue ~0 get 0."""
+    vals, vecs = np.linalg.eigh(m)
+    inv = np.where(vals > tol, 1.0 / np.sqrt(np.clip(vals, tol, None)), 0.0)
+    return (vecs * inv) @ vecs.T
+
+
+def fit_station_changes(rows, covariates=COVARIATES):
+    """The Amendment-1 regression: y = station + month + weather + delta_s * post.
+    Returns (station table, V_cr2, V_cr1, adjusted values) where V_* are the
+    sandwich covariances of the station deltas (station-year clusters)."""
+    r = rows.dropna(subset=["y"] + covariates).copy()
+    r = r[r.groupby(["AR_ID", "station_id"])["post"].transform("nunique").eq(2)]
+    r["year"] = pd.to_datetime(r["sample_date"]).dt.year
+    key = r["AR_ID"].astype(str) + "|" + r["station_id"].astype(str)
+    st_codes, st_index = pd.factorize(key, sort=True)
+    n, s = len(r), len(st_index)
+    post = r["post"].to_numpy(float)
+    months = sorted(r["month"].dropna().unique())[1:]           # first month is the reference
+    cols = [np.eye(s)[st_codes], np.eye(s)[st_codes] * post[:, None]]
+    cols.append(np.column_stack([(r["month"].to_numpy() == m).astype(float) for m in months])
+                if months else np.empty((n, 0)))
+    zcols = []
+    for c in covariates:
+        x = r[c].astype(float)
+        if x.std() > 0:
+            zcols.append(((x - x.mean()) / x.std()).to_numpy())
+    cols.append(np.column_stack(zcols) if zcols else np.empty((n, 0)))
+    X = np.hstack(cols)
+    y = r["y"].to_numpy(float)
+    bread = np.linalg.pinv(X.T @ X)
+    beta = bread @ (X.T @ y)
+    e = y - X @ beta
+    p = np.linalg.matrix_rank(X)
+    clusters, cl_index = pd.factorize(key + "|" + r["year"].astype(str))
+    G = len(cl_index)
+    XB = X @ bread
+    order = np.argsort(clusters, kind="stable")
+    bounds = np.flatnonzero(np.diff(np.r_[-1, clusters[order], G]))
+    meat2 = np.zeros((X.shape[1], X.shape[1]))
+    meat1 = np.zeros_like(meat2)
+    for a, b in zip(bounds[:-1], bounds[1:]):
+        idx = order[a:b]
+        Xg, eg = X[idx], e[idx]
+        u1 = Xg.T @ eg
+        meat1 += np.outer(u1, u1)
+        hgg = XB[idx] @ Xg.T
+        u2 = Xg.T @ (_inv_sqrt_psd(np.eye(len(idx)) - hgg) @ eg)
+        meat2 += np.outer(u2, u2)
+    post_cols = np.arange(s, 2 * s)
+    Bp = bread[post_cols]
+    V2 = Bp @ meat2 @ Bp.T
+    V1 = Bp @ meat1 @ Bp.T * (G / max(G - 1, 1)) * ((n - 1) / max(n - p, 1))
+
+    # Station table and the station-year-means robustness check.
+    adj = y - X[:, 2 * s:] @ beta[2 * s:]                      # month and weather removed
+    r = r.assign(_key=key.to_numpy(), _adj=adj)
+    ym = r.groupby(["_key", "post", "year"])["_adj"].mean().reset_index()
+    stat = ym.groupby(["_key", "post"])["_adj"].agg(["mean", "var", "count"]).unstack("post")
+    st = pd.DataFrame({"_key": st_index})
+    st["AR_ID"] = st["_key"].str.split("|").str[0]
+    st["station_id"] = st["_key"].str.split("|", n=1).str[1]
+    st["delta"] = beta[post_cols]
+    st["var_cr2"], st["var_cr1"] = np.diag(V2), np.diag(V1)
+    g = r.groupby("_key")
+    st["days"] = st["_key"].map(g.size())
+    st["clusters"] = st["_key"].map(g["year"].nunique())
+    st["pre_years"] = st["_key"].map(stat[("count", 0)])
+    st["post_years"] = st["_key"].map(stat[("count", 1)])
+    st["post_days_y4_5"] = st["_key"].map(g.apply(lambda d: int(d["years_from_removal"].between(4, 5).sum())
+                                                  if "years_from_removal" in d else 0))
+    st["post_days"] = st["_key"].map(g["post"].sum())
+    st["delta_ym"] = st["_key"].map(stat[("mean", 1)] - stat[("mean", 0)])
+    st["var_ym"] = st["_key"].map(stat[("var", 1)] / stat[("count", 1)] + stat[("var", 0)] / stat[("count", 0)])
+    st["regression_rank_deficit"] = X.shape[1] - p
+    return st, V2, V1, r
+
+
+def dam_targets(st, V2, V1, std, standardize=True):
+    """One row per dam: equal-weight station average, standardized with the frozen
+    coefficients (std: one row of frozen_standardization), with conditional
+    (CR2, CR1), coefficient and total SEs. st's index must be the station's
+    position in V (as returned by fit_station_changes; a subset keeps it)."""
+    out = []
+    for dam, g in st.groupby("AR_ID", sort=False):
+        if standardize:
+            g = g[g["ldar"].notna()]
+        if g.empty:
+            continue
+        idx, S = g.index.to_numpy(), len(g)
+        w = np.full(S, 1.0 / S)
+        var2 = float(w @ V2[np.ix_(idx, idx)] @ w)
+        var1 = float(w @ V1[np.ix_(idx, idx)] @ w)
+        mld, mldar = g["ld"].mean(), g["ldar"].mean() if standardize else 0.0
+        shift = (std["b_ld"] * mld + std["b_ldar"] * mldar) if standardize else 0.0
+        var_c0 = (mld ** 2 * std["se_ld"] ** 2 + mldar ** 2 * std["se_ldar"] ** 2) if standardize else 0.0
+        var_cb = ((abs(mld) * std["se_ld"] + abs(mldar) * std["se_ldar"]) ** 2) if standardize else 0.0
+        target = float(g["delta"].mean() - shift)
+        G = int(g["clusters"].sum())
+        se_total = np.sqrt(var2 + var_cb)
+        t = stats.t.ppf(0.975, max(G - 1, 1))
+        out.append({"AR_ID": dam, "target": target, "target_unstandardized": float(g["delta"].mean()),
+                    "shift": float(shift), "se_cr2": np.sqrt(var2), "se_cr1": np.sqrt(var1),
+                    "se_coef_rho0": np.sqrt(var_c0), "se_coef_bound": np.sqrt(var_cb),
+                    "se_total": se_total, "se_total_rho0": np.sqrt(var2 + var_c0),
+                    "ci_low": target - t * se_total, "ci_high": target + t * se_total, "df": max(G - 1, 1),
+                    "stations": S, "days": int(g["days"].sum()), "clusters": G,
+                    "min_station_clusters": int(g["clusters"].min()),
+                    "pre_years": int(g["pre_years"].max()), "post_years": int(g["post_years"].max()),
+                    "mean_km": float(g["km"].mean()), "min_km": float(g["km"].min()),
+                    "max_km": float(g["km"].max()), "mean_ld": float(mld), "mean_ldar": float(mldar),
+                    "share_post_days_y4_5": float(g["post_days_y4_5"].sum() / max(g["post_days"].sum(), 1)),
+                    "target_ym": float(g["delta_ym"].mean() - shift),
+                    "se_ym": float(np.sqrt(g["var_ym"].sum()) / S)})
+    return pd.DataFrame(out)
+
+
+def flag_weak(t):
+    """Weak uncertainty support (Amendment 1)."""
+    t = t.copy()
+    med = t["se_cr2"].median()
+    ratio = t["se_ym"] / t["se_cr2"]
+    t["flag_few_clusters"] = t["clusters"] < WEAK_MIN_CLUSTERS
+    t["flag_few_days"] = t["days"] < WEAK_MIN_DAYS
+    t["flag_se_outlier"] = t["se_cr2"] > WEAK_SE_MULTIPLE * med
+    t["flag_se_methods_disagree"] = ~ratio.between(*WEAK_YM_RATIO)
+    t["weak_support"] = t[["flag_few_clusters", "flag_few_days", "flag_se_outlier",
+                           "flag_se_methods_disagree"]].any(axis=1)
+    return t
+
+
+def tau2_dl(est, se):
+    """DerSimonian-Laird between-unit variance (method of moments)."""
+    y, v = np.asarray(est, float), np.asarray(se, float) ** 2
+    w = 1 / v
+    k = len(y)
+    q = np.sum(w * (y - np.sum(w * y) / w.sum()) ** 2)
+    c = w.sum() - np.sum(w ** 2) / w.sum()
+    return max(0.0, (q - (k - 1)) / c) if c > 0 else 0.0
+
+
+def tau2_pm(est, se, tol=1e-10, max_iter=200):
+    """Paule-Mandel: tau2 such that the generalized Q equals k - 1 (0 if Q(0) <= k - 1)."""
+    y, v = np.asarray(est, float), np.asarray(se, float) ** 2
+    k = len(y)
+
+    def q(tau2):
+        w = 1 / (v + tau2)
+        return np.sum(w * (y - np.sum(w * y) / w.sum()) ** 2)
+
+    if k < 2 or q(0.0) <= k - 1:
+        return 0.0
+    lo, hi = 0.0, max(np.var(y, ddof=1), 1e-12) * 10
+    while q(hi) > k - 1:
+        hi *= 2
+    for _ in range(max_iter):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if q(mid) > k - 1 else (lo, mid)
+        if hi - lo < tol * max(hi, 1e-12):
+            break
+    return (lo + hi) / 2
+
+
+def reliability(tau2, se):
+    se2 = np.asarray(se, float) ** 2
+    if not np.isfinite(tau2) or len(se2) == 0:
+        return np.nan, np.nan
+    return tau2 / (tau2 + se2.mean()), float(np.mean(tau2 / (tau2 + se2)))
+
+
+def reliability_table(targets, frozen10, std):
+    """Reliability per series and target version, for each tau2 source and SE kind."""
+    out = []
+    for (version, series), t in targets.groupby(["version", "series"]):
+        if version not in ("primary_10km", "sensitivity_30km") or len(t) < 3:
+            continue
+        sources = {"targets_paule_mandel": None, "targets_dersimonian_laird": None}
+        if version == "primary_10km":
+            sd = frozen10.set_index("series")["effect_sd_between_dams"].get(series, np.nan) \
+                if len(frozen10) else np.nan
+            sources["frozen_10km_mixed (sd^2)"] = sd ** 2
+        sources["frozen_30km_distance (var_dam_post)"] = (
+            std.set_index("series")["var_dam_post_30km"].get(series, np.nan) if len(std) else np.nan)
+        for se_kind in ("se_total", "se_cr2"):
+            for source, tau2 in sources.items():
+                if source == "targets_paule_mandel":
+                    tau2 = tau2_pm(t["target"], t[se_kind])
+                elif source == "targets_dersimonian_laird":
+                    tau2 = tau2_dl(t["target"], t[se_kind])
+                r_mean, r_dams = reliability(tau2, t[se_kind])
+                out.append({"version": version, "series": series, "dams": len(t), "tau2_source": source,
+                            "se_kind": se_kind, "tau2": tau2, "tau": np.sqrt(tau2) if tau2 >= 0 else np.nan,
+                            "mean_se2": float((t[se_kind] ** 2).mean()), "reliability": r_mean,
+                            "mean_dam_reliability": r_dams,
+                            "raw_var_targets": float(t["target"].var(ddof=1))})
+    rel = pd.DataFrame(out)
+    if len(rel):
+        p = rel[rel["version"].eq("primary_10km")]
+        stop = p.groupby("series").apply(lambda d: bool(
+            (d.loc[(d["se_kind"] == "se_total") & (d["tau2_source"] == "targets_paule_mandel"),
+                   "reliability"] < RELIABILITY_STOP).all()
+            and (d.loc[d["tau2_source"].str.startswith("frozen"), "reliability"].dropna()
+                 < RELIABILITY_STOP).all()))
+        rel["stop_rule_met"] = rel["series"].map(stop).where(rel["version"].eq("primary_10km"))
+    return rel
+
+
+def compare_targets(targets):
+    """Each sensitivity target vs the primary: dams, correlations, mean absolute difference."""
+    prim = targets[targets["version"] == "primary_10km"][["series", "AR_ID", "target"]]
+    out = []
+    for (version, series), t in targets[targets["version"] != "primary_10km"].groupby(["version", "series"]):
+        m = prim[prim["series"] == series].merge(t[["AR_ID", "target"]], on="AR_ID", suffixes=("", "_alt"))
+        out.append({"version": version, "series": series, "dams_version": len(t), "dams_shared": len(m),
+                    "dams_added_vs_primary": int((~t["AR_ID"].isin(prim.loc[prim["series"] == series, "AR_ID"])).sum()),
+                    "pearson_r": m["target"].corr(m["target_alt"]) if len(m) > 2 else np.nan,
+                    "spearman_r": m["target"].corr(m["target_alt"], method="spearman") if len(m) > 2 else np.nan,
+                    "mean_abs_diff": float((m["target"] - m["target_alt"]).abs().mean()) if len(m) else np.nan,
+                    "sd_primary": float(m["target"].std()) if len(m) > 1 else np.nan,
+                    "mean_version": float(t["target"].mean()), "sd_version": float(t["target"].std())})
+    return pd.DataFrame(out)
+
+
+def build_targets(rows10, rows30, std, frozen10, blups, regions):
+    """All target versions for every series in std. Returns (targets, stations, comparison, reliability)."""
+    targets, stations = [], []
+    for _, s in std.iterrows():
+        series = s["series"]
+        versions = {"primary_10km": rows10, "years_1_3": rows10[rows10["years_from_removal"].le(3)],
+                    "sensitivity_30km": rows30}
+        for version, rows in versions.items():
+            r = rows[rows["series"] == series]
+            if r.empty:
+                continue
+            st, V2, V1, _ = fit_station_changes(r)
+            terms = station_terms(r, s["reference_km"], s["reference_dar"])
+            st = st.merge(terms, on=["AR_ID", "station_id"], how="left", validate="one_to_one")
+            # a left merge on unique keys keeps st's order: index = position in V
+            t = dam_targets(st, V2, V1, s)
+            targets.append(flag_weak(t).assign(version=version, series=series))
+            stations.append(st.assign(version=version, series=series))
+            if version == "primary_10km":
+                u = dam_targets(st, V2, V1, s, standardize=False)
+                targets.append(flag_weak(u).assign(version="unstandardized", series=series))
+                nearest = st.loc[st[st["ldar"].notna()].groupby("AR_ID")["km"].idxmin()]
+                n = dam_targets(nearest.sort_index(), V2, V1, s)  # index = positions in V
+                targets.append(flag_weak(n).assign(version="nearest_station", series=series))
+                excluded = st[st["ldar"].isna()]
+                print(f"  {series}: {t.shape[0]} dams; {len(excluded)} stations without a dilution ratio "
+                      f"left out of the standardized target")
+        if len(blups):
+            b = blups[(blups["series"] == series) & blups["model"].eq("before_after")]
+            targets.append(pd.DataFrame({"AR_ID": b["AR_ID"], "target": b["dam_effect"],
+                                         "version": "frozen_blup_10km", "series": series}))
+    targets = pd.concat(targets, ignore_index=True)
+    targets = add_regions(targets, regions)
+    stations = pd.concat(stations, ignore_index=True)
+    return targets, stations, compare_targets(targets), reliability_table(targets, frozen10, std)
+
+
+def write_target_report(path, targets, std, comparison, rel):
+    prim = targets[targets["version"] == "primary_10km"]
+    summ = []
+    for series, t in prim.groupby("series"):
+        summ.append({"series": series, "dams": len(t), "huc2": t["huc2"].nunique(),
+                     "target_mean": t["target"].mean(), "target_sd": t["target"].std(),
+                     "target_q10": t["target"].quantile(0.1), "target_q90": t["target"].quantile(0.9),
+                     "se_cr2_median": t["se_cr2"].median(), "se_cr1_median": t["se_cr1"].median(),
+                     "se_total_median": t["se_total"].median(), "se_total_q90": t["se_total"].quantile(0.9),
+                     "se_coef_bound_median": t["se_coef_bound"].median(),
+                     "clusters_median": t["clusters"].median(), "clusters_min": t["clusters"].min(),
+                     "weak_support": int(t["weak_support"].sum()),
+                     "ym_vs_cr2_se_ratio_median": (t["se_ym"] / t["se_cr2"]).median(),
+                     "corr_target_ym": t["target"].corr(t["target_ym"])})
+    s30 = targets[targets["version"] == "sensitivity_30km"]
+    add = []
+    for series, t in s30.groupby("series"):
+        p = prim[prim["series"] == series]
+        add.append({"series": series, "dams_30km": len(t), "dams_10km": len(p),
+                    "dams_added": int((~t["AR_ID"].isin(p["AR_ID"])).sum()),
+                    "huc2_30km": t["huc2"].nunique(), "huc2_10km": p["huc2"].nunique(),
+                    "huc2_added": len(set(t["huc2"].dropna()) - set(p["huc2"].dropna())),
+                    "sd_30km": t["target"].std(), "sd_10km": p["target"].std()})
+    rel_show = rel[rel["se_kind"].eq("se_total")] if len(rel) else rel
+    lines = [
+        "# Predictive feasibility: Stage 2 targets",
+        "",
+        "Dam-level targets (prespec Amendment 1). Model units: log10 for specific conductance, total "
+        "phosphorus and turbidity. No predictive model has been fit.",
+        "",
+        "## Frozen standardization coefficients (before/after distance model, read only)",
+        _md(std),
+        "## Primary targets (10 km, standardized to 5 km and the reference dilution, years 1-5)",
+        _md(pd.DataFrame(summ)),
+        "## Reliability (total SE; conditional-SE rows in targets_reliability.csv)",
+        _md(rel_show, ["version", "series", "dams", "tau2_source", "tau", "mean_se2", "reliability",
+                       "mean_dam_reliability", "stop_rule_met"]),
+        "## Sensitivity targets vs primary",
+        _md(comparison),
+        "## 30 km window: added dams and regions",
+        _md(pd.DataFrame(add)),
+    ]
+    Path(path).write_text("\n".join(lines))
+
+
+def run_targets(daily, regions, exclude_dams, out_dir, stage3_dir, frozen_dir):
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    std = frozen_standardization(stage3_dir)
+    std = std[std["series"].isin(TARGET_SERIES)].reset_index(drop=True)
+    frozen10 = frozen_reference(frozen_dir)
+    blup_path = Path(frozen_dir) / "dam_effects.csv" if frozen_dir else None
+    blups = pd.read_csv(blup_path) if blup_path and blup_path.exists() else pd.DataFrame()
+    rows10 = treated_rows(daily, exclude_dams, PRIMARY_KM)
+    rows30 = treated_rows(daily, exclude_dams, WINDOW_KM)
+    targets, stations, comparison, rel = build_targets(rows10, rows30, std, frozen10, blups, regions)
+    std.to_csv(out_dir / "targets_standardization.csv", index=False)
+    targets.to_csv(out_dir / "targets.csv", index=False)
+    stations.to_csv(out_dir / "targets_stations.csv", index=False)
+    comparison.to_csv(out_dir / "targets_comparison.csv", index=False)
+    rel.to_csv(out_dir / "targets_reliability.csv", index=False)
+    write_target_report(out_dir / "report_targets.md", targets, std, comparison, rel)
+    return targets, stations, comparison, rel
+
+
+def first_run_dir(base, run):
+    for re_mode in ("auto", "slopes", "intercepts"):
+        d = Path(base) / f"{run}__{re_mode}"
+        if (d / "results.csv").exists():
+            return d
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("stage", choices=["audit"])
+    parser.add_argument("stage", choices=["audit", "targets"])
     parser.add_argument("--case-study", default=default_case_study())
     parser.add_argument("--input", type=Path, help="analysis_measurement .parquet (default: warehouse).")
     parser.add_argument("--output-dir", type=Path, help="Default: data/processed/predictive/<case>/")
@@ -507,10 +904,19 @@ def main():
     print(f"Case study: {args.case_study}\nInput: {args.input}\nOutput: {out_dir}\n"
           f"Frozen models (read only): {frozen_dir}\nSuspect dams excluded: {len(exclude)}")
 
-    settings = audit_settings()
+    settings = audit_settings(TARGET_SERIES if args.stage == "targets" else None)
     daily = mm.prepare(mm.read_measurements(args.input, settings), settings)
     regions = pd.read_parquet(wh / "dam_removal.parquet", columns=["AR_ID", "HUC8"])
     print(f"Daily values (all roles): {len(daily):,}")
+    if args.stage == "targets":
+        stage3_dir = first_run_dir(frozen_dir / "stage3", "primary")
+        if stage3_dir is None:
+            raise SystemExit(f"No frozen stage3/primary__* outputs under {frozen_dir}")
+        print(f"Frozen distance model (standardization, read only): {stage3_dir}")
+        _, _, comparison, rel = run_targets(daily, regions, exclude, out_dir, stage3_dir, frozen_dir)
+        print(rel[rel["se_kind"].eq("se_total")].to_string(index=False))
+        print(f"\nWrote targets*.csv and report_targets.md to {out_dir}")
+        return
     tables = run_audit(daily, regions, exclude, out_dir, frozen_dir)
     print("\nRecommendation:")
     print(tables["recommendations"].to_string(index=False))

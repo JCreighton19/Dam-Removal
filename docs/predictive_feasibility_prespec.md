@@ -213,4 +213,107 @@ measures, one measure passing alone is reported cautiously (multiple comparisons
 
 ## Amendments (before any predictive result; with the audit evidence)
 
-*(none yet)*
+### Amendment 1: 2026-11-10, after the Stage 1 audit, before any target or model result
+
+**Audit evidence** (`data/processed/predictive/all_removals/report_audit.md`, job of 2026-11-10):
+
+- **Measures meeting the size rule** (10 km window, suspect dams excluded): water temperature 130 dams, pH 128,
+  DO 124, specific conductance 109, total phosphorus 77, turbidity 64. Each has 7–8 HUC2 regions with ≥ 5 dams.
+  - TDS (44 dams; 2 regions), TSS (30), orthophosphate (32) and SSC (7) **do not go forward**.
+  - These counts match the frozen 10 km model's after removing the 4 suspect dams (e.g. 134 → 130).
+- **The provisional ≥ 2 years each side rule removes no dam**: the 3 / 2 eligibility already guarantees it.
+- **Distance:**
+  - 74% of dams have a single station within 10 km.
+  - Only 10–13 dams have stations ≥ 3 km apart, and 2 dams cover all of the 0–2, 2–5 and 5–10 km bands.
+  - Station distances are spread across 0–10 km (median ≈ 4.6–5 km) and differ by region (median 1.8 km in
+    HUC2 05 vs ≈ 7 km in 01 and 03).
+  - **Dam-specific distance responses are not estimable.** The ∫Δᵢ(d)w(d)dd estimand of section 6 is not supported.
+- **Time:** ≈ 95% of dams have year 1 and years 2–3 data, ≈ 73% have years 4–5, and ≈ 70% have all three. Median
+  ≈ 66–80 daily values per dam over 10 years. **Dam-specific time profiles are not estimable.**
+- **Predictors:**
+  - dam age (≈ 38% complete) and mapped reservoir area (≈ 20%) fail the 70% rule
+  - dam height ≈ 80% and the volume proxy ≈ 73% complete
+  - no pair has |ρ| > 0.8; the volume proxy has the highest VIF (≈ 6)
+
+**Decisions** (approved by the analyst 2026-11-10):
+
+1. **Measures:** water temperature, DO, pH, specific conductance, total phosphorus, turbidity.
+2. **Primary estimand:** *the estimated average downstream water-quality change associated with a dam removal,
+   standardized to a common 5 km network distance and reference dilution condition, over the available
+   post-removal observation period (years 1–5).* One dam per measure is one prediction unit. No dam-specific
+   distance or time curves are estimated.
+3. **Distance:** standardized to 5 km and the reference dilution with the **frozen pooled before/after
+   distance-model coefficients** (`stage3/primary__auto`, spec `before_after_distance`, not refit).
+4. **Window:** 10 km primary, 30 km as a separate sensitivity analysis.
+5. **Predictors:** the reservoir-volume proxy is dropped from the primary set. It is a function of height, slope
+   and drainage area, has the highest VIF and 27% is missing. Missing-value indicators count toward the
+   15-dams-per-predictor cap, and are added only for predictors with ≥ 10% missing among a measure's dams.
+6. **Time:** years 1–5 primary, years 1–3 as a sensitivity target.
+
+**Target definition.** Per measure, one fixed-effects regression on the frozen before/after daily rows (10 km,
+suspect dams out):
+
+  y_{s,t} = α_s + Σ_m γ_m·1[month = m] + θ₁·z_air + θ₂·z_precip + δ_s·post_{s,t} + ε_{s,t}
+
+- α_s is a baseline for each station s, and δ_s is that station's own before/after change (not pooled across
+  stations or dams).
+- Month and weather effects are pooled across dams, as in the frozen model. The covariates are z-scored within
+  the fit.
+- The dam target averages its stations with equal weight, and standardizes with the frozen coefficients b_ld,
+  b_ldar (the `post_ld`, `post_ldar` terms):
+
+  Δᵢ = (1/Sᵢ) Σ_{s∈i} δ_s − b_ld·l̄dᵢ − b_ldar·l̄darᵢ
+
+  where l̄dᵢ is the mean over the dam's stations of ld = ln(1 + km) − ln(6), and l̄darᵢ is the mean of
+  ldar = log10(ratio) − log10(reference ratio of the frozen fit).
+- Units are the frozen model's (log10 for conductance, phosphorus and turbidity).
+- A station with no drainage-area ratio can't be standardized. It is left out of the standardized target (and
+  counted), but kept in the unstandardized sensitivity target.
+
+**Uncertainty.**
+- **Sampling error:** cluster-robust with **station × sample-year clusters**, using **CR2** (Bell–McCaffrey) as
+  primary, with CR1 reported.
+  - Dam SE² = (1/Sᵢ²)·1ᵀ V_{ii} 1, where V_{ii} is the block of the sandwich covariance for the dam's δ_s.
+  - 95% CI: t with Gᵢ − 1 df, where Gᵢ is the number of station-year clusters for the dam. This is an approximation.
+  - Reported per dam: the number of clusters, days and stations.
+  - **Robustness check:** a station-year-means estimate and SE. Weather- and month-adjusted values are averaged per
+    station-year; a station's change is the mean of its post-year means minus the mean of its pre-year means, with
+    a Welch SE across years. This is a check, not a replacement for CR2.
+- **Uncertainty in the frozen coefficients:** the SEs of b_ld and b_ldar are saved, but **their covariance is not**,
+  and the models are not refit.
+  - Delta method: Var_coef,i = l̄dᵢ²·se_ld² + l̄darᵢ²·se_ldar² + 2·l̄dᵢ·l̄darᵢ·cov.
+  - The unknown covariance is bounded by |cov| ≤ se_ld·se_ldar. The **primary total SE uses the conservative bound**
+    (l̄dᵢ·se_ld and l̄darᵢ·se_ldar added in absolute value); the ρ = 0 version is also reported.
+  - The conditional SE (given the coefficients) is reported separately. The coefficient error is **shared across
+    dams** (it scales with each dam's distance and dilution), so adding it to each dam's SE treats a correlated
+    error as independent. That is conservative for reliability.
+- **Weak uncertainty support** is flagged for a dam with any of:
+  - fewer than 6 station-year clusters
+  - fewer than 20 daily values
+  - conditional SE above 3× the measure's median
+  - year-means SE ÷ CR2 SE outside 0.5–2
+
+**Reliability.** R = τ² / (τ² + mean SEᵢ²), plus the mean of the per-dam τ² / (τ² + SEᵢ²). τ² comes from:
+- **(a) frozen 10 km mixed model:** `effect_sd_between_dams`² (an SD, squared). This is the between-dam variance of
+  the *unstandardized* ≤ 10 km change, so it's an approximation for the standardized target.
+- **(b) frozen 30 km distance model:** `var_dam_post` (already a variance). It is the between-dam variance of the
+  change *at 5 km and the reference dilution*, the same estimand as Δᵢ, but estimated from the 0–30 km sample.
+  **Used for the 30 km sensitivity target;** reported alongside (a) for the primary target.
+- **(c) from the targets themselves, accounting for measurement error:** a random-effects meta-analysis of the
+  Δ̂ᵢ with their SEᵢ, using Paule–Mandel (primary) and DerSimonian–Laird. This estimates the between-dam variance
+  left after removing each estimate's own sampling variance. It is **not** the raw variance of Δ̂ᵢ.
+
+R is computed with the total SE (primary, conservative) and with the conditional SE. The section 4 stop rule
+(< 0.15) applies to (c) with the total SE, and to (a) or (b). A measure stops only if all of them are below 0.15.
+
+**Sensitivity targets** (compared with the primary: dams, Pearson and Spearman correlation, mean absolute
+difference):
+1. unstandardized
+2. nearest station only
+3. years 1–3
+4. the frozen 10 km BLUPs (`dam_effects.csv`)
+5. 30 km window: the same regression and standardization, all treated stations ≤ 30 km. The added dams and
+   regions are reported.
+
+**Stage 2 stops at checkpoint 3.** No predictive model is fit until the targets, their uncertainty, the reliability
+and the sensitivity results have been reviewed.

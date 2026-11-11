@@ -15,6 +15,9 @@
 #
 # STAGE=audit (default): Stage 1 data audit, no targets or models.
 #   sbatch data/slurm/predictive_feasibility.slurm
+# STAGE=targets: Stage 2 dam-level targets, uncertainty, sensitivity targets and
+#   reliability (prespec Amendment 1); no predictive models.
+#   STAGE=targets sbatch data/slurm/predictive_feasibility.slurm
 
 set -euo pipefail
 
