@@ -251,6 +251,43 @@ def test_missing_overrides_file_is_empty():
     assert sn.load_overrides(Path("/nonexistent/overrides.csv")).empty
 
 
+def _overrides_with_coordinates(text):
+    tmp = tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False)
+    tmp.write("feature_kind,feature_id,action,nhdplus_id,reason,reviewed_by,reviewed_on,"
+              "corrected_lat,corrected_lon\n" + text)
+    tmp.close()
+    return Path(tmp.name)
+
+
+def test_overrides_with_corrected_coordinates():
+    frame = sn.load_overrides(_overrides_with_coordinates(
+        "dam,42,accept,1000123,moved to the mill race (imagery),jc,2026-11-14,45.01,-70.02\n"
+        "dam,43,accept,1000124,main stem per map,jc,2026-11-14,,\n"))
+    assert frame.loc[("dam", "42"), "corrected_lat"] == 45.01
+    assert frame.loc[("dam", "42"), "corrected_lon"] == -70.02
+    assert np.isnan(frame.loc[("dam", "43"), "corrected_lat"])
+    # Files without the coordinate columns still load, with them empty.
+    old = sn.load_overrides(_overrides("dam,42,accept,1000123,main stem,jc,2026-10-23\n"))
+    assert np.isnan(old.loc[("dam", "42"), "corrected_lon"])
+
+
+def test_invalid_corrected_coordinates():
+    try:
+        sn.load_overrides(_overrides_with_coordinates(
+            "dam,1,accept,10,a,jc,2026-11-14,45.0,\n"
+            "dam,2,reject,,b,jc,2026-11-14,45.0,-70.0\n"
+            "station,S1,accept,10,c,jc,2026-11-14,45.0,-70.0\n"
+            "dam,3,accept,10,d,jc,2026-11-14,95.0,-70.0\n"
+            "dam,4,accept,10,e,jc,2026-11-14,north,-70.0\n"))
+    except ValueError as exc:
+        message = str(exc)
+        for expected in ["must be given together", "need action accept", "only supported for dams",
+                         "out of range", "must be numbers"]:
+            assert expected in message, expected
+    else:
+        raise AssertionError("expected ValueError")
+
+
 if __name__ == "__main__":
     tests = [
         obj for name, obj in list(globals().items())

@@ -79,6 +79,10 @@ STATION_RULES = SnapRules(search_radius_m=1000, review_distance_m=300)
 
 # Manual overrides may point to a reach up to this far from the point.
 OVERRIDE_MAX_M = 2000
+# A dam override with reviewed coordinates (corrected_lat / corrected_lon)
+# must have them on its reach, within this distance (2026-11-14 dam review:
+# the point was placed on the flowline in QGIS).
+OVERRIDE_ON_REACH_M = 50
 
 ACCEPTED, AMBIGUOUS, REJECTED = "accepted", "ambiguous", "rejected"
 
@@ -479,6 +483,33 @@ OVERRIDE_COLUMNS = ["feature_kind", "feature_id", "action", "nhdplus_id", "reaso
                     "reviewed_by", "reviewed_on"]
 OVERRIDE_KINDS = {"dam", "station"}
 OVERRIDE_ACTIONS = {"accept", "reject"}
+# Optional (added 2026-11-14): reviewed WGS84 coordinates for a dam whose
+# reported location is wrong. match_dams.py then places the dam from them.
+OVERRIDE_COORDINATE_COLUMNS = ["corrected_lat", "corrected_lon"]
+
+
+def _blank(value):
+    return pd.isna(value) or not str(value)
+
+
+def _coordinate_errors(row, where):
+    lat, lon = row["corrected_lat"], row["corrected_lon"]
+    if _blank(lat) and _blank(lon):
+        return []
+    if _blank(lat) or _blank(lon):
+        return [f"{where}: corrected_lat and corrected_lon must be given together"]
+    errors = []
+    try:
+        lat, lon = float(lat), float(lon)
+    except ValueError:
+        return [f"{where}: corrected_lat / corrected_lon must be numbers"]
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        errors.append(f"{where}: corrected coordinates ({lat}, {lon}) out of range")
+    if row["feature_kind"] != "dam":
+        errors.append(f"{where}: corrected coordinates are only supported for dams")
+    if row["action"] != "accept":
+        errors.append(f"{where}: corrected coordinates need action accept")
+    return errors
 
 
 def load_overrides(path):
@@ -486,15 +517,21 @@ def load_overrides(path):
 
     accept: use reach nhdplus_id (checked against the flowlines when
     applied). reject: drop the point from analysis. Every row needs a
-    reason. Raises ValueError listing every problem.
+    reason. Dams may also give corrected_lat / corrected_lon (WGS84; both
+    or neither, accept only), used in place of the reported location.
+    Raises ValueError listing every problem.
     """
     path = Path(path)
     if not path.exists():
-        return pd.DataFrame(columns=OVERRIDE_COLUMNS).set_index(["feature_kind", "feature_id"])
+        return pd.DataFrame(columns=OVERRIDE_COLUMNS + OVERRIDE_COORDINATE_COLUMNS) \
+            .set_index(["feature_kind", "feature_id"])
     frame = pd.read_csv(path, dtype="string", comment="#").apply(lambda s: s.str.strip())
     missing = sorted(set(OVERRIDE_COLUMNS) - set(frame.columns))
     if missing:
         raise ValueError(f"{path}: missing columns {missing}")
+    for column in OVERRIDE_COORDINATE_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = pd.Series(pd.NA, index=frame.index, dtype="string")
 
     errors = []
     for number, row in frame.iterrows():
@@ -512,6 +549,7 @@ def load_overrides(path):
                 errors.append(f"{where}: accept needs an integer nhdplus_id")
         elif not pd.isna(row["nhdplus_id"]) and row["nhdplus_id"]:
             errors.append(f"{where}: reject must not give an nhdplus_id")
+        errors += _coordinate_errors(row, where)
     duplicated = frame.duplicated(["feature_kind", "feature_id"], keep=False)
     if duplicated.any():
         ids = sorted(set(frame.loc[duplicated, "feature_id"]))
@@ -520,4 +558,6 @@ def load_overrides(path):
         raise ValueError("Invalid snap overrides:\n  - " + "\n  - ".join(errors))
 
     frame["nhdplus_id"] = pd.to_numeric(frame["nhdplus_id"]).astype("Int64")
+    for column in OVERRIDE_COORDINATE_COLUMNS:
+        frame[column] = pd.to_numeric(frame[column]).astype("float64")
     return frame.set_index(["feature_kind", "feature_id"])

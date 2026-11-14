@@ -219,6 +219,76 @@ def test_match_dams_resume_skips_finished_huc8s():
             assert not (root / "out" / f"dam_reaches_{HUC8}.parquet").exists()
 
 
+OVERRIDE_HEADER = ("feature_kind,feature_id,action,nhdplus_id,reason,reviewed_by,reviewed_on,"
+                   "corrected_lat,corrected_lon\n")
+
+
+def _run_with_overrides(root, rows):
+    (root / "config" / "snap_overrides.csv").write_text(OVERRIDE_HEADER + rows)
+    argv = ["match_dams.py", "--case-study", "dam_test", "--output-dir", str(root / "out")]
+    with mock.patch.dict(os.environ, {PROJECT_ROOT_ENV_VAR: str(root)}), \
+            mock.patch.object(sys, "argv", argv):
+        md.main()
+    return pd.read_parquet(root / "out" / f"dam_reaches_{HUC8}.parquet").set_index("AR_ID")
+
+
+def test_override_with_corrected_coordinates():
+    # D_FREE is reported on Otter Creek; review puts it on Mill River reach 10,
+    # about 4.5 km away (too far for an override placed from the reported point).
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _build_project(root)
+        dams = _run_with_overrides(
+            root, "dam,D_FREE,accept,10,dam was on Mill River (imagery),jc,2026-11-14,45.0,-69.99\n")
+        free = dams.loc["D_FREE"]
+        assert (free["match_status"], free["match_reason"]) == ("accepted", "manual_override")
+        assert free["NHDPlusID"] == 10 and free["match_method"] == "manual_override"
+        assert free["coordinates_source"] == "manual_correction"
+        assert (free["Latitude"], free["Longitude"]) == (45.0, -69.99)
+        assert (free["reported_latitude"], free["reported_longitude"]) == (45.0402, -70.02)
+        assert free["snap_distance_m"] < 5 and abs(free["snap_fraction"] - 0.5) < 0.05
+        assert free["downstream_nhdplus_ids"] == "11"
+        res = dams.loc["D_RES"]
+        assert res["coordinates_source"] == "reported" and res["Latitude"] == 45.0003
+
+
+def test_corrected_coordinates_off_the_reach_fail():
+    # 45.005 N is ~550 m from reach 10: the HUC8 fails and the run stops.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _build_project(root)
+        try:
+            _run_with_overrides(root, "dam,D_FREE,accept,10,on Mill River,jc,2026-11-14,45.005,-69.99\n")
+        except RuntimeError as exc:
+            assert "failed" in str(exc)
+        else:
+            raise AssertionError("expected RuntimeError")
+
+
+def test_corrected_point_outside_every_huc8_stops_the_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _build_project(root)
+        try:
+            _run_with_overrides(root, "dam,D_FREE,accept,10,moved,jc,2026-11-14,46.0,-69.99\n")
+        except RuntimeError as exc:
+            assert "D_FREE" in str(exc) and "no case-study HUC8" in str(exc)
+        else:
+            raise AssertionError("expected RuntimeError")
+
+
+def test_corrected_coordinates_for_unknown_dam_stop_the_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _build_project(root)
+        try:
+            _run_with_overrides(root, "dam,NOPE,accept,10,moved,jc,2026-11-14,45.0,-69.99\n")
+        except ValueError as exc:
+            assert "NOPE" in str(exc)
+        else:
+            raise AssertionError("expected ValueError")
+
+
 if __name__ == "__main__":
     tests = [
         obj for name, obj in list(globals().items())

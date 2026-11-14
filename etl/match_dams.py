@@ -7,6 +7,16 @@ point onto it. Reported coordinates are kept as given (the dam list has no
 datum; they are taken as WGS84 and flagged datum_assumed, as in
 snap_features.py).
 
+Reviewed coordinates (2026-11-14, docs/dam_review.md): a dam override with
+corrected_lat / corrected_lon is located, assigned to a HUC8, matched and
+placed from those coordinates instead of the reported ones. Its
+Latitude / Longitude columns here hold the coordinates used;
+reported_latitude / reported_longitude keep the dam list's values and
+coordinates_source says which (reported / manual_correction). The point
+must lie on the override reach (within snapping.OVERRIDE_ON_REACH_M), or
+the HUC8 fails. A corrected point that no case-study HUC8 picked up (outside
+every case-study watershed) stops the run.
+
 Outputs in --output-dir (default data/processed/dam_reaches/<case_study>/):
 
     dam_reaches_<huc8>.parquet      one row per dam: match_status (accepted /
@@ -57,12 +67,44 @@ from etl.snap_features import (
 from etl.station_candidates import load_package
 
 KEEP = [DAM_ID, "Dam_Name", DAM_RIVER, "Year_Removed", "Latitude", "Longitude",
+        "reported_latitude", "reported_longitude", "coordinates_source",
         "datum_epsg", "datum_assumed"]
+REPORTED, CORRECTED = "reported", "manual_correction"
 
 
-def place(points, decisions, flowlines):
+def dam_overrides(overrides):
+    """The dam rows of the overrides, indexed by AR_ID."""
+    if overrides.empty or "dam" not in set(overrides.index.get_level_values("feature_kind")):
+        return overrides.iloc[0:0].droplevel("feature_kind")
+    return overrides.xs("dam", level="feature_kind")
+
+
+def apply_corrected_coordinates(dams, overrides):
+    """dams with reviewed coordinates from the overrides as Latitude /
+    Longitude (reported values kept in reported_latitude / _longitude,
+    coordinates_source = manual_correction). Returns (dams, the overridden
+    AR_IDs that aren't in `dams`)."""
+    dams = dams.copy()
+    dams["reported_latitude"], dams["reported_longitude"] = dams["Latitude"], dams["Longitude"]
+    dams["coordinates_source"] = REPORTED
+    rows = dam_overrides(overrides)
+    if "corrected_lat" not in rows:
+        return dams, []
+    corrected = rows[rows["corrected_lat"].notna()]
+    ids = dams[DAM_ID].astype(str)
+    for feature, row in corrected.iterrows():
+        match = ids == str(feature)
+        dams.loc[match, "Latitude"] = float(row["corrected_lat"])
+        dams.loc[match, "Longitude"] = float(row["corrected_lon"])
+        dams.loc[match, "coordinates_source"] = CORRECTED
+    return dams, sorted(set(corrected.index.astype(str)) - set(ids))
+
+
+def place(points, decisions, flowlines, corrected=None):
     """snap_fraction, snap_distance_m and snapped coordinates on the
-    structure flowline of every accepted dam."""
+    structure flowline of every accepted dam. `corrected` (aligned with
+    points): dams located from reviewed coordinates, which must lie on
+    their override reach."""
     out = pd.DataFrame(index=points.index)
     reach = decisions["override_nhdplus_id"].astype("Int64").fillna(
         decisions["provisional_nhdplus_id"].astype("Int64"))
@@ -97,6 +139,12 @@ def place(points, decisions, flowlines):
     if too_far.any():
         raise ValueError(f"Override reach more than {sn.OVERRIDE_MAX_M:,} m from dam(s) "
                          f"{points.loc[too_far, DAM_ID].tolist()}")
+    if corrected is not None:
+        off_reach = overridden & corrected.reindex(out.index, fill_value=False).astype(bool) \
+            & (out["snap_distance_m"] > sn.OVERRIDE_ON_REACH_M)
+        if off_reach.any():
+            raise ValueError(f"Corrected coordinates more than {sn.OVERRIDE_ON_REACH_M} m from the "
+                             f"override reach for dam(s) {points.loc[off_reach, DAM_ID].tolist()}")
     return out
 
 
@@ -137,7 +185,8 @@ def process_huc8(cfg, huc8, all_dams, rules, overrides, nhd_dir):
     if not water:
         decisions["reservoir_status"] = "no_water_layers"
     decisions = apply_overrides(decisions, dams[DAM_ID], overrides, kind="dam")
-    placed = place(points, decisions, flowlines)
+    placed = place(points, decisions, flowlines,
+                   corrected=dams["coordinates_source"].eq(CORRECTED))
     # An override reach has its own flowlines below.
     edges = dm.flow_edges(flow)
     moved = decisions["override_nhdplus_id"].notna() & placed["NHDPlusID"].notna()
@@ -212,6 +261,13 @@ def main():
     overrides = sn.load_overrides(args.overrides or cfg.project_root / OVERRIDES_FILE)
     all_dams = filter_to_sampled_dams(load_dams(cfg.path("dam_source")), cfg)
     all_dams = pd.DataFrame(all_dams.drop(columns="geometry")).reset_index(drop=True)
+    all_dams, unknown = apply_corrected_coordinates(all_dams, overrides)
+    if unknown:
+        raise ValueError(f"Overrides give corrected coordinates for dam(s) not in the case "
+                         f"study's dam list: {unknown}")
+    n_corrected = int(all_dams["coordinates_source"].eq(CORRECTED).sum())
+    if n_corrected:
+        print(f"Dams located from reviewed coordinates: {n_corrected}", flush=True)
     huc8s = choose_huc8s(cfg, args.huc8, args.hu4)
     print(f"Case study: {cfg.name}; HUC8s: {len(huc8s)}; dams: {len(all_dams):,}; "
           f"rules: {rules}", flush=True)
@@ -262,6 +318,14 @@ def main():
     print(f"\nSaved to: {output_dir}")
     if failed:
         raise RuntimeError(f"{len(failed)} HUC8(s) failed: {failed}")
+    # Every dam with reviewed coordinates must have reached a HUC8 (all HUC8s run only).
+    if not (args.huc8 or args.hu4):
+        matched = set(pd.concat(results)[DAM_ID].astype(str)) if results else set()
+        moved = set(all_dams.loc[all_dams["coordinates_source"].eq(CORRECTED), DAM_ID].astype(str))
+        lost = sorted(moved - matched)
+        if lost:
+            raise RuntimeError(f"Dam(s) with corrected coordinates in no case-study HUC8 (is the "
+                               f"point outside every case-study watershed?): {lost}")
 
 
 if __name__ == "__main__":
