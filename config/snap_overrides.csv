@@ -17,3 +17,211 @@
 #   dam,99998,accept,10000100012346,reported point 1 km off; dam on the mill race (imagery),jc,2026-11-14,42.1234567,-72.1234567
 feature_kind,feature_id,action,nhdplus_id,reason,reviewed_by,reviewed_on,corrected_lat,corrected_lon
 station,WIDNR_WQX-10040927,reject,,confirmed on the wrong reach on the audit map; still accepted as wide_water_far_snap in snap validation,jc,2026-10-24,,
+dam,CO-022,accept,23001900150104,reviewed location on unnamed flowline [source: imagery],jc,2026-11-15,40.3483835,-105.5037539
+dam,CT-023,accept,10000800006943,reviewed location on Moosup River [source: imagery],jc,2026-11-15,41.7175463,-71.9012156
+dam,CT-035,accept,10000900021031,reviewed location on Jeremy River [source: imagery],jc,2026-11-15,41.5802025,-72.4016971
+dam,MN-037,accept,65000200031481,reviewed location on Red River of the North [source: imagery],jc,2026-11-15,46.6732875,-96.7957905
+dam,CA-030,reject,,ambiguous,jc,2026-11-15,,
+dam,CA-084,accept,50000100013667,reviewed location on unnamed flowline [source: google earth],jc,2026-11-15,33.6834778,-117.5156047
+dam,CA-085,accept,50000100126440,reviewed location on unnamed flowline [source: google earth],jc,2026-11-15,33.6832274,-117.5158103
+dam,CA-086,accept,50000100126440,reviewed location on unnamed flowline [source: google earth],jc,2026-11-15,33.6831832,-117.5158395
+dam,CA-097,accept,50000100013667,reviewed location on unnamed flowline [source: google earth],jc,2026-11-15,33.6833633,-117.5156994
+dam,CA-088,accept,50000100013667,reviewed location on unnamed flowline [source: google earth],jc,2026-11-15,33.6835414,-117.5155136
+dam,CA-107,accept,50000100070091,reviewed location on unnamed flowline [source: name],jc,2026-11-15,33.6889736,-117.5117077
+dam,CA-108,accept,50000100041814,reviewed location on unnamed flowline [source: name],jc,2026-11-15,33.6891780,-117.5116226
+dam,CA-116,accept,50000100210982,reviewed location on unnamed flowline [source: name],jc,2026-11-15,33.6838733,-117.5152686
+dam,CA-133,accept,50000300022578,misplaced original location [source: https://news.stanford.edu/stories/2019/02/stanford-removes-lagunita-diversion-dam],jc,2026-11-15,37.4154650,-122.1874142
+dam,CO-025,accept,21000900122322,reviewed location on unnamed flowline [source: imagery],jc,2026-11-15,38.9906222,-104.9295219
+dam,CO-030,accept,21000900109619,reviewed location on Fooses Creek [source: imagery],jc,2026-11-15,38.5403668,-106.2477568
+dam,CO-006,accept,23001900119320,reviewed location on Sandbeach Creek [source: imagery],jc,2026-11-15,40.2169975,-105.6017772
+dam,CO-017,reject,,ambigous [source: ambigous],jc,2026-11-15,,
+dam,CT-042,accept,10000800007582,reviewed location on Beaver Brook [source: imagery],jc,2026-11-15,41.6164457,-72.0847695
+dam,CT-002,accept,10000800014924,reviewed location on Shetucket River [source: original location],jc,2026-11-15,41.6175842,-72.0847644
+dam,CT-026,accept,10000800003458,reviewed location on Mystic River [source: imagery],jc,2026-11-15,41.3966209,-71.9594082
+dam,CT-049,accept,10000800038086,reviewed location on Comstock Brook [source: original location],jc,2026-11-15,41.2099741,-73.4563950
+dam,FL-019,accept,15001200089733,reviewed location on Anderson Branch [source: imagery],jc,2026-11-15,30.5599398,-86.5145673
+dam,HI-008,accept,80000100002601,reviewed location on Waiulili Stream [source: original location],jc,2026-11-15,20.0891865,-155.5820772
+dam,HI-012,accept,80000700001619,reviewed location on Wailapa Stream [source: original location],jc,2026-11-15,22.1998514,-159.3892623
+dam,HI-018,reject,,ambiguous,jc,2026-11-15,,
+dam,HI-026,reject,,ambiguous,jc,2026-11-15,,
+dam,IA-005,accept,22000900027150,reviewed location on Boone River [source: original location],jc,2026-11-15,42.7366716,-93.9270068
+dam,ID-014,accept,70000600008527,reviewed location on Bear River [source: original location],jc,2026-11-15,42.5319966,-111.7960123
+dam,IL-017,accept,22000800203109,reviewed location on Fox River [source: imagery],jc,2026-11-15,41.8364206,-88.3107169
+dam,IL-024,accept,22000800078537,reviewed location on Brewster Creek [source: imagery],jc,2026-11-15,41.9718927,-88.2797086
+dam,IL-026,accept,22000800001036,reviewed location on Seavey Drainage Ditch [source: original location],jc,2026-11-15,42.2172926,-87.9680736
+dam,IL-029,accept,22000800203290,reviewed location on West Branch Du Page River [source: original location],jc,2026-11-15,41.8218594,-88.1725092
+dam,IL-030,accept,22000800094140,reviewed location on West Branch Du Page River [source: original location],jc,2026-11-15,41.7946733,-88.1871796
+dam,IL-031,accept,22000800062314,reviewed location on East Branch Du Page River [source: original location],jc,2026-11-15,41.8830403,-88.0363520
+dam,IL-046,accept,24001300004144,reviewed location on North Fork Vermilion River [source: original location],jc,2026-11-15,40.1238868,-87.6387590
+dam,IN-018,accept,24001000047077,reviewed location on East Fork Whitewater River [source: original location],jc,2026-11-15,39.8381441,-84.8930949
+dam,IN-025,accept,24001301120099,reviewed location on Big Blue River [source: original location],jc,2026-11-15,39.3558812,-85.9763996
+dam,MA-054,accept,5000801765232,reviewed location on Charles River [source: imagery],jc,2026-11-15,42.1316155,-71.4437461
+dam,MA-056,accept,10000800063083,reviewed location on Hamant Brook [source: original location],jc,2026-11-15,42.0975772,-72.0920334
+dam,MA-057,accept,10000800063045,reviewed location on Hamant Brook [source: original location],jc,2026-11-15,42.0949928,-72.0947986
+dam,MA-058,accept,10000800062979,name [source: original location],jc,2026-11-15,42.0928314,-72.0957441
+dam,MA-002,accept,10000800018349,reviewed location on East Branch Housatonic River [source: original location],jc,2026-11-15,42.4705500,-73.1690996
+dam,MA-035,accept,10000900054982,reviewed location on Mill Brook [source: original location],jc,2026-11-15,42.5788519,-72.1751988
+dam,MA-051,accept,10000900033992,reviewed location on Tillotson Brook [source: original location],jc,2026-11-15,42.0837981,-72.8420996
+dam,MA-052,accept,5000701386086,reviewed location on Shawsheen River [source: original location],jc,2026-11-15,42.6724078,-71.1494297
+dam,MA-066,accept,5000801749748,reviewed location on Jones River [source: imagery],jc,2026-11-15,41.9907073,-70.7347432
+dam,MA-090,accept,10000900058905,reviewed location on Sawmill River [source: original location],jc,2026-11-15,42.4850343,-72.4443536
+dam,MD-012,accept,10000500045587,reviewed location on North Branch Potomac River [source: original location],jc,2026-11-15,39.5803521,-78.7444835
+dam,MD-019,accept,10000200392830,reviewed location on Bishopville Prong [source: original location],jc,2026-11-15,38.4422285,-75.1944377
+dam,MD-022,accept,10000400029627,reviewed location on Overshot Branch [source: original location],jc,2026-11-15,39.5238333,-76.4437837
+dam,ME-014,accept,5000400919234,reviewed location on East Branch Sebasticook River [source: original location],jc,2026-11-15,44.8351525,-69.2720558
+dam,ME-006,accept,5000200783521,reviewed location on Old Stream [source: original location],jc,2026-11-15,44.9665828,-67.7749709
+dam,ME-015,accept,5000200789318,reviewed location on Saint George River [source: original location],jc,2026-11-15,44.2366821,-69.2783367
+dam,ME-021,accept,5000500484242,reviewed location on Marsh Stream [source: original location],jc,2026-11-15,44.6186441,-68.9582172
+dam,ME-028,accept,5000600587428,reviewed location on Swell Brook [source: original location],jc,2026-11-15,44.2566016,-70.7273178
+dam,MI-058,accept,60002600014115,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,42.1926128,-86.2573813
+dam,MI-087,accept,60001900006690,reviewed location on East Branch Maple River [source: original location],jc,2026-11-15,45.5299383,-84.7733629
+dam,MI-008,accept,60002600002133,reviewed location on Flat River [source: original location],jc,2026-11-15,43.0586843,-85.2547929
+dam,MI-030,accept,60001900007019,reviewed location on Au Sable River [source: original location],jc,2026-11-15,44.6597256,-84.7128076
+dam,MI-056,accept,60002600000570,reviewed location on High Bank Creek [source: original location],jc,2026-11-15,42.6209952,-85.1777664
+dam,MI-061,accept,60001500029776,reviewed location on Lane Drain [source: original location],jc,2026-11-15,42.5671535,-83.1544229
+dam,MI-063,accept,60001900003373,reviewed location on Miller Creek [source: original location],jc,2026-11-15,45.0059525,-83.9768231
+dam,MI-085,accept,60002500015196,"reviewed location on Big Cannon Creek [source: imagery, original location]",jc,2026-11-15,44.4921016,-84.9646865
+dam,MI-117,accept,60002700014859,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,45.8731425,-87.0078370
+dam,MN-023,accept,65000200093076,reviewed location on Pelican River [source: original location],jc,2026-11-15,46.7558493,-95.9000429
+dam,MN-008,accept,65000200021666,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,46.2899100,-96.0442122
+dam,MN-029,accept,22000600026528,reviewed location on Rum River [source: original location],jc,2026-11-15,46.0691823,-93.6801268
+dam,MN-042,accept,65000200020766,reviewed location on Whisky Creek [source: original location],jc,2026-11-15,46.6597957,-96.4124896
+dam,MN-045,accept,65000200035681,reviewed location on Sand Hill River [source: original location],jc,2026-11-15,47.5283043,-96.4682744
+dam,MN-046,accept,65000200035681,reviewed location on Sand Hill River [source: original location],jc,2026-11-15,47.5283830,-96.4478109
+dam,MN-048,accept,65000200035681,reviewed location on Sand Hill River [source: original location],jc,2026-11-15,47.5282768,-96.4077345
+dam,MN-053,accept,22001400014957,reviewed location on Dry Wood Creek [source: original location],jc,2026-11-15,45.4073997,-95.9979477
+dam,MN-063,accept,65000200054682,reviewed location on South Branch Two Rivers [source: original location],jc,2026-11-15,48.7691116,-96.9314440
+dam,MT-013,accept,23002800063457,reviewed location on Sundance Creek [source: original location],jc,2026-11-15,48.2607707,-109.7853698
+dam,NC-018,accept,15000200100710,reviewed location on Uwharrie River [source: original location],jc,2026-11-15,35.5644191,-79.9729896
+dam,NC-020,accept,15000500059469,reviewed location on Haw River [source: original location],jc,2026-11-15,36.0240666,-79.3661485
+dam,NC-041,reject,,ambigous [source: ambiguous],jc,2026-11-15,,
+dam,NC-012,accept,25000400510343,reviewed location on North Toe River [source: original location],jc,2026-11-15,35.9231685,-82.0885388
+dam,NC-015,accept,25000400477564,reviewed location on Tuckasegee River [source: original location],jc,2026-11-15,35.3665707,-83.2499391
+dam,NC-026,accept,25000400427730,reviewed location on Little Buck Creek [source: original location],jc,2026-11-15,35.0604461,-83.5717713
+dam,NC-034,accept,24000700002462,reviewed location on Middle Fork South Fork New River [source: original location],jc,2026-11-15,36.1840766,-81.6524753
+dam,NC-036,accept,25000400481400,reviewed location on Swannanoa River [source: original location],jc,2026-11-15,35.5819595,-82.4932597
+dam,NC-044,accept,15000400015573,reviewed location on Eno River [source: original location],jc,2026-11-15,36.0472661,-79.0108751
+dam,NC-046,accept,15000500018397,reviewed location on Phillips Creek [source: original location],jc,2026-11-15,34.7390281,-78.7521275
+dam,ND-002,accept,23000600169802,reviewed location on Antelope Creek [source: imagery],jc,2026-11-15,47.3173166,-101.6833236
+dam,NH-013,accept,5000701367553,reviewed location on Black Brook [source: original location],jc,2026-11-15,43.0102669,-71.4791246
+dam,NH-031,reject,,"stream reach does not extend to removal location [source: imagery, wikipedia]",jc,2026-11-15,,
+dam,NH-033,accept,5000701372511,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,42.9678818,-71.4811931
+dam,NH-029,reject,,"reach does not exist [source: imagery, wikipedia]",jc,2026-11-15,,
+dam,NH-015,accept,10000900060537,reviewed location on Ashuelot River [source: original location],jc,2026-11-15,42.8713277,-72.3282535
+dam,NH-023,accept,5000701352427,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,42.9016240,-71.2991862
+dam,NH-030,accept,5000600590889,reviewed location on Squamscott River [source: original location],jc,2026-11-15,42.9813037,-70.9444786
+dam,NH-051,accept,10000900022166,reviewed location on Mohawk River [source: original location],jc,2026-11-15,44.8765711,-71.3711446
+dam,NH-035,reject,,duplicate [source: wikipedia],jc,2026-11-15,,
+dam,NH-044,accept,5000600589518,reviewed location on Bellamy River [source: imagery],jc,2026-11-15,43.1787689,-70.8749186
+dam,NH-046,accept,5000600583419,reviewed location on Bellamy River [source: imagery],jc,2026-11-15,43.1790614,-70.8767393
+dam,NJ-019,accept,10000100090988,reviewed location on Cuckels Brook [source: imagery],jc,2026-11-15,40.5508828,-74.5515255
+dam,NJ-024,accept,10000100045133,reviewed location on Raritan River [source: original location],jc,2026-11-15,40.5565118,-74.6485438
+dam,NJ-051,accept,10000200512984,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,41.0200044,-74.8869494
+dam,NJ-006,reject,,"ambiguous [source: imagery, no stream reach]",jc,2026-11-15,,
+dam,NJ-029,reject,,ambiguous [source: imagery],jc,2026-11-15,,
+dam,NJ-053,accept,10000100047829,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,40.5923934,-74.5400977
+dam,NJ-010,accept,10000200383806,reviewed location on Musconetcong River [source: original location],jc,2026-11-15,40.8487910,-74.8215795
+dam,NJ-015,accept,10000200387024,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,39.4813562,-74.7123618
+dam,NJ-027,accept,10000200659241,"reviewed location on South Branch Burrs Mill Brook [source: google earth, original location]",jc,2026-11-15,39.8579734,-74.5973725
+dam,NJ-043,accept,10000200492405,reviewed location on Burnt Mill Branch [source: original location],jc,2026-11-15,39.5318018,-75.0442297
+dam,NJ-050,accept,10000200524259,reviewed location on Vancampens Brook [source: original location],jc,2026-11-15,41.0683754,-74.9717658
+dam,NM-002,accept,35000600231913,reviewed location on Santa Fe River [source: original location],jc,2026-11-15,35.6861822,-105.8949847
+dam,NY-007,accept,60000600060675,reviewed location on Ninemile Creek [source: original location],jc,2026-11-15,42.9847171,-76.3358784
+dam,OH-048,accept,60001300027211,reviewed location on Auglaize River [source: original location],jc,2026-11-15,40.8583725,-84.2896988
+dam,OH-055,accept,60001200051784,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,41.2377343,-81.5736975
+dam,OH-058,accept,60001200051784,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,41.2388261,-81.5705949
+dam,OH-091,accept,24000300026076,reviewed location on Mahoning River [source: original location],jc,2026-11-15,41.0372795,-80.5386797
+dam,OH-093,accept,60001200040361,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,41.3205868,-81.5871376
+dam,OH-087,accept,60001200047723,"reviewed location on Cuyahoga River [source: NPS, original location]",jc,2026-11-15,41.3209513,-81.5874593
+dam,OH-066,reject,,ambiguous,jc,2026-11-15,,
+dam,OH-069,reject,,"no reaches, sewage lagoon",jc,2026-11-15,,
+dam,OH-070,reject,,"no reaches, sewage lagoon",jc,2026-11-15,,
+dam,OH-103,reject,,no nearby reach,jc,2026-11-15,,
+dam,OH-038,accept,60001300008058,reviewed location on Ottawa River [source: original location],jc,2026-11-15,41.6917485,-83.6750177
+dam,OH-050,accept,60001200041152,reviewed location on Baldwin Creek [source: original location],jc,2026-11-15,41.3661241,-81.8550050
+dam,OH-051,accept,60001200041152,reviewed location on Baldwin Creek [source: original location],jc,2026-11-15,41.3652811,-81.8553931
+dam,OH-052,accept,60001200041152,reviewed location on Baldwin Creek [source: original location],jc,2026-11-15,41.3611736,-81.8531039
+dam,OH-076,accept,24000300052517,reviewed location on Middle Fork Little Beaver Creek [source: original location],jc,2026-11-15,40.7735716,-80.7796016
+dam,OH-082,accept,24000200076274,reviewed location on East Fork Little Miami River [source: original location],jc,2026-11-15,39.0768488,-84.1818363
+dam,OH-096,accept,24000300015631,reviewed location on Ax Factory Run [source: original location],jc,2026-11-15,41.0793720,-80.7119338
+dam,OH-112,accept,24000800011004,reviewed location on McKinney Run [source: original location],jc,2026-11-15,40.2135948,-83.0655551
+dam,OH-115,accept,24000800011967,reviewed location on Whisky Run [source: original location],jc,2026-11-15,39.1739613,-82.8005851
+dam,OR-015,reject,,ambiguous,jc,2026-11-15,,
+dam,OR-024,accept,55000100430269,reviewed location on Rogue River [source: imagery],jc,2026-11-15,42.4364388,-122.9837648
+dam,OR-040,accept,55000300408021,reviewed location on unnamed flowline [source: imagery],jc,2026-11-15,45.5545447,-122.3782669
+dam,OR-079,reject,,ambiguous,jc,2026-11-15,,
+dam,OR-083,accept,55000200008163,reviewed location on Deep Creek [source: original location],jc,2026-11-15,42.1758266,-119.9159621
+dam,OR-096,accept,50000400124864,reviewed location on Klamath River [source: imagery],jc,2026-11-15,42.1222312,-122.0468464
+dam,OR-036,accept,55000900112067,reviewed location on Sodom Ditch [source: original location],jc,2026-11-15,44.4099416,-123.0449390
+dam,OR-066,accept,55000100837407,reviewed location on South Fork Big Butte Creek [source: original location],jc,2026-11-15,42.5362626,-122.5452644
+dam,PA-116,accept,10000200500696,reviewed location on Smithtown Creek [source: original location],jc,2026-11-15,40.4580514,-75.0830058
+dam,PA-248,accept,24000400043134,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,41.7880444,-78.3183142
+dam,PA-087,accept,10000200467196,reviewed location on Stony Creek [source: original location],jc,2026-11-15,40.1562199,-75.3260279
+dam,PA-105,reject,,no stream reach,jc,2026-11-15,,
+dam,PA-108,accept,10000600027517,reviewed location on Yellow Breeches Creek [source: imagery],jc,2026-11-15,40.1660598,-76.9085287
+dam,PA-138,reject,,no reach [source: imagery],jc,2026-11-15,,
+dam,PA-157,accept,10000200452557,reviewed location on Ridley Creek [source: original location],jc,2026-11-15,39.9681864,-75.4841052
+dam,PA-191,accept,24000500020072,reviewed location on unnamed flowline [source: google earth],jc,2026-11-15,40.2856797,-79.7083042
+dam,PA-265,reject,,no reach [source: imagery],jc,2026-11-15,,
+dam,PA-297,reject,,no reach,jc,2026-11-15,,
+dam,PA-323,accept,10000600097329,reviewed location on Chest Creek [source: original location],jc,2026-11-15,40.5989617,-78.6520002
+dam,PA-325,accept,10000200628299,reviewed location on Tunkhannock Creek [source: original location],jc,2026-11-15,41.0656282,-75.5214420
+dam,PA-362,reject,,no reach,jc,2026-11-15,,
+dam,PA-396,reject,,ambiguous/no reach,jc,2026-11-15,,
+dam,PA-397,accept,10000200616073,reviewed location on Monocacy Creek [source: original location],jc,2026-11-15,40.6706134,-75.3581950
+dam,PA-398,accept,10000200616084,reviewed location on Monocacy Creek [source: original location],jc,2026-11-15,40.6703759,-75.3582178
+dam,PA-399,reject,,ambiguous/no reach,jc,2026-11-15,,
+dam,PA-411,reject,,ambiguous,jc,2026-11-15,,
+dam,PA-015,accept,10000600010182,reviewed location on Gillans Run [source: original location],jc,2026-11-15,40.4398800,-78.4869057
+dam,PA-130,accept,10000600081749,reviewed location on Shenandoah Creek [source: original location],jc,2026-11-15,40.8304195,-76.1941943
+dam,PA-131,accept,10000600081715,reviewed location on Shenandoah Creek [source: original location],jc,2026-11-15,40.8308877,-76.1938783
+dam,PA-146,accept,10000600087670,reviewed location on Reservoir Creek [source: original location],jc,2026-11-15,41.1665173,-76.0243191
+dam,PA-206,accept,60001100027934,reviewed location on Mill Creek [source: original location],jc,2026-11-15,42.0966914,-80.0753431
+dam,PA-224,accept,10000200519364,reviewed location on Schuylkill River [source: original location],jc,2026-11-15,40.4377013,-75.9587747
+dam,PA-294,accept,10000200460229,reviewed location on Saw Mill Run [source: original location],jc,2026-11-15,40.0109521,-75.3887001
+dam,PA-322,accept,10000200550706,reviewed location on East Branch Saucon Creek [source: original location],jc,2026-11-15,40.6165763,-75.3320698
+dam,PA-326,accept,10000200591520,reviewed location on Little Lehigh Creek [source: original location],jc,2026-11-15,40.5389874,-75.5321746
+dam,PA-327,accept,10000600076871,reviewed location on South Branch Bowman Creek [source: original location],jc,2026-11-15,41.3392680,-76.2263032
+dam,PA-342,accept,10000600007183,reviewed location on West Branch Susquehanna River [source: original location],jc,2026-11-15,40.6809357,-78.8073629
+dam,PA-371,accept,24000500025177,reviewed location on Green Lick Run [source: original location],jc,2026-11-15,40.1065321,-79.5060069
+dam,PA-381,accept,24000400007414,reviewed location on Cussewago Creek [source: original location],jc,2026-11-15,41.6466641,-80.1681794
+dam,RI-001,accept,5000801759957,reviewed location on North Branch Pawtuxet River [source: original location],jc,2026-11-15,41.7340621,-71.5539936
+dam,RI-008,accept,5000801744949,reviewed location on Kickamuit River [source: original location],jc,2026-11-15,41.7296076,-71.2631154
+dam,RI-009,accept,5000801744481,reviewed location on Kickamuit River [source: imagery],jc,2026-11-15,41.7399993,-71.2597102
+dam,SC-010,accept,15000600212269,reviewed location on Twelvemile Creek [source: original location],jc,2026-11-15,34.7744078,-82.7793156
+dam,SC-011,accept,15000600168183,reviewed location on Twelvemile Creek [source: original location],jc,2026-11-15,34.7658236,-82.7918930
+dam,SC-014,accept,15000600239122,reviewed location on Reedy Branch [source: original location],jc,2026-11-15,34.8006278,-83.2876727
+dam,SC-021,accept,15001500098966,reviewed location on Rock Water Spring Branch [source: imagery],jc,2026-11-15,34.7670941,-80.8590822
+dam,TN-032,accept,24001400064960,reviewed location on Mill Creek [source: original location],jc,2026-11-15,36.0129339,-86.6850168
+dam,TN-007,accept,25000102137069,reviewed location on Helms Branch [source: wikipedia],jc,2026-11-15,35.6605693,-87.1345013
+dam,TN-011,accept,25000102135991,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,35.6498951,-87.0334890
+dam,TN-020,accept,24001400065446,reviewed location on East Fork Stones River [source: original location],jc,2026-11-15,35.9019554,-86.2811452
+dam,TN-025,accept,24001400075208,reviewed location on unnamed flowline [source: wikipedia],jc,2026-11-15,36.0898607,-86.7347575
+dam,TN-024,accept,24001400075208,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,36.0896823,-86.7363905
+dam,TN-028,accept,25000102135991,reviewed location on unnamed flowline [source: imagery],jc,2026-11-15,35.6506687,-87.0321574
+dam,TN-030,reject,,duplicate,jc,2026-11-15,,
+dam,TX-011,accept,30000600333182,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,33.1215545,-96.7594529
+dam,TX-012,accept,30000200108071,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,30.5694388,-97.7132180
+dam,UT-006,accept,70000400011664,reviewed location on Mill Creek [source: original location],jc,2026-11-15,40.6990066,-111.7196463
+dam,VA-023,accept,15000100023409,reviewed location on Dan River [source: imagery],jc,2026-11-15,36.5778337,-79.3777607
+dam,VA-008,accept,10000300039588,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,38.3133302,-77.6799976
+dam,VA-015,accept,10000500001009,reviewed location on North River [source: original location],jc,2026-11-15,38.3063807,-78.8951141
+dam,VT-034,accept,10000900049342,reviewed location on Hancock Branch [source: VT state gov],jc,2026-11-15,43.9270912,-72.8461054
+dam,VT-039,accept,10000900068591,reviewed location on South Branch Saxtons River [source: original location],jc,2026-11-15,43.1687209,-72.6063660
+dam,VT-029,reject,,no reach,jc,2026-11-15,,
+dam,VT-017,accept,10000700065334,reviewed location on Batten Kill [source: original location],jc,2026-11-15,43.1797624,-73.0304222
+dam,VT-021,accept,10000900102449,reviewed location on Wells River [source: original location],jc,2026-11-15,44.2081833,-72.1913236
+dam,VT-027,accept,10000900049416,reviewed location on Third Branch White River [source: original location],jc,2026-11-15,43.9268131,-72.6659300
+dam,VT-030,accept,10000900093598,reviewed location on East Branch Passumpsic River [source: original location],jc,2026-11-15,44.5884632,-71.9465559
+dam,WI-043,accept,22001000020409,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,42.8102340,-89.1302369
+dam,WI-064,accept,22001100026141,reviewed location on Prairie River [source: imagery],jc,2026-11-15,45.1915339,-89.6874475
+dam,WI-062,accept,22001300014690,reviewed location on Eighteenmile Creek [source: original location],jc,2026-11-15,45.0005578,-91.7273099
+dam,WI-079,accept,60002700006475,reviewed location on Fox River [source: original location],jc,2026-11-15,43.7589580,-89.2836989
+dam,WI-098,accept,60002700044679,reviewed location on Hatton Creek [source: original location],jc,2026-11-15,44.2301833,-89.0070401
+dam,WI-101,accept,60002700026028,reviewed location on North Branch Oconto River [source: original location],jc,2026-11-15,45.3666537,-88.5618992
+dam,WI-111,accept,60002700032723,reviewed location on Millhome Creek [source: original location],jc,2026-11-15,43.8891979,-87.9461451
+dam,WI-118,accept,60002800007395,reviewed location on Pigeon Creek [source: original location],jc,2026-11-15,43.2348723,-87.9898307
+dam,WI-119,accept,22000800078223,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,42.8271083,-88.4741323
+dam,WI-133,accept,22001200017019,reviewed location on Eau Claire River [source: original location],jc,2026-11-15,46.2372084,-91.7839774
+dam,WI-164,accept,60002700020286,reviewed location on unnamed flowline [source: original location],jc,2026-11-15,43.7804223,-89.3977485
+dam,WY-007,accept,70000600000770,reviewed location on Smiths Fork [source: wikipedia],jc,2026-11-15,42.0974376,-110.9368087
