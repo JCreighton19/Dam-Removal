@@ -11,13 +11,18 @@
 # and write only to data/processed/stage1_audit/<case_study>/; no ETL stage
 # is rerun.
 #
-#   AUDIT=both (default: reservoir + coverage) | reservoir | coverage | funnel
+#   AUDIT=both (default: reservoir + coverage) | reservoir | coverage | funnel | station_payoff
 #         funnel: where each listed dam drops out on the way to the analysis
 #         table, and which losses are timing, thresholds, station types or
 #         watershed scope (analysis/audits/dam_funnel_audit.py; writes
 #         stage1_audit/<case_study>/dam_funnel/). It walks the NHDPlus
 #         network for dams without a downstream station; FUNNEL_ARGS=--skip-network
 #         skips that.
+#         station_payoff: which ambiguous (unmatched) stations linked to
+#         accepted dams could add before/after or BACI dams if their reach
+#         were accepted (upper bounds; their samples were never downloaded;
+#         analysis/audits/station_payoff_audit.py; writes
+#         stage1_audit/<case_study>/station_payoff/).
 #   STORAGE_FILE=<path>   optional NID / NABD export for the reservoir audit
 #   STORAGE_ARGS="..."    extra flags, e.g. "--id-column NIDID --storage-column NORM_STOR"
 #
@@ -57,6 +62,11 @@ if [[ "$AUDIT" == "funnel" ]]; then
     # FUNNEL_ARGS is split into words on purpose.
     # shellcheck disable=SC2086
     python -u analysis/audits/dam_funnel_audit.py --threads 4 --memory-limit 18GB ${FUNNEL_ARGS:-}
+fi
+
+if [[ "$AUDIT" == "station_payoff" ]]; then
+    echo "=== Station payoff audit ==="
+    python -u analysis/audits/station_payoff_audit.py --threads 4 --memory-limit 18GB
 fi
 
 echo "Job completed: $(date)"
