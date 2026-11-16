@@ -127,7 +127,25 @@ def load_confirmed_stations(cfg, years_before, years_after):
     if not frames:
         return pd.DataFrame(columns=columns)
 
-    pairs = pd.concat(frames, ignore_index=True).dropna(subset=["station_id"])
+    return station_windows(pd.concat(frames, ignore_index=True), years_before, years_after)
+
+
+def load_station_list(path, years_before, years_after):
+    """Stations from a CSV (station_id, year_removed; one row per station and
+    dam), e.g. the station payoff audit's download list, with the same
+    window rule as the linked stations."""
+    pairs = pd.read_csv(path, dtype={"station_id": str})
+    missing = {"station_id", "year_removed"} - set(pairs.columns)
+    if missing:
+        raise ValueError(f"{path} needs columns station_id and year_removed; missing {missing}")
+    return station_windows(pairs[["station_id", "year_removed"]], years_before, years_after)
+
+
+def station_windows(pairs, years_before, years_after):
+    """(station_id, year_removed) rows -> one row per (station_id,
+    start_year, end_year), with each station's dam windows merged."""
+    columns = ["station_id", "start_year", "end_year"]
+    pairs = pairs.dropna(subset=["station_id"]).copy()
     pairs["station_id"] = pairs["station_id"].astype(str).str.strip()
     pairs = pairs[pairs["station_id"].ne("")]
     pairs["year_removed"] = pd.to_numeric(pairs["year_removed"], errors="coerce")
@@ -242,6 +260,19 @@ def main():
         help="Optional cap for testing; defaults to every confirmed "
         "network-connected station.",
     )
+    parser.add_argument(
+        "--stations-file",
+        type=Path,
+        help="Download these stations instead of the linked ones: a CSV with "
+        "station_id and year_removed (one row per station and dam). Use with "
+        "--output-subdir so the pipeline's download is not touched.",
+    )
+    parser.add_argument(
+        "--output-subdir",
+        default="pilot_download",
+        help="Folder under the case study's WQP results directory (default "
+        "pilot_download, the one clean_wq_results.py reads).",
+    )
     parser.add_argument("--batch-size", type=int, default=5)
     parser.add_argument(
         "--workers",
@@ -253,7 +284,10 @@ def main():
 
     cfg = load_config(args.case_study)
 
-    output_dir = cfg.wqp_results_dir / "pilot_download"
+    if args.stations_file and args.output_subdir == "pilot_download":
+        parser.error("--stations-file needs --output-subdir (not pilot_download), so the "
+                     "pipeline's download folder is not mixed with other stations")
+    output_dir = cfg.wqp_results_dir / args.output_subdir
     manifest_file = output_dir / "download_manifest.csv"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -261,7 +295,10 @@ def main():
     years_before = int(wq_window.get("years_before", 3))
     years_after = int(wq_window.get("years_after", 3))
 
-    stations = load_confirmed_stations(cfg, years_before, years_after)
+    if args.stations_file:
+        stations = load_station_list(args.stations_file, years_before, years_after)
+    else:
+        stations = load_confirmed_stations(cfg, years_before, years_after)
 
     if stations.empty:
         raise ValueError(
