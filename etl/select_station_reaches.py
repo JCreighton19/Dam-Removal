@@ -60,8 +60,11 @@ def apply_overrides(decisions, ids, overrides, kind="station"):
             continue
         override = overrides.loc[(kind, feature)]
         out.loc[index, "match_method"] = "manual_override"
-        out.loc[index, "evidence"] = ";".join(filter(None, [out.loc[index, "evidence"],
-                                                            "manual_override"]))
+        # pandas 3 stores a missing evidence as NaN (str dtype), which filter(None)
+        # keeps (NaN is truthy), so test for missing explicitly.
+        prior = out.loc[index, "evidence"]
+        out.loc[index, "evidence"] = ";".join(
+            [prior, "manual_override"] if pd.notna(prior) and prior else ["manual_override"])
         if override["action"] == "reject":
             out.loc[index, ["status", "reason"]] = [rs.REJECTED, "manual_reject"]
         else:
