@@ -37,13 +37,14 @@ it holds every analysis station's current decision, roles and risk tier.
 | Tier | Meaning |
 |---|---|
 | manual | a manual override |
-| high | without drainage-area agreement: a conflict let through on name support (confluence nearby, polygon edge, far snap, sink catchment), a name mismatch, or an eligible rival within 25 m with a different name or very different drainage area; or snapped > 100 m from a point outside any water polygon |
-| medium | any of those flags with drainage-area agreement; used although ambiguous (robust to the reach choice: same role either way); no drainage-area or name support; snapped > 50 m; a rival within 25 m |
+| high | without drainage-area or name support: a flagged conflict (confluence nearby, polygon edge, far snap, sink catchment) or an eligible rival within 25 m with a different name or very different drainage area; a name mismatch without drainage-area agreement; or snapped > 100 m from a point outside any water polygon |
+| medium | any of those flags with drainage-area or name support; used although ambiguous (robust to the reach choice: same role either way); no drainage-area or name support; snapped > 50 m; a rival within 25 m |
 | low | no flag |
 
-Drainage-area agreement counts as resolving a flagged conflict because the conflicts are defined by a rival
-reach at least 5x larger or smaller. Revised 2026-11-16 before any review: the first version counted every
-flagged conflict as high (80% of the stations).
+Drainage-area or name agreement counts as resolving a flagged conflict because the conflicts are defined by a
+rival reach at least 5x larger or smaller (a different river). Revised twice on 2026-11-16, before any
+review: counting every flagged conflict as high put 80% of the stations there, and counting name-supported
+ones 61%.
 
 **Inspected individually** (`inspect_reason`): every BACI station (treated or control for a dam x measure
 that has both), every manual and high-risk station.

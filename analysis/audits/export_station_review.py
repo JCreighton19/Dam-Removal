@@ -13,21 +13,22 @@ station_recovery_audit.py), which look at stations NOT used.
 Risk tier (from the matching evidence; transparent rules, not a model):
 
     manual  a manual override (config/snap_overrides.csv)
-    high    a conflict the rules let through on name support alone
-            (confluence_nearby, polygon_edge, far_snap, sink_catchment), a
-            name mismatch, or an eligible alternative within TIE_M with a
-            different name or very different drainage area, in each case
-            WITHOUT drainage-area agreement; or snapped > HIGH_SNAP_M from a
-            point outside any water polygon
-    medium  any of those flags when drainage area agrees (it is the evidence
-            that resolves a >= 5x size conflict), used although ambiguous
+    high    a conflict the matching flagged (confluence_nearby, polygon_edge,
+            far_snap, sink_catchment) or an eligible alternative within TIE_M
+            with a different name or very different drainage area, WITHOUT
+            drainage-area or name support; a name mismatch without
+            drainage-area agreement; or snapped > HIGH_SNAP_M from a point
+            outside any water polygon
+    medium  any of those flags when drainage area or name supports the choice
+            (they resolve a >= 5x size conflict), used although ambiguous
             (robust_to_reach_choice: either reach gives the same role), no
             drainage-area or name support, snapped > MEDIUM_SNAP_M, or an
             alternative within TIE_M
     low     no flag (drainage area or name agrees, close snap, no close rival)
 
-(Revised 2026-11-16 before any review: the first version counted every
-flagged conflict as high, which put 80% of the stations in it.)
+(Revised twice on 2026-11-16, before any review: counting every flagged
+conflict as high put 80% of the stations in it, and so did counting
+name-supported ones, 61%.)
 
 Inspection set: every BACI station (treated or control for a dam x measure
 that has both), every manual and high-risk station. The rest (medium and low
@@ -209,8 +210,8 @@ def risk(frame):
     flags = pd.DataFrame(flags, index=frame.index)
     # High: a conflict or rival the drainage area doesn't resolve, or a long snap
     # from a point that isn't inside a water polygon.
-    high = ((flags["conflict_let_through"] | flags["name_mismatch"]
-             | flags["close_different_rival"]) & ~area_ok) \
+    high = ((flags["conflict_let_through"] | flags["close_different_rival"]) & ~supported) \
+        | (flags["name_mismatch"] & ~area_ok) \
         | (flags["far_snap"] & ~in_polygon)
     medium = flags[["used_while_ambiguous", "conflict_let_through", "name_mismatch", "far_snap",
                     "close_different_rival", "no_area_or_name_support", "snap_over_medium",
@@ -392,7 +393,7 @@ def main():
           .value_counts().to_string())
     print("\n=== Risk flag x evidence support (stations) ===")
     flag_rows = stations[["support", "risk_flags"]].assign(
-        flag=stations["risk_flags"].str.split(";")).explode("flag")
+        flag=stations["risk_flags"].str.split(";")).explode("flag").reset_index(drop=True)
     flag_rows = flag_rows[flag_rows["flag"].fillna("").ne("")]
     print(pd.crosstab(flag_rows["flag"], flag_rows["support"], margins=True).to_string())
     print("\n=== Evidence support x tier ===")

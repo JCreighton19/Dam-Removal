@@ -54,13 +54,13 @@ def test_risk_tiers():
     frame = pd.DataFrame([
         _station(),                                                     # low
         _station(snap_evidence="own_catchment"),                        # medium: no support
-        _station(snap_evidence="name_match;confluence_nearby"),         # high: conflict, name only
+        _station(snap_evidence="confluence_nearby;name_mismatch"),      # high: mismatch, no area
         _station(snap_evidence="area_agrees;confluence_nearby"),        # medium: area resolves it
         _station(snap_status="ambiguous"),                              # medium: robust, same role
         _station(snap_distance_m=150.0),                                # high: far, not in polygon
         _station(snap_distance_m=150.0, point_polygon_layer="NHDArea"),  # medium: far, in polygon
         _station(margin_m=10.0, alt1_area_km2=20.0,
-                 snap_evidence="name_match"),                           # high: close different rival
+                 snap_evidence="own_catchment"),                        # high: close rival, no support
         _station(margin_m=10.0, alt1_area_km2=20.0),                    # medium: area agrees
         _station(margin_m=10.0),                                        # medium: close rival
         _station(match_method="manual_override", snap_status="ambiguous"),  # manual
@@ -69,7 +69,10 @@ def test_risk_tiers():
     assert tier.tolist() == ["low", "medium", "high", "medium", "medium", "high", "medium",
                              "high", "medium", "medium", "manual"], tier.tolist()
     assert "close_different_rival" in flags[7] and flags[0] == ""
-    assert esr.support(frame).tolist()[:4] == ["area+name", "none", "name", "area"]
+    assert esr.support(frame).tolist()[:4] == ["area+name", "none", "none", "area"]
+    # Name support resolves a confluence conflict too.
+    named = pd.DataFrame([_station(snap_evidence="name_match;confluence_nearby")])
+    assert esr.risk(named)[0].tolist() == ["medium"]
 
 
 def test_strata_ftype_format():
