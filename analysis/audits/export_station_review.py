@@ -13,25 +13,29 @@ station_recovery_audit.py), which look at stations NOT used.
 Risk tier (from the matching evidence; transparent rules, not a model):
 
     manual  a manual override (config/snap_overrides.csv)
-    high    used although ambiguous (robust_to_reach_choice), or a conflict
-            the rules let through because drainage area or name supported the
-            choice (confluence_nearby, polygon_edge, far_snap,
-            sink_catchment), or a name mismatch, or snapped > HIGH_SNAP_M, or
-            an eligible alternative within TIE_M with a different name or a
-            very different drainage area
-    medium  no drainage-area or name support (chosen by structure or as the
-            nearest plausible reach), or snapped > MEDIUM_SNAP_M, or an
+    high    a conflict the rules let through on name support alone
+            (confluence_nearby, polygon_edge, far_snap, sink_catchment), a
+            name mismatch, or an eligible alternative within TIE_M with a
+            different name or very different drainage area, in each case
+            WITHOUT drainage-area agreement; or snapped > HIGH_SNAP_M from a
+            point outside any water polygon
+    medium  any of those flags when drainage area agrees (it is the evidence
+            that resolves a >= 5x size conflict), used although ambiguous
+            (robust_to_reach_choice: either reach gives the same role), no
+            drainage-area or name support, snapped > MEDIUM_SNAP_M, or an
             alternative within TIE_M
-    low     everything else (drainage area or name agrees, close snap, no
-            close rival)
+    low     no flag (drainage area or name agrees, close snap, no close rival)
+
+(Revised 2026-11-16 before any review: the first version counted every
+flagged conflict as high, which put 80% of the stations in it.)
 
 Inspection set: every BACI station (treated or control for a dam x measure
-that has both), every manual / high / medium station. The rest (low tier,
-not BACI) is sampled at random within strata (role x feature type x
-drainage-area class), at least MIN_PER_STRATUM or SAMPLE_FRACTION of each,
-with a fixed seed; sample_weight = stratum size / sampled, so the share of
-errors found in the sample estimates the undetected-error rate of all
-strong assignments (docs/station_review.md).
+that has both), every manual and high-risk station. The rest (medium and low
+tier, not BACI) is sampled at random within strata (tier x role x feature
+type x drainage-area class), at least MIN_PER_STRATUM or the tier's
+fraction (SAMPLE_FRACTIONS) of each, with a fixed seed; sample_weight =
+stratum size / sampled, so the errors found in the sample estimate the
+undetected-error rate of each tier (docs/station_review.md).
 
 Layers (EPSG:4326):
 
@@ -82,7 +86,7 @@ AREA_RATIO = 5.0                      # as reach_selection's confluence_area_rat
 ELIGIBLE_FTYPES = {460, 558}          # StreamRiver, ArtificialPath
 CONFLICT_CODES = {"confluence_nearby", "polygon_edge", "far_snap", "sink_catchment"}
 N_ALTERNATIVES = 3
-SAMPLE_FRACTION = 0.15
+SAMPLE_FRACTIONS = {"medium": 0.25, "low": 0.15}
 MIN_PER_STRATUM = 3
 SEED = 20261116
 TIERS = ["manual", "high", "medium", "low"]
@@ -164,10 +168,25 @@ def alternatives(candidates, chosen):
     return out.reset_index()
 
 
+def support(frame):
+    """Evidence behind the choice: area (drainage area agrees), name, both, none."""
+    evidence = frame["snap_evidence"].fillna("").str.split(";").apply(set)
+    area = evidence.apply(lambda e: "area_agrees" in e)
+    name = evidence.apply(lambda e: "name_match" in e)
+    return pd.Series(np.select([area & name, area, name], ["area+name", "area", "name"], "none"),
+                     index=frame.index)
+
+
 def risk(frame):
-    """risk_tier and risk_flags per station (see the module docstring)."""
+    """risk_tier and risk_flags per station (see the module docstring).
+
+    Drainage-area agreement is the evidence that resolves the conflicts the
+    matching flags (a confluence rival is >= 5x larger or smaller), so a flag
+    backed by it is medium, not high."""
     evidence = frame["snap_evidence"].fillna("").str.split(";").apply(set)
     supported = evidence.apply(lambda e: bool({"area_agrees", "name_match"} & e))
+    area_ok = evidence.apply(lambda e: "area_agrees" in e)
+    in_polygon = frame.get("point_polygon_layer", pd.Series(index=frame.index, dtype=object)).notna()
     snap = pd.to_numeric(frame["snap_distance_m"], errors="coerce")
     margin = pd.to_numeric(frame["margin_m"], errors="coerce")
     close_alt = margin.le(TIE_M).fillna(False)
@@ -188,9 +207,14 @@ def risk(frame):
         "close_rival": close_alt,
     }
     flags = pd.DataFrame(flags, index=frame.index)
-    high = flags[["used_while_ambiguous", "conflict_let_through", "name_mismatch", "far_snap",
-                  "close_different_rival"]].any(axis=1)
-    medium = flags[["no_area_or_name_support", "snap_over_medium", "close_rival"]].any(axis=1)
+    # High: a conflict or rival the drainage area doesn't resolve, or a long snap
+    # from a point that isn't inside a water polygon.
+    high = ((flags["conflict_let_through"] | flags["name_mismatch"]
+             | flags["close_different_rival"]) & ~area_ok) \
+        | (flags["far_snap"] & ~in_polygon)
+    medium = flags[["used_while_ambiguous", "conflict_let_through", "name_mismatch", "far_snap",
+                    "close_different_rival", "no_area_or_name_support", "snap_over_medium",
+                    "close_rival"]].any(axis=1)
     tier = np.select([flags["manual_override"], high, medium], TIERS[:3], "low")
     text = flags.apply(lambda row: ";".join(c for c, v in row.items() if v), axis=1)
     return pd.Series(tier, index=frame.index), text
@@ -203,24 +227,29 @@ def size_class(area):
                      index=area.index)
 
 
-def stratified_sample(frame, fraction=SAMPLE_FRACTION, minimum=MIN_PER_STRATUM, seed=SEED):
-    """(sampled flag, weight, stratum, design table) for the low-tier, non-BACI
-    stations: within each stratum max(minimum, ceil(fraction x size)), capped
-    at the size; weight = size / sampled."""
-    pool = frame["risk_tier"].eq("low") & ~frame["baci_station"].fillna(False).astype(bool)
-    stratum = (frame["role"] + " | ftype " + frame["reach_ftype"].astype("string").fillna("?")
+def stratified_sample(frame, fractions=None, minimum=MIN_PER_STRATUM, seed=SEED):
+    """(sampled flag, weight, stratum, design table) for the non-BACI stations
+    of the sampled tiers (`fractions`: tier -> fraction): within each stratum
+    max(minimum, ceil(fraction x size)), capped at the size; weight = size /
+    sampled."""
+    fractions = SAMPLE_FRACTIONS if fractions is None else fractions
+    pool = frame["risk_tier"].isin(list(fractions)) & ~frame["baci_station"].fillna(False).astype(bool)
+    ftype = pd.to_numeric(frame["reach_ftype"], errors="coerce").astype("Int64").astype("string")
+    stratum = (frame["risk_tier"] + " | " + frame["role"] + " | ftype " + ftype.fillna("?")
                + " | " + size_class(frame["reach_totdasqkm"]))
     sampled = pd.Series(False, index=frame.index)
     weight = pd.Series(np.nan, index=frame.index)
     rows, rng = [], np.random.default_rng(seed)
     for name, members in stratum[pool].groupby(stratum[pool]):
         size = len(members)
+        fraction = fractions[frame.loc[members.index[0], "risk_tier"]]
         take = min(size, max(minimum, math.ceil(fraction * size)))
         chosen = rng.choice(members.index.to_numpy(), size=take, replace=False)
         sampled[chosen] = True
         weight[chosen] = size / take
-        rows.append({"stratum": name, "stations": size, "sampled": take, "weight": size / take})
-    design = pd.DataFrame(rows, columns=["stratum", "stations", "sampled", "weight"])
+        rows.append({"tier": frame.loc[members.index[0], "risk_tier"], "stratum": name,
+                     "stations": size, "sampled": take, "weight": size / take})
+    design = pd.DataFrame(rows, columns=["tier", "stratum", "stations", "sampled", "weight"])
     return sampled, weight, stratum.where(pool), design
 
 
@@ -281,7 +310,8 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--case-study", default=default_case_study())
     parser.add_argument("--radius-km", type=float, default=RADIUS_KM)
-    parser.add_argument("--sample-fraction", type=float, default=SAMPLE_FRACTION)
+    parser.add_argument("--medium-fraction", type=float, default=SAMPLE_FRACTIONS["medium"])
+    parser.add_argument("--low-fraction", type=float, default=SAMPLE_FRACTIONS["low"])
     parser.add_argument("--min-per-stratum", type=int, default=MIN_PER_STRATUM)
     args = parser.parse_args()
 
@@ -321,15 +351,16 @@ def main():
     stations = roles.merge(reaches[keep], on="station_id", how="left") \
         .merge(alts, on="station_id", how="left")
     stations["role"] = role_label(stations)
+    stations["support"] = support(stations)
     stations["risk_tier"], stations["risk_flags"] = risk(stations)
-    sampled, weight, stratum, design = stratified_sample(stations, args.sample_fraction,
-                                                         args.min_per_stratum)
+    sampled, weight, stratum, design = stratified_sample(
+        stations, {"medium": args.medium_fraction, "low": args.low_fraction}, args.min_per_stratum)
     stations["in_sample"], stations["sample_weight"], stations["stratum"] = sampled, weight, stratum
     baci = stations["baci_station"].fillna(False).astype(bool)
     stations["inspect_reason"] = np.select(
-        [baci, stations["risk_tier"].isin(["manual", "high", "medium"]), sampled],
+        [baci, stations["risk_tier"].isin(["manual", "high"]), sampled],
         ["baci", "risk_" + stations["risk_tier"], "random_sample"], "")
-    order = {"baci": 0, "risk_manual": 1, "risk_high": 2, "risk_medium": 3, "random_sample": 4, "": 5}
+    order = {"baci": 0, "risk_manual": 1, "risk_high": 2, "random_sample": 3, "": 4}
     stations = stations.sort_values(["inspect_reason", "station_id"],
                                     key=lambda s: s.map(order) if s.name == "inspect_reason" else s)
     stations.insert(1, "review_order", np.where(stations["inspect_reason"].ne(""),
@@ -359,13 +390,21 @@ def main():
     print("\n=== Risk flags (a station can have several) ===")
     print(stations["risk_flags"].str.split(";").explode().replace("", np.nan).dropna()
           .value_counts().to_string())
+    print("\n=== Risk flag x evidence support (stations) ===")
+    flag_rows = stations[["support", "risk_flags"]].assign(
+        flag=stations["risk_flags"].str.split(";")).explode("flag")
+    flag_rows = flag_rows[flag_rows["flag"].fillna("").ne("")]
+    print(pd.crosstab(flag_rows["flag"], flag_rows["support"], margins=True).to_string())
+    print("\n=== Evidence support x tier ===")
+    print(pd.crosstab(stations["support"], stations["risk_tier"], margins=True).to_string())
     print("\n=== Matching reason x tier ===")
     print(pd.crosstab(stations["snap_reason"].fillna("?"), stations["risk_tier"]).to_string())
     print("\n=== Inspection set ===")
     print(stations["inspect_reason"].replace("", "not inspected").value_counts().to_string())
     print(f"\nBACI stations: {int(baci.sum())}; of them high/medium/manual risk: "
           f"{int((baci & stations['risk_tier'].ne('low')).sum())}")
-    print("\n=== Random sample of strong assignments (low tier, not BACI) ===")
+    print("\n=== Random sample (medium and low tier, not BACI) ===")
+    print(design.groupby("tier")[["stations", "sampled"]].sum().to_string())
     print(design.to_string(index=False))
     print(f"\n{len(stations):,} stations, {len(flowlines):,} flowlines, {len(dams):,} dams "
           f"-> {output} ({output.stat().st_size / 1e6:,.1f} MB)")

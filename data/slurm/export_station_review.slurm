@@ -12,8 +12,8 @@
 # writes data/processed/station_review/<case_study>/). Workflow:
 # docs/station_review.md.
 #
-#   RADIUS_KM=1 (flowlines around each station), SAMPLE_FRACTION=0.15,
-#   MIN_PER_STRATUM=3
+#   RADIUS_KM=1 (flowlines around each station), MEDIUM_FRACTION=0.25,
+#   LOW_FRACTION=0.15, MIN_PER_STRATUM=3
 #   sbatch data/slurm/export_station_review.slurm
 
 set -euo pipefail
@@ -30,6 +30,7 @@ echo "Job started: $(date)"
 echo "Case study: $DAM_REMOVAL_CASE_STUDY"
 
 python -u analysis/audits/export_station_review.py --radius-km "${RADIUS_KM:-1}" \
-    --sample-fraction "${SAMPLE_FRACTION:-0.15}" --min-per-stratum "${MIN_PER_STRATUM:-3}"
+    --medium-fraction "${MEDIUM_FRACTION:-0.25}" --low-fraction "${LOW_FRACTION:-0.15}" \
+    --min-per-stratum "${MIN_PER_STRATUM:-3}"
 
 echo "Job completed: $(date)"

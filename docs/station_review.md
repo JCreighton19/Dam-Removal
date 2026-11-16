@@ -37,16 +37,21 @@ it holds every analysis station's current decision, roles and risk tier.
 | Tier | Meaning |
 |---|---|
 | manual | a manual override |
-| high | used although ambiguous; a conflict let through by drainage-area or name support (confluence nearby, polygon edge, far snap, sink catchment); a name mismatch; snapped > 100 m; an eligible rival within 25 m with a different name or very different drainage area |
-| medium | no drainage-area or name support; snapped > 50 m; a rival within 25 m |
-| low | everything else |
+| high | without drainage-area agreement: a conflict let through on name support (confluence nearby, polygon edge, far snap, sink catchment), a name mismatch, or an eligible rival within 25 m with a different name or very different drainage area; or snapped > 100 m from a point outside any water polygon |
+| medium | any of those flags with drainage-area agreement; used although ambiguous (robust to the reach choice: same role either way); no drainage-area or name support; snapped > 50 m; a rival within 25 m |
+| low | no flag |
+
+Drainage-area agreement counts as resolving a flagged conflict because the conflicts are defined by a rival
+reach at least 5x larger or smaller. Revised 2026-11-16 before any review: the first version counted every
+flagged conflict as high (80% of the stations).
 
 **Inspected individually** (`inspect_reason`): every BACI station (treated or control for a dam x measure
-that has both), every manual, high and medium station.
+that has both), every manual and high-risk station.
 
-**Random sample of the strong assignments** (low tier, not BACI): strata = role (treated / control / both)
-x feature type (StreamRiver / ArtificialPath) x drainage-area class (< 100, 100-1000, >= 1000 km2). In each
-stratum max(3, 15%) stations, all if fewer, with a fixed seed (`in_sample`, `sample_weight`).
+**Random sample of the rest** (medium and low tier, not BACI): strata = tier x role (treated / control /
+both / other) x feature type (StreamRiver / ArtificialPath) x drainage-area class (< 100, 100-1000,
+>= 1000 km2). In each stratum max(3, 25%) of medium and max(3, 15%) of low stations, all if fewer, with a
+fixed seed (`in_sample`, `sample_weight`). The error rate below is estimated separately per tier.
 
 **Verdict** for every inspected or sampled station (`verdict` field): `correct`, `wrong_reach` (another
 reach; give `correct_nhdplus_id`), `wrong_side` (right river, but on the other side of the dam, or in the

@@ -54,37 +54,55 @@ def test_risk_tiers():
     frame = pd.DataFrame([
         _station(),                                                     # low
         _station(snap_evidence="own_catchment"),                        # medium: no support
-        _station(snap_evidence="name_match;confluence_nearby"),         # high: conflict
-        _station(snap_status="ambiguous"),                              # high: used while ambiguous
-        _station(snap_distance_m=150.0),                                # high: far
-        _station(margin_m=10.0, alt1_area_km2=20.0),                    # high: close, different
+        _station(snap_evidence="name_match;confluence_nearby"),         # high: conflict, name only
+        _station(snap_evidence="area_agrees;confluence_nearby"),        # medium: area resolves it
+        _station(snap_status="ambiguous"),                              # medium: robust, same role
+        _station(snap_distance_m=150.0),                                # high: far, not in polygon
+        _station(snap_distance_m=150.0, point_polygon_layer="NHDArea"),  # medium: far, in polygon
+        _station(margin_m=10.0, alt1_area_km2=20.0,
+                 snap_evidence="name_match"),                           # high: close different rival
+        _station(margin_m=10.0, alt1_area_km2=20.0),                    # medium: area agrees
         _station(margin_m=10.0),                                        # medium: close rival
         _station(match_method="manual_override", snap_status="ambiguous"),  # manual
     ])
     tier, flags = esr.risk(frame)
-    assert tier.tolist() == ["low", "medium", "high", "high", "high", "high", "medium", "manual"]
-    assert "close_different_rival" in flags[5] and flags[0] == ""
+    assert tier.tolist() == ["low", "medium", "high", "medium", "medium", "high", "medium",
+                             "high", "medium", "medium", "manual"], tier.tolist()
+    assert "close_different_rival" in flags[7] and flags[0] == ""
+    assert esr.support(frame).tolist()[:4] == ["area+name", "none", "name", "area"]
+
+
+def test_strata_ftype_format():
+    frame = pd.DataFrame({"risk_tier": ["low"] * 4, "baci_station": [False] * 4,
+                          "role": ["treated"] * 4, "reach_ftype": [460, 460.0, "460", None],
+                          "reach_totdasqkm": [50.0] * 4})
+    design = esr.stratified_sample(frame, {"low": 1.0}, minimum=1, seed=1)[3]
+    assert design["stratum"].tolist() == ["low | treated | ftype 460 | <100 km2",
+                                          "low | treated | ftype ? | <100 km2"]
 
 
 def test_stratified_sample():
-    n = 40
+    n = 50
     frame = pd.DataFrame({
-        "risk_tier": ["low"] * 36 + ["high"] * 4,
-        "baci_station": [False] * 30 + [True] * 6 + [False] * 4,
-        "role": ["treated"] * 20 + ["control"] * 20,
+        "risk_tier": ["low"] * 36 + ["high"] * 4 + ["medium"] * 10,
+        "baci_station": [False] * 30 + [True] * 6 + [False] * 14,
+        "role": ["treated"] * 20 + ["control"] * 20 + ["treated"] * 10,
         "reach_ftype": [460] * n,
-        "reach_totdasqkm": [50.0] * 10 + [500.0] * 30,
+        "reach_totdasqkm": [50.0] * 10 + [500.0] * 40,
     })
-    sampled, weight, stratum, design = esr.stratified_sample(frame, fraction=0.2, minimum=3, seed=1)
-    pool = frame["risk_tier"].eq("low") & ~frame["baci_station"]
+    fractions = {"medium": 0.5, "low": 0.2}
+    sampled, weight, stratum, design = esr.stratified_sample(frame, fractions, minimum=3, seed=1)
+    pool = frame["risk_tier"].isin(["low", "medium"]) & ~frame["baci_station"]
     assert not sampled[~pool].any()                       # BACI and high are inspected, not sampled
     assert design["stations"].sum() == int(pool.sum())
-    for row in design.itertuples():                       # max(3, ceil(0.2 n)), capped at n
-        assert row.sampled == min(row.stations, max(3, int(np.ceil(0.2 * row.stations))))
+    assert set(design["tier"]) == {"low", "medium"}
+    for row in design.itertuples():                       # max(3, ceil(f n)), capped at n
+        f = fractions[row.tier]
+        assert row.sampled == min(row.stations, max(3, int(np.ceil(f * row.stations))))
         assert abs(row.weight - row.stations / row.sampled) < 1e-9
     # Weighted sample size reproduces the pool size.
     assert abs(weight[sampled].sum() - pool.sum()) < 1e-9
-    again = esr.stratified_sample(frame, fraction=0.2, minimum=3, seed=1)[0]
+    again = esr.stratified_sample(frame, fractions, minimum=3, seed=1)[0]
     assert sampled.equals(again)                          # fixed seed: reproducible
 
 
