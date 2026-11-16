@@ -160,6 +160,73 @@ def test_gains_parameters_priority():
     assert "c3" not in set(pri["station_id"])          # more_samples only: not an eligibility gain
 
 
+def _review_gpkg(path, rows):
+    import geopandas as gpd
+    from shapely.geometry import LineString, Point
+    stations = gpd.GeoDataFrame(
+        [{k: v for k, v in r.items() if k != "xy"} for r in rows],
+        geometry=[Point(*r["xy"]) for r in rows], crs="EPSG:4326")
+    stations.to_file(path, layer="stations", driver="GPKG")
+    flow = gpd.GeoDataFrame({"nhdplus_id": [100, 200, 300]},
+                            geometry=[LineString([(-70.0, 45.0), (-70.0, 45.01)]),
+                                      LineString([(-70.001, 45.0), (-70.001, 45.01)]),
+                                      LineString([(-71.0, 45.0), (-71.0, 45.01)])], crs="EPSG:4326")
+    flow.to_file(path, layer="flowlines", driver="GPKG")
+
+
+def _row(station, verdict, reach=None, note="", current=100, x=-70.0002):
+    return {"station_id": station, "verdict": verdict, "correct_nhdplus_id": reach,
+            "review_note": note, "inspect_reason": "baci", "risk_tier": "high", "role": "treated",
+            "NHDPlusID": current, "in_sample": False, "sample_weight": None, "xy": (x, 45.005)}
+
+
+def test_apply_station_review():
+    from etl import apply_station_review as asr
+
+    with tempfile.TemporaryDirectory() as folder:
+        folder = Path(folder)
+        a, b = folder / "a.gpkg", folder / "b.gpkg"
+        _review_gpkg(a, [_row("S1", "correct"), _row("S2", "wrong_reach", 200),
+                         _row("S3", "not_a_stream", note="farm pond"), _row("S4", "")])
+        _review_gpkg(b, [_row("S5", "wrong_side", note="VA-021: above the dam"),
+                         _row("S6", "Unsure")])
+        reviews, lines = asr.read_reviews([a, b])
+        assert sorted(reviews["station_id"]) == ["S1", "S2", "S3", "S5", "S6"]   # S4: no verdict
+        assert asr.check_reviews(reviews, lines) == []
+        new = asr.override_rows(reviews, "jc", "2026-11-16").set_index("feature_id")
+        assert new.loc["S2", "action"] == "accept" and new.loc["S2", "nhdplus_id"] == "200"
+        assert new.loc["S3", "action"] == "reject" and "farm pond" in new.loc["S3", "reason"]
+        assert set(new.index) == {"S2", "S3"}                 # correct/unsure/wrong_side: none
+
+        overrides = folder / "snap_overrides.csv"
+        overrides.write_text("# header comment\n"
+                             "feature_kind,feature_id,action,nhdplus_id,reason,reviewed_by,"
+                             "reviewed_on,corrected_lat,corrected_lon\n"
+                             "dam,D1,reject,,old,jc,2026-11-15,,\n"
+                             "station,S2,reject,,older,jc,2026-11-01,,\n")
+        comments, merged, replaced = asr.merge_station_overrides(overrides, new.reset_index())
+        assert replaced == ["S2"] and comments == ["# header comment"]
+        asr.write_overrides(overrides, comments, merged)
+        text = overrides.read_text()
+        assert "dam,D1,reject" in text and "older" not in text and "station,S2,accept,200" in text
+
+        # Problems are all reported.
+        _review_gpkg(b, [_row("S1", "wrong_reach", 200),                   # conflicts with a.gpkg
+                         _row("S7", "wrong_reach"),                        # no reach
+                         _row("S8", "wrong_reach", 100),                   # current reach
+                         _row("S9", "wrong_reach", 999),                   # not in flowlines
+                         _row("S10", "wrong_reach", 300),                  # > 2 km away
+                         _row("S11", "wrong_side"),                        # no note
+                         _row("S12", "moved")])                            # bad verdict
+        reviews, lines = asr.read_reviews([a, b])
+        message = "\n".join(asr.check_reviews(reviews, lines))
+        for expected in ["S1: different verdicts", "S7 (b.gpkg): wrong_reach needs",
+                         "S8 (b.gpkg): correct_nhdplus_id 100 is the current reach",
+                         "999 is not in the flowlines layer", "S10 (b.gpkg): flowline 300 is",
+                         "S11 (b.gpkg): wrong_side needs a review_note", "verdict 'moved'"]:
+            assert expected in message, expected
+
+
 if __name__ == "__main__":
     tests = [obj for name, obj in list(globals().items())
              if name.startswith("test_") and callable(obj)]
