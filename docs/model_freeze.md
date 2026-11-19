@@ -1,14 +1,18 @@
 # Model freeze
 
-**Frozen 2026-11-10. Tag `models-frozen-2026-11-10`.** From here on the statistical models and their outputs are
+**Frozen 2026-11-18 (re-freeze on the corrected dams and stations; supersedes the 2026-11-10 freeze). Tag
+`models-frozen-2026-11-18`.** The 2026-11-10 snapshot is kept for the record (see the change log). From here on the statistical models and their outputs are
 fixed. Slides, the interpretation notebook, the predictive-model feasibility work and the Tableau export **read** the
 frozen outputs and never refit them. Any later refit, threshold change or new specification needs a dated entry in the
 change log below, with the reason, like the pre-specification documents.
 
 ## What is frozen
 
-**Data.** The analysis tables built on 2026-11-08 17:40 with the data corrections (conductance and TDS floors,
-non-detect codes, unflagged zeros; `docs/warehouse_spec.md` 3.6.3, filter 10).
+**Data.** The primary analysis table built on 2026-11-18 11:05 (job 11972962) from the ETL rerun on the
+manually reviewed dam locations and station reaches (change log, 2026-11-18), with the weather covariates loaded.
+The sensitivity-variant tables were built on 2026-11-17 from the same corrected warehouse. The data corrections of
+2026-11-08 still apply (conductance and TDS floors, non-detect codes, unflagged zeros; `docs/warehouse_spec.md`
+3.6.3, filter 10).
 - Primary eligibility rule: **3 samples in each of 2 years** per side.
 - Sensitivity variants: 3 / 1, and 3 / 1 with ≥ 2 months.
 
@@ -34,7 +38,8 @@ non-detect codes, unflagged zeros; `docs/warehouse_spec.md` 3.6.3, filter 10).
 
 ## Where the frozen outputs are (cluster)
 
-`data/processed/frozen/models-frozen-2026-11-10/`:
+`data/processed/frozen/models-frozen-2026-11-18/` (the superseded snapshot stays at
+`data/processed/frozen/models-frozen-2026-11-10/`):
 - `all_removals/`: a read-only copy of `data/processed/mixed_model/all_removals/` (or omitted to save space; see
   `MANIFEST.sha256`)
 - `MANIFEST.sha256`: a checksum for every model output file
@@ -43,7 +48,7 @@ non-detect codes, unflagged zeros; `docs/warehouse_spec.md` 3.6.3, filter 10).
 
 Check that the live outputs still match the frozen ones (no output = identical):
 
-    cd data/processed/mixed_model && sha256sum -c --quiet ../frozen/models-frozen-2026-11-10/MANIFEST.sha256
+    cd data/processed/mixed_model && sha256sum -c --quiet ../frozen/models-frozen-2026-11-18/MANIFEST.sha256
 
 The notebooks read the live folder. The interpretation, distance and time notebooks can read the snapshot instead
 with `DAM_REMOVAL_MODEL_DIR=<snapshot>/all_removals`.
@@ -55,6 +60,31 @@ with `DAM_REMOVAL_MODEL_DIR=<snapshot>/all_removals`.
   These are labelled post-hoc.
 
 ## Change log
+
+- **2026-11-18: re-freeze on corrected dams and stations (all models refit).**
+  - **Why.** The 2026-11-10 models included some misplaced dams (some matched to pond outlets or wrong reaches
+    that no rule could fix) and some stations on the wrong reach. Every dam and station that could enter the
+    analysis was reviewed by hand in QGIS before any new results were looked at.
+  - **Dams** (`docs/dam_review.md`): corrected locations in `config/snap_overrides.csv` (`corrected_lat` /
+    `corrected_lon`; 181 moves, 26 rejects after the MI-117 override was removed because its corrected point fell
+    in the Lake Michigan HUC8). ETL rerun from `match_dams`. Funnel: accepted dams 1,861 → 1,956, analysis dams
+    530 → 537, before/after 464 → 469, BACI (audit count) 47 → 52.
+  - **Stations** (`docs/station_review.md`): all 723 analysis stations reviewed (a full census, not a sample): 693
+    correct, 23 on the wrong reach, 1 not a stream, 6 unsure (kept on their current reach). The 24 errors are
+    station overrides in `config/snap_overrides.csv`; ETL rerun from `select_station_reaches`.
+  - **Missing weather fix.** The first rebuild of the primary table predated `load_climate`, leaving
+    `precip_prev_month_mm` null in 16 rows (2 dams, 1 station); `VERIFY_PRIMARY` (job 11941943) caught it. The
+    primary table was rebuilt after `load_climate` (job 11972962) and verified identical to a fresh rebuild
+    (job 11981922; an earlier verify, job 11972963, was submitted with `ELIGIBILITY_VARIANT` set and stopped on the
+    argument check without reading anything).
+  - **Refit** with the frozen code and settings, no specification changes: mixed models, distance models
+    (stage 3, `RE` auto / intercepts / slopes), stage 4, stage 5 time and characteristic runs (jobs
+    11972964–11972971), the eligibility sensitivity variants (2026-11-17) and `modifiers_combined` with
+    `COMBINED="dam_height pct_forest pct_agriculture"` (job 11982021). The combined model was not justified for any
+    BACI measure (3–23 complete dams; it needs 30) and was justified for 9 before/after measures, where it added no
+    new result. The 12 suspect dams in `config/suspect_dam_matches.csv` are still excluded from the distance models.
+  - **Downstream.** Everything that reads the frozen outputs uses this snapshot. The predictive-feasibility stages
+    built before this date (`audit`, `targets`) read the 2026-11-10 models and are rerun before `cv`.
 
 - **2026-11-10 (recorded at the freeze; no model change).** The cluster working tree at the freeze differed from the
   tagged commit in two non-notebook files. The snapshot records both (`WORKTREE_STATUS.txt`,
