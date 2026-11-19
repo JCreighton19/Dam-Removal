@@ -83,6 +83,11 @@ with `DAM_REMOVAL_MODEL_DIR=<snapshot>/all_removals`.
     `COMBINED="dam_height pct_forest pct_agriculture"` (job 11982021). The combined model was not justified for any
     BACI measure (3–23 complete dams; it needs 30) and was justified for 9 before/after measures, where it added no
     new result. The 12 suspect dams in `config/suspect_dam_matches.csv` are still excluded from the distance models.
+  - **Cluster working tree at the freeze** (`WORKTREE_STATUS.txt`, `WORKTREE.diff` in the snapshot): only notebooks
+    were modified (they read outputs and don't affect the models). `config/all_removals.yaml`, the case-study config
+    the pipeline ran with, is untracked on the cluster, so a copy is kept in the snapshot as
+    `all_removals.cluster.yaml`. The snapshot was verified on 2026-11-18: `sha256sum -c` of `MANIFEST.sha256`
+    reported no differences.
   - **Downstream.** Everything that reads the frozen outputs uses this snapshot. The predictive-feasibility stages
     built before this date (`audit`, `targets`) read the 2026-11-10 models and are rerun before `cv`.
 
