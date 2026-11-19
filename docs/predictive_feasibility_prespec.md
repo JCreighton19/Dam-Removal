@@ -389,3 +389,34 @@ and the sensitivity results have been reviewed.
 
 **Stage 3 is built and tested on simulated data only.** It runs on the cluster only after the code has been
 reviewed.
+
+### Amendment 3: 2026-11-19, re-freeze; audit and targets rebuilt, before any predictive model is fit
+
+**Why.** The statistical models were refit and re-frozen on the corrected dam locations and station reaches
+(`docs/model_freeze.md`, change log 2026-11-18; tag `models-frozen-2026-11-18`). The audit and targets above were
+built on the 2026-11-10 models. Stage 3 had **not** been run on either version.
+
+**What was rerun.** `STAGE=audit` and then `STAGE=targets` (2026-11-19), with the same code and settings and on the
+2026-11-18 frozen outputs. **No method changed.** Amendments 1 and 2 apply unchanged: the target, the predictors and
+rules, the sensitivity analyses, the Stage 3 details and the go/no-go criteria.
+
+**Evidence** (`report_targets.md`, 2026-11-19; `notebooks/analysis/predictive_feasibility.ipynb` sections 1–8):
+
+- **Size:** dams with a target (10 km): water temperature 132, dissolved oxygen 126, pH 131, specific conductance
+  112, total phosphorus 78, turbidity 67 (previously 130, 128, 124, 109, 77, 64). Every measure still meets the size
+  rule: at least 60 dams, and 7–9 HUC2 regions with ≥ 5 dams each. TDS, orthophosphate, TSS and SSC still don't.
+- **Reliability:** 0.23–0.69 for every τ² source. The lowest is still water temperature (0.23 with the 30 km
+  distance-model τ², 0.38–0.44 otherwise). **No measure meets the stop rule (0.15).**
+- **Weak support:** 17–29 dams per measure (≈ 18–27%).
+- **Standardization:** the unstandardized targets correlate 0.99–1.00 with the primary, as before.
+- **Agreement with the other target versions:**
+  - nearest station, frozen BLUPs and 30 km: r ≈ 0.86–0.99
+  - specific conductance: Pearson 0.73 (nearest station) and 0.82 (BLUPs) against Spearman 0.97. The gap is
+    driven mainly by WI-138: one station 0.1 km below the dam (14 daily values) has a change of −1.24 log10. That
+    one station pulls the dam's primary target to −0.23, while its other five stations are all between −0.05 and
+    −0.01.
+  - years 1–3 vs 1–5: r = 0.77 for total phosphorus and 0.71 for turbidity (0.92–0.95 for the others)
+
+**Decision.** The checkpoint 3 conclusions of Amendment 2 still hold, and all six measures go to Stage 3. Under
+Amendment 2b, WI-138 stays in the primary analysis unless its conductance values show a real data-quality
+problem; any removal would be a separate amendment.
