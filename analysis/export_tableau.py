@@ -28,11 +28,13 @@ dams.csv                 one row per dam in the American Rivers list: attributes
                          pipeline (funnel_stage), which designs it is in
 measure_funnel.csv       per measure: dams eligible downstream / with a control /
                          in each fitted model
-stations.csv             linked stations, location, samples in the analysis table
-dam_station_links.csv    dam-station pairs with both locations (MAKELINE), side,
+stations.csv             stations within the link limits, location, samples
+dam_station_links.csv    dam-station pairs within the link limits (config exposure:
+                         30 km down / 10 km up), both locations (MAKELINE), side,
                          distance, role and eligible measures
 wq_monthly.csv           monthly median per dam x station x measure, eligible
-                         pairs only (the dam explorer's time series)
+                         pairs and model roles only (the dam explorer's series)
+measures.csv             series -> plain name, unit, display unit, threshold
 results_10km.csv         before/after and BACI effect per measure (mixed models)
 dam_effects.csv          each dam's own estimated effect (10 km before/after, BACI)
 distance_summary.csv     primary distance models: effect at 5 km, distance slope,
@@ -89,12 +91,11 @@ NAMES = {
 }
 DESIGN_LABELS = {"before_after": "Before/after (downstream)", "baci": "BACI (upstream control)",
                  "before/after": "Before/after (downstream)", "BACI": "BACI (upstream control)"}
-TREATED_WINDOW_KM = 30          # warehouse exposure window (distance models)
 MIXED_KM = mm.SETTINGS["max_downstream_km"]
 ROLE_RANK = {"excluded": 0, "control": 1, "treated": 2}
 RANK_ROLE = {v: k for k, v in ROLE_RANK.items()}
 FUNNEL = ["1. In American Rivers list", "2. Matched to a stream reach",
-          "3. Monitoring station linked", "4. Eligible before/after data",
+          "3. Station within the link limits", "4. Eligible before/after data",
           "5. In a fitted model", "6. In a BACI model (upstream control)"]
 
 
@@ -176,6 +177,18 @@ def default_model_dir(root, case):
 # Warehouse tables
 # --------------------------------------------------
 
+def within_limits(links, max_down, max_up):
+    """The links build_views.removal_link uses: downstream (and same-reach)
+    stations within max_down km, upstream ones within max_up km; None = no
+    limit. dam_station_link itself keeps every connected station (median
+    downstream link ~55 km), which the analysis never uses."""
+    km = pd.to_numeric(links["network_distance_km"], errors="coerce")
+    up = links["relationship"].eq("upstream")
+    ok_down = km.le(max_down) if max_down is not None else pd.Series(True, index=links.index)
+    ok_up = km.le(max_up) if max_up is not None else pd.Series(True, index=links.index)
+    return links[np.where(up, ok_up, ok_down)]
+
+
 def read_geo(path):
     """GeoParquet -> DataFrame with lat / lon of the (point) geometry."""
     import geopandas as gpd
@@ -231,8 +244,7 @@ def build_dams(ar, dam_removal, links, am, model_dams, suspects):
                       km=pd.to_numeric(links["network_distance_km"], errors="coerce"))
     down = lk["relationship"].isin(["downstream", "same_reach"])
     counts = lk.groupby("AR_ID").agg(linked_stations=("station_id", "nunique"))
-    counts["downstream_stations_30km"] = (lk[down & lk["km"].le(TREATED_WINDOW_KM)]
-                                          .groupby("AR_ID")["station_id"].nunique())
+    counts["downstream_stations"] = lk[down].groupby("AR_ID")["station_id"].nunique()
     counts["upstream_stations"] = lk[lk["relationship"].eq("upstream")].groupby("AR_ID")["station_id"].nunique()
     out = out.merge(counts.reset_index(), on="AR_ID", how="left")
     for c in counts.columns:
@@ -319,10 +331,11 @@ def build_measure_funnel(am, model_dir):
 
 
 def build_stations(stations, am):
-    keep = [c for c in ["station_id", "station_name", "station_type", "organization_name", "latitude",
-                        "longitude", "snapped_lat", "snapped_lon", "huc8", "reach_gnis_name",
-                        "reach_totdasqkm", "qc_far_snap", "qc_non_riverine_name"] if c in stations]
+    keep = [c for c in ["station_id", "station_name", "organization_name", "huc8"] if c in stations]
     out = stations[keep].copy()
+    lat = stations["snapped_lat"].fillna(stations["latitude"]) if "snapped_lat" in stations else stations["latitude"]
+    lon = stations["snapped_lon"].fillna(stations["longitude"]) if "snapped_lon" in stations else stations["longitude"]
+    out["map_lat"], out["map_lon"] = lat, lon
     if len(am):
         g = am.groupby("station_id")
         out["analysis_measurements"] = out["station_id"].map(g.size()).fillna(0).astype(int)
@@ -338,10 +351,7 @@ def build_links(links, dams, stations, am):
     d = dams.set_index("AR_ID")
     s = stations.set_index("station_id")
     out["dam_lat"], out["dam_lon"] = out["AR_ID"].map(d["map_lat"]), out["AR_ID"].map(d["map_lon"])
-    s_lat = s["snapped_lat"].fillna(s["latitude"]) if "snapped_lat" in s else s["latitude"]
-    s_lon = s["snapped_lon"].fillna(s["longitude"]) if "snapped_lon" in s else s["longitude"]
-    out["station_lat"], out["station_lon"] = out["station_id"].map(s_lat), out["station_id"].map(s_lon)
-    out["within_30km"] = pd.to_numeric(out["network_distance_km"], errors="coerce").le(TREATED_WINDOW_KM)
+    out["station_lat"], out["station_lon"] = out["station_id"].map(s["map_lat"]), out["station_id"].map(s["map_lon"])
     if len(am):
         g = am.groupby(["AR_ID", "station_id"])
         pair = pd.DataFrame({
@@ -361,19 +371,27 @@ def build_links(links, dams, stations, am):
 def build_wq_monthly(am):
     if am.empty:
         return am
-    keep = am[am["series"].isin(mm.SETTINGS["series"])].dropna(subset=["result_value_std"])
+    # Only rows the models could use (treated within 30 km, or control); names,
+    # units, distances and removal years live in measures.csv, dam_station_links
+    # and dams (join on series / AR_ID + station_id / AR_ID).
+    keep = am[am["series"].isin(mm.SETTINGS["series"]) & am["role"].ne("excluded")]
+    keep = keep.dropna(subset=["result_value_std"])
     key = ["AR_ID", "station_id", "series", "year", "month"]
     out = (keep.groupby(key, as_index=False)
            .agg(median_value=("result_value_std", "median"), samples=("result_value_std", "size"),
-                period=("period", "first"), years_from_removal=("years_from_removal", "first"),
-                removal_year=("removal_year", "first"), side=("side", "first"),
-                role_rank=("role_rank", "max"),
-                network_distance_km=("network_distance_km", "first"),
-                unit=("result_unit_std", "first")))
+                years_from_removal=("years_from_removal", "first"), role_rank=("role_rank", "max")))
     out["role"] = out.pop("role_rank").map(RANK_ROLE)
-    out["month_date"] = pd.to_datetime(dict(year=out["year"], month=out["month"], day=15))
-    out["measure"] = out["series"].map(NAMES).fillna(out["series"])
     return out
+
+
+def build_measures(am):
+    """Lookup: series -> plain name, measured unit, display unit, threshold."""
+    units = am.groupby("series")["result_unit_std"].agg(
+        lambda x: x.dropna().mode().iat[0] if x.notna().any() else "") if len(am) else pd.Series(dtype=str)
+    out = pd.DataFrame({"series": list(NAMES)})
+    out["unit"] = out["series"].map(units).fillna("")
+    out["log_scale_in_models"] = is_log(out["series"])
+    return add_display(out, [])
 
 
 # --------------------------------------------------
@@ -568,7 +586,13 @@ def main():
     ar = pd.read_csv(cfg.path("dam_source"), low_memory=False)
     dam_removal = read_geo(wh / "dam_removal.parquet")
     stations = read_geo(wh / "wq_station.parquet")
-    links = pd.read_parquet(wh / "dam_station_link.parquet")
+    exposure = cfg.get("exposure", {}) or {}
+    max_down, max_up = exposure.get("max_downstream_km"), exposure.get("max_upstream_km")
+    all_links = pd.read_parquet(wh / "dam_station_link.parquet")
+    links = within_limits(all_links, max_down, max_up)
+    print(f"Links within {max_down} km downstream / {max_up} km upstream: {len(links):,} of "
+          f"{len(all_links):,}")
+    stations = stations[stations["station_id"].isin(set(links["station_id"]))]
     am_cols = ["AR_ID", "station_id", "parameter_std", "sample_fraction_std", "side", "period",
                "exposure_status", "upstream_in_former_reservoir", "network_distance_km", "year", "month",
                "years_from_removal", "removal_year", "result_value_std", "result_unit_std",
@@ -583,8 +607,9 @@ def main():
     tables["dams"] = dams
     tables["measure_funnel"] = build_measure_funnel(am, model_dir)
     tables["stations"] = build_stations(stations, am)
-    tables["dam_station_links"] = build_links(links, dams, stations, am)
+    tables["dam_station_links"] = build_links(links, dams, tables["stations"], am)
     tables["wq_monthly"] = build_wq_monthly(am)
+    tables["measures"] = build_measures(am)
     tables["results_10km"] = build_results_10km(model_dir)
     tables["dam_effects"] = build_dam_effects(model_dir, dams)
     tables.update(build_distance(model_dir))
@@ -597,14 +622,16 @@ def main():
              f"Models read from: {model_dir}", f"Predictive outputs: {pred_dir}",
              "Effects: *_display columns are plain units (% change for log10 measures).",
              "Thresholds are analyst-selected and provisional (docs/practical_significance_thresholds.md).",
-             "Fewer than 15 dams = exploratory.", ""]
+             "Fewer than 15 dams = exploratory.",
+             f"Links and stations: only within {max_down} km downstream / {max_up} km upstream "
+             "(the analysis's link limits); funnel stage 3 uses the same limits.", ""]
     for name, frame in tables.items():
         if frame is None or len(frame) == 0:
             print(f"  {name}: SKIPPED (no input)")
             lines.append(f"{name}.csv: not written (input missing)")
             continue
         path = out_dir / f"{name}.csv"
-        frame.to_csv(path, index=False)
+        frame.to_csv(path, index=False, float_format="%.6g")
         size = path.stat().st_size / 1e6
         print(f"  {name}.csv: {len(frame):,} rows, {size:.1f} MB")
         lines.append(f"{name}.csv: {len(frame):,} rows, {size:.1f} MB")
