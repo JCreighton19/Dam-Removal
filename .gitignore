@@ -32,3 +32,6 @@ __pycache__/
 # IDE and Jupyter scratch files
 .idea/
 .virtual_documents/
+
+# Tableau extracts copied from the cluster (data/slurm/export_tableau.slurm)
+tableau_data/
